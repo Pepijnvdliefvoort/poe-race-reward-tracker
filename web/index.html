@@ -38,7 +38,12 @@
         <aside class="filters-panel">
           <div class="filter-group">
             <label for="searchInput">Search</label>
-            <input type="text" id="searchInput" placeholder="Filter by name..." />
+            <div class="search-input-wrap">
+              <input type="text" id="searchInput" placeholder="Filter by name..." />
+              <button type="button" id="searchClearBtn" class="search-clear-btn" aria-label="Clear search" title="Clear search">
+                &times;
+              </button>
+            </div>
           </div>
           <div class="filter-group">
             <label for="priceSort">Price</label>

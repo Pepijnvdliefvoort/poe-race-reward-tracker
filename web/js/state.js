@@ -9,6 +9,7 @@ export const dom = {
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
   searchInput: document.getElementById("searchInput"),
+  searchClearBtn: document.getElementById("searchClearBtn"),
   priceSortSelect: document.getElementById("priceSort"),
   trendSortSelect: document.getElementById("trendSort"),
   favoritesOnlyInput: document.getElementById("favoritesOnly"),

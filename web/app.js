@@ -131,6 +131,15 @@ function applyFiltersAndSort() {
   }
 }
 
+function syncSearchClearButton() {
+  if (!dom.searchClearBtn) {
+    return;
+  }
+
+  const hasValue = Boolean(dom.searchInput.value.trim());
+  dom.searchClearBtn.disabled = !hasValue;
+}
+
 function getNextInLineItemName(items) {
   if (!items.length) {
     return null;
@@ -274,9 +283,29 @@ async function refresh() {
 }
 
 function registerEventListeners() {
+  document.addEventListener("keydown", (event) => {
+    const isFindShortcut = event.ctrlKey && event.key.toLowerCase() === "f";
+    if (!isFindShortcut) {
+      return;
+    }
+
+    event.preventDefault();
+    dom.searchInput.focus();
+    dom.searchInput.select();
+  });
+
   dom.searchInput.addEventListener("input", (e) => {
     state.filters.search = e.target.value.toLowerCase();
+    syncSearchClearButton();
     applyFiltersAndSort();
+  });
+
+  dom.searchClearBtn?.addEventListener("click", () => {
+    dom.searchInput.value = "";
+    state.filters.search = "";
+    syncSearchClearButton();
+    applyFiltersAndSort();
+    dom.searchInput.focus();
   });
 
   const themeToggle = document.getElementById("themeToggle");
@@ -308,6 +337,7 @@ function registerEventListeners() {
     state.filters.priceMax = 100;
 
     dom.searchInput.value = "";
+    syncSearchClearButton();
     dom.priceSortSelect.value = "";
     dom.trendSortSelect.value = "";
     dom.favoritesOnlyInput.checked = false;
@@ -371,6 +401,8 @@ function registerEventListeners() {
     updateRangeFill();
     applyFiltersAndSort();
   });
+
+  syncSearchClearButton();
 }
 
 registerEventListeners();
