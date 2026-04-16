@@ -122,3 +122,7 @@ sudo systemctl restart poe-market-server
 sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
+
+Automatic deploy is also supported via GitHub Actions. See:
+
+- [VPS_DEPLOYMENT.md](VPS_DEPLOYMENT.md#10-automatic-deploy-on-every-push-recommended)

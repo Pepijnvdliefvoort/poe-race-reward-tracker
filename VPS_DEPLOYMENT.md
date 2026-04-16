@@ -105,7 +105,54 @@ sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
 
-## 10. Common Troubleshooting
+## 10. Automatic Deploy On Every Push (Recommended)
+
+This repo includes:
+
+- `.github/workflows/deploy-vps.yml` (GitHub Actions workflow)
+- `deploy/deploy_on_vps.sh` (commands run on the VPS)
+
+### One-time setup
+
+1. Ensure the app already exists at `/opt/poe-market-flips` on the VPS.
+2. In GitHub, open your repository:
+	- `Settings -> Secrets and variables -> Actions -> New repository secret`
+3. Add these secrets:
+	- `VPS_HOST` = your server IP (example: `178.104.113.149`)
+	- `VPS_USER` = `root` (or your deploy user)
+	- `VPS_PORT` = `22`
+	- `VPS_SSH_KEY` = private SSH key content for that VPS user
+
+### Generate an SSH key for deploy (if you do not already have one)
+
+Run on your local machine:
+
+```bash
+ssh-keygen -t ed25519 -f vps_deploy_key -C "github-actions-deploy"
+```
+
+Add the public key to the VPS user:
+
+```bash
+ssh-copy-id -i vps_deploy_key.pub root@YOUR_SERVER_IP
+```
+
+Paste the contents of `vps_deploy_key` (private key) into `VPS_SSH_KEY` in GitHub secrets.
+
+### How it works
+
+- On every push to `main` or `master`, GitHub Actions connects to your VPS over SSH.
+- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, restarts services, and reloads Caddy.
+
+### First test
+
+In GitHub:
+
+- Open `Actions -> Deploy to VPS -> Run workflow`
+- Confirm it succeeds
+- Open your site and verify changes are live
+
+## 11. Common Troubleshooting
 
 ### Site works in incognito but not normal browser
 
