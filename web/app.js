@@ -1,6 +1,7 @@
 import { applySorting, getAvailableLowestPrice, updateAllCards, showNoFilterResults } from "./js/cards.js";
 import { dom, REFRESH_MS, state } from "./js/state.js";
 import { formatTime } from "./js/utils.js";
+import { initTheme, toggleTheme } from "./js/theme.js";
 
 function isPriceRangeActive() {
   return (
@@ -278,6 +279,11 @@ function registerEventListeners() {
     applyFiltersAndSort();
   });
 
+  const themeToggle = document.getElementById("themeToggle");
+  if (themeToggle) {
+    themeToggle.addEventListener("click", toggleTheme);
+  }
+
   dom.priceSortSelect.addEventListener("change", (e) => {
     state.filters.priceSort = e.target.value;
     applyFiltersAndSort();
@@ -368,5 +374,6 @@ function registerEventListeners() {
 }
 
 registerEventListeners();
+initTheme();
 refresh();
 setInterval(refresh, REFRESH_MS);
