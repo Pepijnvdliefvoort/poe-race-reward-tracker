@@ -1,5 +1,7 @@
 # poe-market-flips
 
+[![Deploy to VPS](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml/badge.svg)](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml)
+
 Small Path of Exile price polling project for race reward and unique items.
 
 It has 2 parts:

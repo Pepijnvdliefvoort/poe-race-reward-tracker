@@ -26,6 +26,10 @@ systemctl restart poe-market-server
 systemctl restart poe-market-poller
 
 echo "[5/5] Apply Caddy config"
+if grep -q "PUBLIC_HOSTNAME_HERE" deploy/caddy/Caddyfile; then
+  echo "Refusing deploy: deploy/caddy/Caddyfile still contains PUBLIC_HOSTNAME_HERE"
+  exit 1
+fi
 cp deploy/caddy/Caddyfile /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile
 systemctl reload caddy
