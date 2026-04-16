@@ -1,5 +1,5 @@
 import { applySorting, getAvailableLowestPrice, updateAllCards, showNoFilterResults } from "./js/cards.js";
-import { dom, REFRESH_MS, state } from "./js/state.js";
+import { dom, REFRESH_MS, saveFilters, state } from "./js/state.js";
 import { formatTime } from "./js/utils.js";
 import { initTheme, toggleTheme } from "./js/theme.js";
 
@@ -40,14 +40,16 @@ function initPriceRangeSlider() {
   }
 
   state.globalPriceRange = { min: newMin, max: newMax };
-  state.filters.priceMin = newMin;
-  state.filters.priceMax = newMax;
+  const clampedMin = Math.max(newMin, Math.min(state.filters.priceMin, newMax));
+  const clampedMax = Math.max(clampedMin, Math.min(state.filters.priceMax, newMax));
+  state.filters.priceMin = clampedMin;
+  state.filters.priceMax = clampedMax;
 
   for (const input of [dom.priceRangeMinInput, dom.priceRangeMaxInput]) {
     input.min = newMin;
     input.max = newMax;
     input.step = 1;
-    input.value = input === dom.priceRangeMinInput ? newMin : newMax;
+    input.value = input === dom.priceRangeMinInput ? clampedMin : clampedMax;
   }
 
   dom.priceRangeMinLabel.min = newMin;
@@ -55,9 +57,10 @@ function initPriceRangeSlider() {
   dom.priceRangeMaxLabel.min = newMin;
   dom.priceRangeMaxLabel.max = newMax;
 
-  setMinLabel(state.filters.priceMin);
-  setMaxLabel(state.filters.priceMax);
+  setMinLabel(clampedMin);
+  setMaxLabel(clampedMax);
   updateRangeFill();
+  saveFilters();
 }
 
 function isManualSortActive() {
@@ -138,6 +141,18 @@ function syncSearchClearButton() {
 
   const hasValue = Boolean(dom.searchInput.value.trim());
   dom.searchClearBtn.disabled = !hasValue;
+}
+
+function syncFilterControlsFromState() {
+  dom.searchInput.value = state.filters.search;
+  dom.priceSortSelect.value = state.filters.priceSort;
+  dom.trendSortSelect.value = state.filters.trendSort;
+  dom.favoritesOnlyInput.checked = state.filters.favoritesOnly;
+  dom.priceRangeMinInput.value = state.filters.priceMin;
+  dom.priceRangeMaxInput.value = state.filters.priceMax;
+  setMinLabel(state.filters.priceMin);
+  setMaxLabel(state.filters.priceMax);
+  updateRangeFill();
 }
 
 function getNextInLineItemName(items) {
@@ -294,8 +309,11 @@ function registerEventListeners() {
     dom.searchInput.select();
   });
 
+  syncFilterControlsFromState();
+
   dom.searchInput.addEventListener("input", (e) => {
     state.filters.search = e.target.value.toLowerCase();
+    saveFilters();
     syncSearchClearButton();
     applyFiltersAndSort();
   });
@@ -303,6 +321,7 @@ function registerEventListeners() {
   dom.searchClearBtn?.addEventListener("click", () => {
     dom.searchInput.value = "";
     state.filters.search = "";
+    saveFilters();
     syncSearchClearButton();
     applyFiltersAndSort();
     dom.searchInput.focus();
@@ -315,16 +334,19 @@ function registerEventListeners() {
 
   dom.priceSortSelect.addEventListener("change", (e) => {
     state.filters.priceSort = e.target.value;
+    saveFilters();
     applyFiltersAndSort();
   });
 
   dom.trendSortSelect.addEventListener("change", (e) => {
     state.filters.trendSort = e.target.value;
+    saveFilters();
     applyFiltersAndSort();
   });
 
   dom.favoritesOnlyInput.addEventListener("change", (e) => {
     state.filters.favoritesOnly = e.target.checked;
+    saveFilters();
     applyFiltersAndSort();
   });
 
@@ -347,6 +369,7 @@ function registerEventListeners() {
     setMaxLabel(100);
     updateRangeFill();
 
+    saveFilters();
     applyFiltersAndSort();
   });
 
@@ -362,6 +385,7 @@ function registerEventListeners() {
     }
     setMinLabel(state.filters.priceMin);
     updateRangeFill();
+    saveFilters();
     applyFiltersAndSort();
   });
 
@@ -377,6 +401,7 @@ function registerEventListeners() {
     }
     setMaxLabel(state.filters.priceMax);
     updateRangeFill();
+    saveFilters();
     applyFiltersAndSort();
   });
 
@@ -388,6 +413,7 @@ function registerEventListeners() {
     dom.priceRangeMinInput.value = val;
     setMinLabel(val);
     updateRangeFill();
+    saveFilters();
     applyFiltersAndSort();
   });
 
@@ -399,6 +425,7 @@ function registerEventListeners() {
     dom.priceRangeMaxInput.value = val;
     setMaxLabel(val);
     updateRangeFill();
+    saveFilters();
     applyFiltersAndSort();
   });
 
