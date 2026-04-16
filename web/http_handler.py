@@ -16,6 +16,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
+    def log_message(self, format: str, *args: Any) -> None:
+        """Suppress logging for static assets; only log API requests."""
+        # args[0] contains the request line like 'GET /path HTTP/1.1'
+        if args and "/api/" in str(args[0]):
+            super().log_message(format, *args)
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/api/prices":

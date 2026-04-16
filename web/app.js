@@ -135,32 +135,54 @@ function getNextInLineItemName(items) {
     return null;
   }
 
-  let latestIndex = -1;
-  let latestCycle = -Infinity;
+  let latestItem = null;
   let latestTime = -Infinity;
 
+  // Find the item that was polled most recently (by timestamp, not cycle)
   for (let i = 0; i < items.length; i += 1) {
     const latest = items[i].latest;
     if (!latest) {
       continue;
     }
 
-    const cycle = latest.cycle ?? -Infinity;
     const time = latest.time ?? -Infinity;
 
-    if (cycle > latestCycle || (cycle === latestCycle && time > latestTime)) {
-      latestCycle = cycle;
+    if (time > latestTime) {
       latestTime = time;
-      latestIndex = i;
+      latestItem = items[i];
     }
   }
 
-  if (latestIndex === -1) {
-    return null;
+  // If no item has been polled yet, start with the first one (lowest sortOrder)
+  if (latestItem === null) {
+    const first = items.reduce((min, it) => 
+      (it.sortOrder ?? Infinity) < (min.sortOrder ?? Infinity) ? it : min
+    );
+    return first?.itemName ?? null;
   }
 
-  const nextIndex = (latestIndex + 1) % items.length;
-  return items[nextIndex]?.itemName ?? null;
+  // Find the next item in sortOrder sequence
+  const latestOrder = latestItem.sortOrder ?? Infinity;
+  let nextItem = null;
+  let nextOrder = Infinity;
+
+  for (let i = 0; i < items.length; i += 1) {
+    const order = items[i].sortOrder ?? Infinity;
+    // Find smallest order > latestOrder (next in cycle)
+    if (order > latestOrder && order < nextOrder) {
+      nextOrder = order;
+      nextItem = items[i];
+    }
+  }
+
+  // If no next item found (we're at the end), wrap to the beginning
+  if (nextItem === null) {
+    nextItem = items.reduce((min, it) => 
+      (it.sortOrder ?? Infinity) < (min.sortOrder ?? Infinity) ? it : min
+    );
+  }
+
+  return nextItem?.itemName ?? null;
 }
 
 function setStatus(stateName, text) {
@@ -201,12 +223,15 @@ function updateOverview(payload) {
 function render(payload) {
   updateOverview(payload);
   state.currentItems = payload.items || [];
-  state.nextInLineItemName = getNextInLineItemName(state.currentItems);
 
   if (!state.currentItems.length) {
     dom.cardsEl.innerHTML = '<div class="empty">No item rows yet. Start your poller and wait for CSV updates.</div>';
     return;
   }
+
+  // Recalculate next-in-line from FRESH data before any sorting/filtering
+  const nextName = getNextInLineItemName(state.currentItems);
+  state.nextInLineItemName = nextName;
 
   initPriceRangeSlider();
 
