@@ -438,5 +438,86 @@ function registerEventListeners() {
 
 registerEventListeners();
 initTheme();
+initSettings();
 refresh();
 setInterval(refresh, REFRESH_MS);
+
+// --- Settings modal ---
+
+async function initSettings() {
+  const overlay = document.getElementById("settingsOverlay");
+  const openBtn = document.getElementById("settingsBtn");
+  const closeBtn = document.getElementById("settingsCloseBtn");
+  const saveBtn = document.getElementById("settingsSaveBtn");
+  const saveStatus = document.getElementById("settingsSaveStatus");
+
+  const cfgEnabled = document.getElementById("cfgEnabled");
+  const cfgThreshold = document.getElementById("cfgThreshold");
+  const cfgHistoryCycles = document.getElementById("cfgHistoryCycles");
+  const cfgWebhook = document.getElementById("cfgWebhook");
+
+  function openModal() {
+    overlay.classList.add("open");
+    overlay.removeAttribute("aria-hidden");
+    saveStatus.textContent = "";
+    loadSettings();
+  }
+
+  function closeModal() {
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+
+  async function loadSettings() {
+    try {
+      const resp = await fetch("/api/config", { cache: "no-store" });
+      if (!resp.ok) return;
+      const cfg = await resp.json();
+      cfgEnabled.checked = Boolean(cfg.alert_enabled);
+      cfgThreshold.value = cfg.alert_threshold_pct ?? 30;
+      cfgHistoryCycles.value = cfg.alert_history_cycles ?? 10;
+      cfgWebhook.value = cfg.discord_webhook_url ?? "";
+    } catch {
+      // silently ignore; defaults remain
+    }
+  }
+
+  async function saveSettings() {
+    const payload = {
+      alert_enabled: cfgEnabled.checked,
+      alert_threshold_pct: Number(cfgThreshold.value) || 30,
+      alert_history_cycles: Number(cfgHistoryCycles.value) || 10,
+      discord_webhook_url: cfgWebhook.value.trim(),
+    };
+    try {
+      const resp = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (resp.ok) {
+        saveStatus.textContent = "Saved.";
+        saveStatus.style.color = "var(--ok)";
+        closeModal();
+      } else {
+        saveStatus.textContent = "Save failed.";
+        saveStatus.style.color = "var(--error)";
+      }
+    } catch {
+      saveStatus.textContent = "Save failed.";
+      saveStatus.style.color = "var(--error)";
+    }
+  }
+
+  openBtn.addEventListener("click", openModal);
+  closeBtn.addEventListener("click", closeModal);
+  saveBtn.addEventListener("click", saveSettings);
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeModal();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && overlay.classList.contains("open")) closeModal();
+  });
+}

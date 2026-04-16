@@ -27,6 +27,7 @@
       <button id="themeToggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
         <span class="theme-icon">🌙</span>
       </button>
+      <button id="settingsBtn" class="settings-btn" title="Alert settings" aria-label="Alert settings">⚙️</button>
       <div class="meta" id="meta">
         <span id="statusDot" class="status-dot"></span>
         <span id="statusText">Connecting...</span>
@@ -101,5 +102,46 @@
         <a href="https://www.pathofexile.com/account/view-profile/iNeoxiz-3422" target="_blank" rel="noopener noreferrer">iNeoxiz</a>.
       </p>
     </footer>
+
+    <!-- Settings modal -->
+    <div id="settingsOverlay" class="settings-overlay" aria-hidden="true">
+      <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="settings-header">
+          <h2 id="settingsTitle">Alert Settings</h2>
+          <button id="settingsCloseBtn" class="settings-close" aria-label="Close settings">&times;</button>
+        </div>
+        <div class="settings-body">
+          <p class="settings-hint">
+            An alert fires when the current cheapest listing is at least <strong>Threshold %</strong> below
+            the median of the last <strong>N cycles'</strong> median prices for that item.
+            Requires the poller to be running.
+          </p>
+          <div class="settings-field">
+            <label class="settings-label" for="cfgEnabled">
+              <input type="checkbox" id="cfgEnabled" />
+              Enable Discord alerts
+            </label>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="cfgThreshold">Threshold (%)</label>
+            <input type="number" id="cfgThreshold" class="settings-input" min="1" max="99" step="1" value="30" />
+            <span class="settings-hint-inline">How far below the baseline before an alert fires</span>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="cfgHistoryCycles">History cycles (N)</label>
+            <input type="number" id="cfgHistoryCycles" class="settings-input" min="2" max="100" step="1" value="10" />
+            <span class="settings-hint-inline">Number of past cycles used to compute the baseline</span>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="cfgWebhook">Discord webhook URL</label>
+            <input type="url" id="cfgWebhook" class="settings-input settings-input-wide" placeholder="https://discord.com/api/webhooks/..." />
+          </div>
+        </div>
+        <div class="settings-footer">
+          <span id="settingsSaveStatus" class="settings-save-status"></span>
+          <button id="settingsSaveBtn" class="settings-save-btn">Save</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

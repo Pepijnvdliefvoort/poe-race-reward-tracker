@@ -17,6 +17,7 @@ BASE_URL = "https://www.pathofexile.com/api/trade"
 DEFAULT_LEAGUE = "Standard"
 DEFAULT_ITEMS_FILE = "items.txt"
 DEFAULT_OUTPUT_FILE = "price_poll.csv"
+DEFAULT_CONFIG_FILE = "config.json"
 TOP_IDS_LIMIT = 5
 DIVINES_PER_MIRROR = 1650.0
 # All timestamps are stored in UTC (Coordinated Universal Time) in ISO 8601 format.
@@ -51,6 +52,100 @@ RESERVE_RATIO = 0.20
 @dataclass
 class Config:
     poll_interval: int
+    max_cycles: int | None
+
+
+@dataclass
+class AlertConfig:
+    enabled: bool
+    threshold_pct: float
+    history_cycles: int
+    webhook_url: str
+
+
+def load_alert_config() -> AlertConfig:
+    path = Path(DEFAULT_CONFIG_FILE)
+    if not path.exists():
+        return AlertConfig(enabled=False, threshold_pct=30.0, history_cycles=10, webhook_url="")
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return AlertConfig(
+            enabled=bool(data.get("alert_enabled", False)),
+            threshold_pct=float(data.get("alert_threshold_pct", 30.0)),
+            history_cycles=max(1, int(data.get("alert_history_cycles", 10))),
+            webhook_url=str(data.get("discord_webhook_url", "")),
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: Could not load alert config: {exc}")
+        return AlertConfig(enabled=False, threshold_pct=30.0, history_cycles=10, webhook_url="")
+
+
+def seed_price_history(output_csv: Path, history_cycles: int) -> dict[str, list[float]]:
+    """Prime in-memory price history from CSV row order (newest rows win naturally)."""
+    history: dict[str, list[float]] = {}
+    if not output_csv.exists():
+        return history
+    try:
+        with output_csv.open("r", encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh)
+            for row in reader:
+                item_name = (row.get("item_name") or "").strip()
+                item_mode = (row.get("item_mode") or "").strip()
+                median_raw = (row.get("median_mirror") or "").strip()
+                if not item_name or not item_mode or not median_raw:
+                    continue
+                try:
+                    key = f"{item_name}::{item_mode}"
+                    history.setdefault(key, []).append(float(median_raw))
+                except ValueError:
+                    continue
+
+        for key, values in list(history.items()):
+            history[key] = values[-history_cycles:]
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: Could not seed price history from CSV: {exc}")
+    return history
+
+
+def send_discord_alert(
+    alert_session: requests.Session,
+    item: ItemSpec,
+    current_lowest: float,
+    baseline: float,
+    pct_drop: float,
+    query_id: str,
+    webhook_url: str,
+    item_image_url: str | None = None,
+) -> None:
+    trade_url = f"https://www.pathofexile.com/trade/search/{DEFAULT_LEAGUE}/{query_id}"
+    embed = {
+        "title": f"\N{BELL} Price Alert: {item.name}",
+        "description": (
+            f"Listed at **{format_amount(current_lowest)} mirrors** \u2014 "
+            f"**{pct_drop:.1f}% below** baseline of {format_amount(baseline)} mirrors"
+        ),
+        "color": 0xFF6B35,
+        "fields": [
+            {
+                "name": "Trade Link",
+                "value": f"[View listing]({trade_url})",
+                "inline": False,
+            }
+        ],
+    }
+    if item_image_url:
+        embed["thumbnail"] = {"url": item_image_url}
+    try:
+        resp = alert_session.post(
+            webhook_url,
+            json={"content": "@everyone", "embeds": [embed]},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        print(f"Discord alert sent for {item.name} ({pct_drop:.1f}% below baseline)")
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: Failed to send Discord alert for {item.name}: {exc}")
 
 
 @dataclass
@@ -71,13 +166,21 @@ def parse_args() -> Config:
         default=3600,
         help="Poll interval in seconds; scheduling stays aligned to start-time grid",
     )
+    parser.add_argument(
+        "--max-cycles",
+        type=int,
+        default=None,
+        help="Stop after this many cycles (omit to run indefinitely)",
+    )
 
     args = parser.parse_args()
 
     if args.poll_interval <= 0:
         raise SystemExit("--poll-interval must be > 0")
+    if args.max_cycles is not None and args.max_cycles <= 0:
+        raise SystemExit("--max-cycles must be > 0")
 
-    return Config(poll_interval=args.poll_interval)
+    return Config(poll_interval=args.poll_interval, max_cycles=args.max_cycles)
 
 
 def build_session() -> requests.Session:
@@ -466,6 +569,43 @@ def extract_listing_prices(listings: list[dict[str, Any]]) -> tuple[list[float],
     return mirror_prices, divine_prices, unsupported_count
 
 
+def find_cheapest_listing_icon(
+    listings: list[dict[str, Any]],
+    divines_per_mirror: float,
+) -> str | None:
+    """Return icon URL for the cheapest valid listing, with a best-effort fallback."""
+    cheapest_icon: str | None = None
+    cheapest_price_mirror: float | None = None
+    fallback_icon: str | None = None
+
+    for entry in listings:
+        if not isinstance(entry, dict):
+            continue
+
+        listing = entry.get("listing")
+        price = listing.get("price") if isinstance(listing, dict) else None
+        normalized = normalize_price_currency(price) if isinstance(price, dict) else None
+        if normalized is None:
+            continue
+
+        currency, amount = normalized
+        amount_mirror = to_mirror_equivalent(amount, currency, divines_per_mirror)
+
+        item_data = entry.get("item")
+        icon_url = item_data.get("icon") if isinstance(item_data, dict) else None
+        if not isinstance(icon_url, str) or not icon_url:
+            icon_url = None
+
+        if icon_url and fallback_icon is None:
+            fallback_icon = icon_url
+
+        if cheapest_price_mirror is None or amount_mirror < cheapest_price_mirror:
+            cheapest_price_mirror = amount_mirror
+            cheapest_icon = icon_url
+
+    return cheapest_icon or fallback_icon
+
+
 def summarize_prices(prices: list[float]) -> tuple[float | None, float | None, float | None]:
     if not prices:
         return None, None, None
@@ -482,12 +622,88 @@ def format_amount(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
-def to_mirror_equivalent(amount: float, currency: str) -> float:
+def to_mirror_equivalent(amount: float, currency: str, divines_per_mirror: float = DIVINES_PER_MIRROR) -> float:
     if currency == "mirror":
         return amount
     if currency == "divine":
-        return amount / DIVINES_PER_MIRROR
+        return amount / divines_per_mirror
     raise ValueError(f"Unsupported currency: {currency}")
+
+
+def build_mirror_price_payload() -> dict[str, Any]:
+    """Bulk exchange payload: buying mirrors with divines, sorted cheapest first."""
+    return {
+        "query": {
+            "status": {"option": "online"},
+            "want": ["mirror"],
+            "have": ["divine"],
+        },
+        "sort": {"have": "asc"},
+        "engine": "new",
+    }
+
+
+def fetch_mirror_divine_median(
+    session: requests.Session,
+    rate_limiter: AdaptiveRateLimiter,
+) -> float | None:
+    """Fetch top 5 Mirror of Kalandra bulk-exchange listings and return the median divine price."""
+    url = f"{BASE_URL}/exchange/{DEFAULT_LEAGUE}"
+    payload = build_mirror_price_payload()
+
+    rate_limiter.wait_before_request()
+    response = session.post(url, data=json.dumps(payload), timeout=30.0)
+    rate_limiter.update_from_response(response.headers, response.status_code)
+    response.raise_for_status()
+
+    data = response.json()
+    # Exchange endpoint returns result as a dict {id: listing_data}, not a list.
+    result = data.get("result", {})
+
+    if isinstance(result, list):
+        # Fallback: some versions return a list of IDs instead.
+        entries = result[:TOP_IDS_LIMIT]
+    elif isinstance(result, dict):
+        all_ids = list(result.keys())[:TOP_IDS_LIMIT]
+        entries = [result[k] for k in all_ids]
+    else:
+        print("Mirror of Kalandra: unexpected result format from exchange endpoint.")
+        return None
+
+    if not entries:
+        print("Mirror of Kalandra: no exchange listings found.")
+        return None
+
+    divine_prices: list[float] = []
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        listing = entry.get("listing")
+        if not isinstance(listing, dict):
+            continue
+        offers = listing.get("offers", [])
+        if not isinstance(offers, list) or not offers:
+            continue
+        offer = offers[0]
+        exchange = offer.get("exchange", {})
+        item = offer.get("item", {})
+        # exchange.amount divines for item.amount mirrors
+        ex_amount = exchange.get("amount")
+        it_amount = item.get("amount") or 1
+        if isinstance(ex_amount, (int, float)) and ex_amount > 0:
+            divine_prices.append(float(ex_amount) / float(it_amount))
+
+    if not divine_prices:
+        print("Mirror of Kalandra: no valid divine-priced exchange listings in top 5.")
+        return None
+
+    median_price = statistics.median(divine_prices)
+    print(
+        f"Mirror of Kalandra: top-{len(divine_prices)} median = "
+        f"{format_amount(median_price)} divine  (ratio updated)"
+    )
+    return median_price
 
 
 def item_mode_label(item: ItemSpec) -> str:
@@ -576,7 +792,16 @@ def run_cycle(
     output_csv: Path,
     specs: list[ItemSpec],
     cycle: int,
-) -> None:
+    divines_per_mirror: float = DIVINES_PER_MIRROR,
+    price_history: dict[str, list[float]] | None = None,
+    alert_config: AlertConfig | None = None,
+) -> float:
+    """Run one poll cycle; returns the updated divines-per-mirror ratio."""
+    # Fetch Mirror of Kalandra price first so the live ratio is ready before item processing.
+    new_mirror_ratio = fetch_mirror_divine_median(session, rate_limiter)
+    if new_mirror_ratio is not None:
+        divines_per_mirror = new_mirror_ratio
+
     total_items = len(specs)
     max_mode_label_len = max(len(item_mode_label(spec)) for spec in specs)
     max_name_len = max(len(spec.name) for spec in specs)
@@ -585,11 +810,16 @@ def run_cycle(
         request_timestamp_utc = datetime.now(timezone.utc).isoformat()
         query_id, result_ids, total_results = search_item(session, rate_limiter, item)
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
+        cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
 
-        mirror_prices, divine_prices, unsupported_count = extract_listing_prices(listings)
+        raw_mirror_prices, divine_prices, unsupported_count = extract_listing_prices(listings)
+
+        # Convert all divine-priced listings to their mirror equivalent and merge.
+        converted = [p / divines_per_mirror for p in divine_prices]
+        mirror_prices = raw_mirror_prices + converted
+
         low_mirror, high_mirror, median_mirror = summarize_prices(mirror_prices)
-        low_divine, high_divine, median_divine = summarize_prices(divine_prices)
-        used_results = len(mirror_prices) + len(divine_prices)
+        used_results = len(mirror_prices)
 
         append_summary_row(
             path=output_csv,
@@ -604,25 +834,43 @@ def run_cycle(
             lowest_mirror=low_mirror,
             median_mirror=median_mirror,
             highest_mirror=high_mirror,
-            divine_count=len(divine_prices),
-            lowest_divine=low_divine,
-            median_divine=median_divine,
-            highest_divine=high_divine,
+            divine_count=0,
+            lowest_divine=None,
+            median_divine=None,
+            highest_divine=None,
         )
 
-        cheapest_text = "n/a"
-        cheapest_mirror_equiv: float | None = None
+        cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
-        if low_mirror is not None:
-            cheapest_mirror_equiv = to_mirror_equivalent(low_mirror, "mirror")
+        # --- Alert check ---
+        if price_history is None or alert_config is None:
+            pass  # Skip alert processing if context missing
+        elif not alert_config.enabled:
+            pass  # Skip alert processing if disabled
+        else:
+            item_key = f"{item.name}::{item_mode_token(item)}"
+            history = price_history.setdefault(item_key, [])
 
-        if low_divine is not None:
-            divine_as_mirror = to_mirror_equivalent(low_divine, "divine")
-            if cheapest_mirror_equiv is None or divine_as_mirror < cheapest_mirror_equiv:
-                cheapest_mirror_equiv = divine_as_mirror
+            if median_mirror is not None and low_mirror is not None and len(history) >= alert_config.history_cycles:
+                baseline = statistics.median(history[-alert_config.history_cycles:])
+                if baseline > 0:
+                    pct_drop = (baseline - low_mirror) / baseline * 100
+                    if pct_drop >= alert_config.threshold_pct and alert_config.webhook_url:
+                        send_discord_alert(
+                            session,
+                            item,
+                            low_mirror,
+                            baseline,
+                            pct_drop,
+                            query_id,
+                            alert_config.webhook_url,
+                            item_image_url=cheapest_icon_url,
+                        )
 
-        if cheapest_mirror_equiv is not None:
-            cheapest_text = f"{format_amount(cheapest_mirror_equiv)} mirrors"
+            # Append median (not lowest) to history — more stable baseline.
+            if median_mirror is not None:
+                history.append(median_mirror)
+                price_history[item_key] = history[-(alert_config.history_cycles * 3):]
 
         # Console display: use local time for readability (not stored, console-only)
         display_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -636,6 +884,8 @@ def run_cycle(
             f"[{index_label}] [{display_time}] {name_field} {mode_field} "
             f"{total_field}   cheapest={cheapest_text}"
         )
+
+    return divines_per_mirror
 
 
 def seconds_until_next_tick(start_monotonic: float, delay_seconds: int, now_monotonic: float) -> float:
@@ -663,15 +913,31 @@ def main() -> None:
 
     start_monotonic = time.monotonic()
     cycle = 0
+    divines_per_mirror = DIVINES_PER_MIRROR
 
-    while True:
+    # Load alert config and seed price history from existing CSV.
+    alert_config = load_alert_config()
+    price_history = seed_price_history(output_csv, alert_config.history_cycles)
+    print(
+        f"Alert config: enabled={alert_config.enabled}, "
+        f"threshold={alert_config.threshold_pct}%, "
+        f"history_cycles={alert_config.history_cycles}"
+    )
+
+    while cfg.max_cycles is None or cycle < cfg.max_cycles:
         cycle += 1
         # Console display: use local time for readability (not stored, console-only)
         cycle_start = datetime.now().strftime("%H:%M:%S")
         print(f"\nCycle {cycle} start at {cycle_start}")
 
+        # Reload alert config each cycle so UI changes take effect without restart.
+        alert_config = load_alert_config()
+
         try:
-            run_cycle(session, rate_limiter, output_csv, item_specs, cycle)
+            divines_per_mirror = run_cycle(
+                session, rate_limiter, output_csv, item_specs, cycle,
+                divines_per_mirror, price_history, alert_config,
+            )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "?"
             print(f"HTTP error during cycle {cycle}: status={status} error={exc}")
@@ -679,6 +945,10 @@ def main() -> None:
             print(f"Request error during cycle {cycle}: {exc}")
         except Exception as exc:  # noqa: BLE001
             print(f"Unexpected error during cycle {cycle}: {exc}")
+
+        if cfg.max_cycles is not None and cycle >= cfg.max_cycles:
+            print(f"Reached max-cycles ({cfg.max_cycles}). Stopping.")
+            break
 
         sleep_seconds = seconds_until_next_tick(
             start_monotonic=start_monotonic,

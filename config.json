@@ -1,0 +1,6 @@
+{
+  "alert_enabled": false,
+  "alert_threshold_pct": 30,
+  "alert_history_cycles": 5,
+  "discord_webhook_url": ""
+}
