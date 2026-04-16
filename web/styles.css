@@ -179,6 +179,7 @@ h1 {
   display: flex;
   gap: 12px;
   align-items: flex-end;
+  flex-wrap: wrap;
 }
 
 .filter-group {
@@ -195,7 +196,7 @@ h1 {
   font-weight: 500;
 }
 
-.filter-group input,
+.filter-group input:not([type="checkbox"]),
 .filter-group select {
   background: rgba(9, 12, 18, 0.88);
   border: 1px solid rgba(139, 163, 194, 0.3);
@@ -208,12 +209,228 @@ h1 {
   min-width: 150px;
 }
 
-.filter-group input::placeholder {
+.filter-group-checkbox {
+  min-width: 150px;
+}
+
+.filter-group-range {
+  min-width: 190px;
+}
+
+.range-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.range-control {
+  background: rgba(9, 12, 18, 0.88);
+  border: 1px solid rgba(139, 163, 194, 0.3);
+  border-radius: 8px;
+  padding: 0 10px;
+  height: 33px;
+  display: flex;
+  align-items: center;
+  transition: border-color 0.2s;
+}
+
+.range-control:focus-within {
+  border-color: var(--accent);
+}
+
+.range-slider-wrap {
+  position: relative;
+  width: 100%;
+  height: 20px;
+}
+
+.range-bg {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  height: 4px;
+  background: rgba(139, 163, 194, 0.2);
+  border-radius: 2px;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.range-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.range-slider-wrap input[type="range"] {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  transform: translateY(-50%);
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  pointer-events: none;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  min-width: unset;
+  border: none;
+  border-radius: 0;
+}
+
+.range-slider-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: all;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.5);
+  transition: transform 0.12s;
+}
+
+.range-slider-wrap input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.range-slider-wrap input[type="range"]::-moz-range-thumb {
+  pointer-events: all;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.5);
+}
+
+.range-values {
+  display: flex;
+  gap: 2px;
+  align-items: baseline;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.range-num-input {
+  width: 3ch;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(139, 163, 194, 0.35);
+  border-radius: 0;
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 400;
+  padding: 0;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+  min-width: unset;
+  line-height: 1;
+}
+
+.range-num-input::-webkit-outer-spin-button,
+.range-num-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.range-num-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+.range-at-cap {
+  display: none;
   color: var(--ink-soft);
   opacity: 0.6;
 }
 
-.filter-group input:focus,
+.range-at-cap.visible {
+  display: inline;
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 33px;
+  width: 100%;
+  border: 1px solid rgba(139, 163, 194, 0.3);
+  border-radius: 8px;
+  background: rgba(9, 12, 18, 0.88);
+  padding: 6px 10px;
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.checkbox-row:focus-within {
+  border-color: var(--accent);
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #ffcb48;
+}
+
+.reset-filters-btn {
+  background: rgba(9, 12, 18, 0.88);
+  border: 1px solid rgba(255, 77, 79, 0.4);
+  border-radius: 8px;
+  color: rgba(255, 77, 79, 0.7);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+  height: 33px;
+}
+
+.reset-filters-btn:hover {
+  border-color: var(--error);
+  color: var(--error);
+  background: rgba(255, 77, 79, 0.08);
+}
+
+.reset-filters-btn:focus-visible {
+  outline: none;
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.filter-group input:not([type="checkbox"])::placeholder {
+  color: var(--ink-soft);
+  opacity: 0.6;
+}
+
+.filter-group input:not([type="checkbox"]):focus,
 .filter-group select:focus {
   outline: none;
   border-color: var(--accent);
@@ -226,6 +443,7 @@ h1 {
 }
 
 .card {
+  position: relative;
   background: linear-gradient(180deg, rgba(13, 18, 28, 0.98), rgba(8, 12, 20, 0.98));
   border: 1px solid rgba(165, 177, 198, 0.3);
   border-radius: 6px;
@@ -243,6 +461,44 @@ h1 {
     inset 0 0 0 1px rgba(41, 54, 74, 0.6),
     inset 0 0 0 1px rgba(38, 185, 109, 0.35),
     var(--shadow);
+}
+
+.card.favorited {
+  border-color: rgba(255, 203, 72, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(41, 54, 74, 0.6),
+    inset 0 0 0 1px rgba(255, 203, 72, 0.28),
+    var(--shadow);
+}
+
+.favorite-toggle {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(171, 186, 211, 0.4);
+  border-radius: 4px;
+  background: rgba(9, 13, 20, 0.9);
+  color: rgba(214, 225, 241, 0.84);
+  display: grid;
+  place-items: center;
+  font-size: 0.88rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.favorite-toggle:hover,
+.favorite-toggle:focus-visible {
+  border-color: rgba(255, 203, 72, 0.78);
+  color: rgba(255, 203, 72, 0.94);
+  outline: none;
+}
+
+.favorite-toggle.checked {
+  border-color: rgba(255, 203, 72, 0.9);
+  color: rgba(255, 203, 72, 0.98);
 }
 
 .card.card-enter {
@@ -433,7 +689,7 @@ canvas {
     width: 100%;
   }
 
-  .filter-group input,
+  .filter-group input:not([type="checkbox"]),
   .filter-group select {
     min-width: 100%;
   }

@@ -53,6 +53,34 @@
               <option value="lowest">Lowest Trend</option>
             </select>
           </div>
+          <div class="filter-group filter-group-checkbox">
+            <label for="favoritesOnly">Favorites</label>
+            <label class="checkbox-row" for="favoritesOnly">
+              <input type="checkbox" id="favoritesOnly" />
+              Favorites only
+            </label>
+          </div>
+          <div class="filter-group filter-group-range">
+            <div class="range-label-row">
+              <span>Price Range</span>
+              <span class="range-values">
+                <input type="number" id="priceRangeMinLabel" class="range-num-input" min="0" max="100" step="1" value="0" />
+                <span class="range-sep">&ndash;</span>
+                <input type="number" id="priceRangeMaxLabel" class="range-num-input" min="0" max="100" step="1" value="100" /><span class="range-at-cap" id="rangeAtCap">+</span>
+                <span class="range-unit">m</span>
+              </span>
+            </div>
+            <div class="range-control">
+              <div class="range-slider-wrap">
+                <div class="range-bg">
+                  <div class="range-fill" id="rangeFill"></div>
+                </div>
+                <input type="range" id="priceRangeMin" min="0" max="100" step="1" value="0" />
+                <input type="range" id="priceRangeMax" min="0" max="100" step="1" value="100" />
+              </div>
+            </div>
+          </div>
+          <button id="resetFiltersBtn" class="reset-filters-btn" title="Clear all filters">Reset Filters</button>
         </aside>
         <section class="stats-grid" id="overview"></section>
       </div>
