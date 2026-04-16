@@ -115,6 +115,13 @@ export function ensureCard(item, onFavoriteToggle) {
 
   const trend = document.createElement("div");
   trend.className = "trend";
+  const trendLabel = document.createElement("span");
+  trendLabel.className = "trend-listings";
+  trendLabel.textContent = "Price Trend: ";
+  const trendIndicator = document.createElement("span");
+  const trendListings = document.createElement("span");
+  trendListings.className = "trend-listings";
+  trend.append(trendLabel, trendIndicator, trendListings);
 
   artFrame.prepend(favoriteBtn);
   card.append(title, artFrame, priceBox, chartWrap, trend);
@@ -235,13 +242,13 @@ export function ensureCard(item, onFavoriteToggle) {
     },
   });
 
-  entry = { card, favoriteBtn, img, artFrame, priceBox, trend, chart };
+  entry = { card, favoriteBtn, img, artFrame, priceBox, trend, trendIndicator, trendListings, chart };
   chartMap.set(key, entry);
   return entry;
 }
 
 export function updateCard(item, onFavoriteToggle) {
-  const { card, favoriteBtn, img, artFrame, priceBox, trend, chart } = ensureCard(item, onFavoriteToggle);
+  const { card, favoriteBtn, img, artFrame, priceBox, trend, trendIndicator, trendListings, chart } = ensureCard(item, onFavoriteToggle);
   const cutoff = Date.now() - ONE_MONTH_MS;
   const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
   const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
@@ -256,7 +263,7 @@ export function updateCard(item, onFavoriteToggle) {
   favoriteBtn.title = isFavorited ? "Unfavorite" : "Favorite";
 
   chart.data.labels = chartPoints.map((p) => formatTime(p.x));
-  chart.data.datasets[0].data = chartPoints.map((p) => p.y);
+  chart.data.datasets[0].data = chartPoints.map((p) => (p.y != null ? Math.round(p.y) : p.y));
   chart.update();
 
   const latest = item.latest || {};
@@ -295,10 +302,16 @@ export function updateCard(item, onFavoriteToggle) {
 
   let trendSymbol = "-";
   let trendClass = "flat";
-  const valid = sparkValues.filter((v) => v != null && !Number.isNaN(v));
+  let trendPercentage = "";
+  const valid = sparkValues.filter((v) => v != null && !Number.isNaN(v)).map((v) => Math.round(v));
   if (valid.length >= 2) {
     const first = valid[0];
     const last = valid[valid.length - 1];
+    const percentageChange = ((last - first) / first) * 100;
+    const roundedPercentage = Math.round(percentageChange);
+    if (Math.abs(roundedPercentage) >= 1) {
+      trendPercentage = `${roundedPercentage >= 0 ? "+" : ""}${roundedPercentage}% `;
+    }
     if (last > first) {
       trendSymbol = "▲";
       trendClass = "up";
@@ -309,7 +322,8 @@ export function updateCard(item, onFavoriteToggle) {
   }
 
   trend.className = `trend ${trendClass}`;
-  trend.textContent = `Price Trend: ${trendSymbol}   Listings: ${latestValid ? (latest.totalResults ?? 0) : "n/a"}`;
+  trendIndicator.textContent = `${trendPercentage}${trendSymbol}`;
+  trendListings.textContent = `   Listings: ${latestValid ? (latest.totalResults ?? 0) : "n/a"}`;
 }
 
 export function updateAllCards(itemsToRender, onFavoriteToggle) {
