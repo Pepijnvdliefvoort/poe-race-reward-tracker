@@ -1,0 +1,16 @@
+[Unit]
+Description=PoE Market Poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/poe-market-flips
+ExecStart=/opt/poe-market-flips/.venv/bin/python poll_item_prices.py --poll-interval 3600
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

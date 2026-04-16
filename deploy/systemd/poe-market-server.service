@@ -1,0 +1,16 @@
+[Unit]
+Description=PoE Market Dashboard Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/poe-market-flips
+ExecStart=/opt/poe-market-flips/.venv/bin/python web/server.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

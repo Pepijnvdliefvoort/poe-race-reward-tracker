@@ -1,0 +1,9 @@
+178.104.113.149 {
+    reverse_proxy 127.0.0.1:8080
+    encode zstd gzip
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
