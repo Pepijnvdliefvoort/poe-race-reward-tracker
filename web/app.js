@@ -1,5 +1,5 @@
 const REFRESH_MS = 4000;
-const MAX_POINTS = 14;
+const MAX_POINTS = 8;
 const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 const FAVORITES_STORAGE_KEY = "poe-market-favorites";
 
@@ -252,14 +252,15 @@ priceRangeMaxLabel.addEventListener("change", () => {
 });
 
 function getTrendValue(item) {
-  const points = (item.points || []).slice(-MAX_POINTS);
-  const sparkValues = points.map((p) => p.medianMirror ?? p.lowestMirror ?? p.highestMirror);
-  const valid = sparkValues.filter((v) => v != null && !Number.isNaN(v));
+  const cutoff = Date.now() - ONE_MONTH_MS;
+  const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
+  const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
+  const valid = chartPoints.map((p) => p.y).filter((v) => v != null && !Number.isNaN(v));
   
   if (valid.length >= 2) {
-    const prev = valid[valid.length - 2];
-    const curr = valid[valid.length - 1];
-    return curr - prev;
+    const first = valid[0];
+    const last = valid[valid.length - 1];
+    return last - first;
   }
   return 0;
 }
@@ -460,6 +461,75 @@ function formatTime(ms, withSeconds = false) {
   });
 }
 
+function getPointMirrorValue(point) {
+  const value = point?.medianMirror ?? point?.lowestMirror ?? point?.highestMirror;
+  return value == null || Number.isNaN(value) ? null : value;
+}
+
+// LTTB keeps the overall line shape when reducing many points to a smaller, readable set.
+function largestTriangleThreeBuckets(data, threshold) {
+  if (threshold >= data.length || threshold === 0) {
+    return data;
+  }
+
+  const sampled = [data[0]];
+  const every = (data.length - 2) / (threshold - 2);
+  let a = 0;
+
+  for (let i = 0; i < threshold - 2; i += 1) {
+    let avgX = 0;
+    let avgY = 0;
+    const avgRangeStart = Math.floor((i + 1) * every) + 1;
+    const avgRangeEnd = Math.min(Math.floor((i + 2) * every) + 1, data.length);
+    const avgRangeLength = Math.max(1, avgRangeEnd - avgRangeStart);
+
+    for (let j = avgRangeStart; j < avgRangeEnd; j += 1) {
+      avgX += data[j].x;
+      avgY += data[j].y;
+    }
+    avgX /= avgRangeLength;
+    avgY /= avgRangeLength;
+
+    const rangeOffs = Math.floor(i * every) + 1;
+    const rangeTo = Math.min(Math.floor((i + 1) * every) + 1, data.length - 1);
+
+    let maxArea = -1;
+    let maxAreaPoint = data[rangeOffs] ?? data[a];
+    let nextA = rangeOffs;
+
+    for (let j = rangeOffs; j < rangeTo; j += 1) {
+      const area = Math.abs(
+        (data[a].x - avgX) * (data[j].y - data[a].y) -
+        (data[a].x - data[j].x) * (avgY - data[a].y)
+      ) * 0.5;
+
+      if (area > maxArea) {
+        maxArea = area;
+        maxAreaPoint = data[j];
+        nextA = j;
+      }
+    }
+
+    sampled.push(maxAreaPoint);
+    a = nextA;
+  }
+
+  sampled.push(data[data.length - 1]);
+  return sampled;
+}
+
+function getCondensedChartPoints(points, maxPoints) {
+  const normalized = points
+    .map((point) => ({ x: point.time, y: getPointMirrorValue(point) }))
+    .filter((point) => point.y != null);
+
+  if (normalized.length <= maxPoints) {
+    return normalized;
+  }
+
+  return largestTriangleThreeBuckets(normalized, maxPoints);
+}
+
 function setStatus(state, text) {
   statusDot.classList.remove("ok", "warn", "error");
   statusDot.classList.add(state);
@@ -585,8 +655,18 @@ function ensureCard(item) {
         },
         tooltip: {
           callbacks: {
-            label: (ctx) => `Price ${formatNumber(ctx.parsed.y)}m`,
+            title: () => null,
+            label: (ctx) => `${Math.round(ctx.parsed.y)} mirrors`,
           },
+          // Enable tooltip for entire chart area
+          enabled: true,
+          mode: "index",
+          intersect: false,
+          displayColors: false,
+          position: "nearest",
+          xAlign: "center",
+          yAlign: "bottom",
+          caretPadding: 6,
         },
       },
       scales: {
@@ -603,6 +683,66 @@ function ensureCard(item) {
         },
       },
     },
+    plugins: [
+      {
+        id: "sectionedTooltip",
+        afterDatasetsDraw(chart) {
+          const datasetMeta = chart.getDatasetMeta(0);
+          const dataPoints = datasetMeta.data || [];
+
+          if (dataPoints.length === 0) return;
+
+          // Store the pixel positions of each data point
+          const pointPositions = dataPoints.map((point) => ({ x: point.x, y: point.y }));
+
+          chart._sectionTooltipData = {
+            pointPositions,
+            dataLength: dataPoints.length,
+          };
+        },
+      },
+    ],
+    onHover: (event, activeElements) => {
+      if (!chart._sectionTooltipData || !event.native) {
+        // Clear tooltip when mouse leaves
+        chart.tooltip.setActiveElements([], {});
+        chart.draw();
+        return;
+      }
+
+      const { pointPositions, dataLength } = chart._sectionTooltipData;
+      const mouseX = event.native.offsetX;
+
+      if (dataLength === 0) {
+        chart.tooltip.setActiveElements([], {});
+        chart.draw();
+        return;
+      }
+
+      // Find which section the mouse is in based on data point positions
+      let closestIndex = 0;
+      if (dataLength === 1) {
+        closestIndex = 0;
+      } else {
+        // Find the section by comparing mouse position with data point boundaries
+        for (let i = 0; i < dataLength - 1; i++) {
+          if (mouseX < pointPositions[i + 1].x) {
+            closestIndex = i;
+            break;
+          }
+          closestIndex = i + 1;
+        }
+      }
+
+      const activePoint = pointPositions[closestIndex];
+
+      // Trigger tooltip for this section's data point
+      chart.tooltip.setActiveElements(
+        [{ datasetIndex: 0, index: closestIndex }],
+        { x: activePoint.x, y: activePoint.y - 8 }
+      );
+      chart.draw();
+    },
   });
 
   entry = { card, favoriteBtn, img, artFrame, priceBox, trend, chart };
@@ -613,7 +753,9 @@ function ensureCard(item) {
 function updateCard(item) {
   const { card, favoriteBtn, img, artFrame, priceBox, trend, chart } = ensureCard(item);
   const cutoff = Date.now() - ONE_MONTH_MS;
-  const points = (item.points || []).filter((p) => p.time >= cutoff).slice(-MAX_POINTS);
+  const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
+  const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
+  const sparkValues = chartPoints.map((p) => p.y);
 
   card.classList.toggle("next-in-line", item.itemName === nextInLineItemName);
   const isFavorited = favoriteItems.has(item.itemName);
@@ -623,9 +765,8 @@ function updateCard(item) {
   favoriteBtn.setAttribute("aria-label", isFavorited ? `Unfavorite ${item.itemName}` : `Favorite ${item.itemName}`);
   favoriteBtn.title = isFavorited ? "Unfavorite" : "Favorite";
 
-  const sparkValues = points.map((p) => p.medianMirror ?? p.lowestMirror ?? p.highestMirror);
-  chart.data.labels = points.map((p) => formatTime(p.time));
-  chart.data.datasets[0].data = sparkValues;
+  chart.data.labels = chartPoints.map((p) => formatTime(p.x));
+  chart.data.datasets[0].data = chartPoints.map((p) => p.y);
   chart.update();
 
   const latest = item.latest || {};
@@ -665,12 +806,12 @@ function updateCard(item) {
   let trendClass = "flat";
   const valid = sparkValues.filter((v) => v != null && !Number.isNaN(v));
   if (valid.length >= 2) {
-    const prev = valid[valid.length - 2];
-    const curr = valid[valid.length - 1];
-    if (curr > prev) {
+    const first = valid[0];
+    const last = valid[valid.length - 1];
+    if (last > first) {
       trendSymbol = "▲";
       trendClass = "up";
-    } else if (curr < prev) {
+    } else if (last < first) {
       trendSymbol = "▼";
       trendClass = "down";
     }
