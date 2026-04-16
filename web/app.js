@@ -515,7 +515,8 @@ function ensureCard(item) {
   const favoriteBtn = document.createElement("button");
   favoriteBtn.type = "button";
   favoriteBtn.className = "favorite-toggle";
-  favoriteBtn.addEventListener("click", () => {
+  favoriteBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
     if (favoriteItems.has(key)) {
       favoriteItems.delete(key);
     } else {
@@ -549,7 +550,8 @@ function ensureCard(item) {
   const trend = document.createElement("div");
   trend.className = "trend";
 
-  card.append(favoriteBtn, title, artFrame, priceBox, chartWrap, trend);
+  artFrame.prepend(favoriteBtn);
+  card.append(title, artFrame, priceBox, chartWrap, trend);
   cardsEl.appendChild(card);
 
   const chart = new Chart(canvas.getContext("2d"), {

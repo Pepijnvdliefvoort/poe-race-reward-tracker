@@ -473,8 +473,8 @@ h1 {
 
 .favorite-toggle {
   position: absolute;
-  top: 7px;
-  right: 8px;
+  top: 4px;
+  right: 4px;
   width: 20px;
   height: 20px;
   border: 1px solid rgba(171, 186, 211, 0.4);
@@ -487,6 +487,7 @@ h1 {
   line-height: 1;
   cursor: pointer;
   padding: 0;
+  z-index: 2;
 }
 
 .favorite-toggle:hover,
