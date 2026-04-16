@@ -8,6 +8,12 @@ export function formatNumber(value) {
   return value.toFixed(2).replace(/\.00$/, "");
 }
 
+/**
+ * Format Unix epoch milliseconds (UTC-based) to local time string.
+ * Input: epoch milliseconds from backend (always UTC-based)
+ * Output: formatted time string in browser's local timezone via toLocaleTimeString()
+ * Example: formatTime(1713275400000) -> "2:30 PM" (in user's local timezone)
+ */
 export function formatTime(ms, withSeconds = false) {
   const d = new Date(ms);
   return d.toLocaleTimeString([], {

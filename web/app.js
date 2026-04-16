@@ -229,11 +229,13 @@ function statTile(label, value) {
 function updateOverview(payload) {
   const items = payload.items || [];
   const totalRows = payload.rowCount || 0;
+  // nextPollTime is epoch milliseconds (UTC-based) from backend
   const nextPollTime = payload.nextPollTime;
 
   const tiles = [statTile("Tracked Items", String(items.length)), statTile("Data points", String(totalRows))];
 
   if (nextPollTime) {
+    // Create Date from epoch ms and convert to browser's local timezone
     const nextPollDate = new Date(nextPollTime);
     const timeString = nextPollDate.toLocaleTimeString([], {
       hour: "2-digit",
@@ -283,6 +285,8 @@ async function refresh() {
 
     const payload = await response.json();
     render(payload);
+    // All point.time values are epoch milliseconds (UTC-based) from backend
+    // formatTime() converts them to browser's local timezone automatically
     const latestTs = (payload.items || [])
       .flatMap((item) => item.points || [])
       .map((point) => point.time)

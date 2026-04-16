@@ -25,6 +25,12 @@ def _parse_float(value: str) -> float | None:
 
 
 def _to_epoch_ms(timestamp_utc: str) -> int | None:
+    """
+    Convert UTC ISO 8601 timestamp string to epoch milliseconds.
+    Input: UTC timestamp string from CSV (e.g., "2026-04-16T12:00:00+00:00")
+    Output: Unix epoch milliseconds (UTC-based, safe for JavaScript Date constructor)
+    Frontend will convert this to local time automatically via toLocaleTimeString().
+    """
     if not timestamp_utc:
         return None
     try:
@@ -231,6 +237,11 @@ def _calculate_next_poll_time() -> int | None:
 
 
 def load_price_data() -> dict[str, Any]:
+    """
+    Load price data from CSV and return as JSON payload.
+    All timestamps in returned data are in epoch milliseconds (UTC-based).
+    Frontend receives milliseconds and displays in browser's local timezone.
+    """
     variants_by_name, order_by_key = _load_item_variants()
     items: dict[str, dict[str, Any]] = _seed_items_from_variants(variants_by_name)
 

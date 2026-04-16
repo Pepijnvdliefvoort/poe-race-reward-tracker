@@ -19,8 +19,10 @@ DEFAULT_ITEMS_FILE = "items.txt"
 DEFAULT_OUTPUT_FILE = "price_poll.csv"
 TOP_IDS_LIMIT = 5
 DIVINES_PER_MIRROR = 1650.0
+# All timestamps are stored in UTC (Coordinated Universal Time) in ISO 8601 format.
+# When displayed to users via the web dashboard, they are automatically converted to local time.
 CSV_HEADER = [
-    "timestamp_utc",
+    "timestamp_utc",  # ISO 8601 format, always UTC
     "cycle",
     "item_name",
     "item_mode",
@@ -622,6 +624,7 @@ def run_cycle(
         if cheapest_mirror_equiv is not None:
             cheapest_text = f"{format_amount(cheapest_mirror_equiv)} mirrors"
 
+        # Console display: use local time for readability (not stored, console-only)
         display_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         index_width = len(str(total_items))
         index_label = f"{index:>{index_width}}/{total_items}"
@@ -663,6 +666,7 @@ def main() -> None:
 
     while True:
         cycle += 1
+        # Console display: use local time for readability (not stored, console-only)
         cycle_start = datetime.now().strftime("%H:%M:%S")
         print(f"\nCycle {cycle} start at {cycle_start}")
 
@@ -681,6 +685,7 @@ def main() -> None:
             delay_seconds=cfg.poll_interval,
             now_monotonic=time.monotonic(),
         )
+        # Console display: use local time for readability (not stored, console-only)
         next_run = datetime.now().timestamp() + sleep_seconds
         next_run_text = datetime.fromtimestamp(next_run).strftime("%H:%M:%S")
         print(f"Cycle {cycle} complete. Sleeping {int(sleep_seconds)}s until {next_run_text}")
