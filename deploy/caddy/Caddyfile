@@ -1,4 +1,6 @@
-178.104.113.149 {
+# Replace with your own hostname (recommended) or PUBLIC_IP.sslip.io.
+# Example: 178.104.113.149.sslip.io
+PUBLIC_HOSTNAME_HERE {
     reverse_proxy 127.0.0.1:8080
     encode zstd gzip
     header {
