@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PoE Race Rewards</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="icon" type="image/png" href="./assets/icons/DemigodsImmortality.png" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <div class="bg-orb bg-orb-a" aria-hidden="true"></div>
+    <div class="bg-orb bg-orb-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Live Dashboard</p>
+        <h1>PoE Race Rewards</h1>
+      </div>
+      <div class="meta" id="meta">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </header>
+
+    <main>
+      <div class="controls-row">
+        <aside class="filters-panel">
+          <div class="filter-group">
+            <label for="searchInput">Search</label>
+            <input type="text" id="searchInput" placeholder="Filter by name..." />
+          </div>
+          <div class="filter-group">
+            <label for="priceSort">Price</label>
+            <select id="priceSort">
+              <option value="">None</option>
+              <option value="asc">Lowest First</option>
+              <option value="desc">Highest First</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="trendSort">Trend</label>
+            <select id="trendSort">
+              <option value="">None</option>
+              <option value="highest">Highest Trend</option>
+              <option value="lowest">Lowest Trend</option>
+            </select>
+          </div>
+        </aside>
+        <section class="stats-grid" id="overview"></section>
+      </div>
+      <section class="cards" id="cards"></section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        &copy; 2026. Made by
+        <a href="https://www.pathofexile.com/account/view-profile/iNeoxiz-3422" target="_blank" rel="noopener noreferrer">iNeoxiz</a>.
+      </p>
+    </footer>
+  </body>
+</html>
