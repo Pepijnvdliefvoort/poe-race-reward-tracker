@@ -24,4 +24,5 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/poe-market-flips
+            git pull --ff-only
             bash deploy/deploy_on_vps.sh
