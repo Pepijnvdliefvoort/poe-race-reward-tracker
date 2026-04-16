@@ -100,3 +100,93 @@ If the CSV header does not match the current schema, the poller creates a backup
 - Poll timing is aligned to a fixed start-time grid, not just "sleep N seconds after completion".
 - The script includes adaptive rate-limit pacing using response headers.
 - Stop either process with `Ctrl+C`.
+
+## Deploy On A VPS (Beginner Friendly)
+
+If you want this online 24/7, run it on a VPS. This project uses two always-on processes:
+
+- `web/server.py` (dashboard + API)
+- `poll_item_prices.py` (writes fresh data to `price_poll.csv`)
+
+### Prerequisites
+
+- A Linux VPS (Ubuntu recommended)
+- SSH access as `root`
+- Your repo already pushed to GitHub
+
+### One-Time Setup Script (run on the VPS)
+
+Replace `YOUR_USERNAME/YOUR_REPO` before running.
+
+```bash
+apt update && apt install -y python3 python3-venv python3-pip caddy git
+
+cd /opt
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git poe-market-flips
+cd poe-market-flips
+
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+cp deploy/systemd/poe-market-server.service /etc/systemd/system/
+cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now poe-market-server
+systemctl enable --now poe-market-poller
+
+cp deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+systemctl reload caddy
+```
+
+### Check That Everything Is Running
+
+```bash
+systemctl status poe-market-server --no-pager
+systemctl status poe-market-poller --no-pager
+systemctl status caddy --no-pager
+```
+
+Live logs:
+
+```bash
+journalctl -u poe-market-server -f
+journalctl -u poe-market-poller -f
+```
+
+### Open The Site
+
+If your `deploy/caddy/Caddyfile` is configured with your public IP (for example `178.104.113.149`), open:
+
+- `http://178.104.113.149`
+
+Note: HTTPS certificates are normally issued for domains, not bare IP addresses. For HTTPS, point a domain to the VPS and update `deploy/caddy/Caddyfile` to use that domain.
+
+### Update After You Push New Code
+
+Run this on the VPS:
+
+```bash
+cd /opt/poe-market-flips
+git pull
+.venv/bin/pip install -r requirements.txt
+systemctl restart poe-market-server
+systemctl restart poe-market-poller
+systemctl reload caddy
+```
+
+### Common Recovery Commands
+
+Restart services:
+
+```bash
+systemctl restart poe-market-server
+systemctl restart poe-market-poller
+```
+
+Re-read service files after changes:
+
+```bash
+systemctl daemon-reload
+systemctl restart poe-market-server
+systemctl restart poe-market-poller
+```

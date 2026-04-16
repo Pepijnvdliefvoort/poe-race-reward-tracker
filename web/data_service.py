@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -160,20 +161,45 @@ def _load_item_variants() -> tuple[dict[str, list[dict[str, Any]]], dict[str, in
 
 
 def _get_image_path(item_name: str, is_aa: bool | None) -> str | None:
-    """Generate local image filename for item. Strips apostrophes and spaces."""
-    clean_name = item_name.replace("'", "").replace(" ", "")
-
+    """Generate local image filename for item with Linux-safe case-insensitive matching."""
     if is_aa is None or is_aa is True:
-        aa_path = WEB_DIR / "assets" / "icons" / f"{clean_name}Alt.png"
-        if aa_path.exists():
-            return f"/assets/icons/{clean_name}Alt.png"
+        aa_name = _resolve_icon_filename(item_name, is_alt=True)
+        if aa_name:
+            return f"/assets/icons/{aa_name}"
 
-    if is_aa is None or is_aa is False:
-        normal_path = WEB_DIR / "assets" / "icons" / f"{clean_name}.png"
-        if normal_path.exists():
-            return f"/assets/icons/{clean_name}.png"
+    # If alt art is missing, gracefully fall back to normal icon when available.
+    if is_aa is None or is_aa is False or is_aa is True:
+        normal_name = _resolve_icon_filename(item_name, is_alt=False)
+        if normal_name:
+            return f"/assets/icons/{normal_name}"
 
     return None
+
+
+def _normalize_icon_token(value: str) -> str:
+    return value.replace("'", "").replace(" ", "").replace("-", "").lower()
+
+
+@lru_cache(maxsize=1)
+def _icon_index() -> dict[str, str]:
+    icons_dir = WEB_DIR / "assets" / "icons"
+    mapping: dict[str, str] = {}
+
+    if not icons_dir.exists():
+        return mapping
+
+    for file_path in icons_dir.iterdir():
+        if not file_path.is_file() or file_path.suffix.lower() != ".png":
+            continue
+        mapping[_normalize_icon_token(file_path.stem)] = file_path.name
+
+    return mapping
+
+
+def _resolve_icon_filename(item_name: str, is_alt: bool) -> str | None:
+    suffix = "Alt" if is_alt else ""
+    wanted = _normalize_icon_token(f"{item_name}{suffix}")
+    return _icon_index().get(wanted)
 
 
 def _calculate_next_poll_time() -> int | None:
