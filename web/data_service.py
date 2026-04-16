@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import json
+import math
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -9,8 +11,36 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WEB_DIR = ROOT_DIR / "web"
 CSV_PATH = ROOT_DIR / "price_poll.csv"
+CONFIG_PATH = ROOT_DIR / "config.json"
 ITEMS_FILE = ROOT_DIR / "items.txt"
 POLL_INTERVAL_SECONDS = 3600
+
+DEFAULT_CONFIG = {
+    "alert_enabled": False,
+    "alert_threshold_pct": 30,
+    "alert_history_cycles": 10,
+    "discord_webhook_url": "",
+}
+
+
+def load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return dict(DEFAULT_CONFIG)
+    try:
+        with CONFIG_PATH.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        merged = dict(DEFAULT_CONFIG)
+        merged.update({k: v for k, v in data.items() if k in DEFAULT_CONFIG})
+        return merged
+    except Exception:
+        return dict(DEFAULT_CONFIG)
+
+
+def save_config(data: dict) -> None:
+    merged = dict(DEFAULT_CONFIG)
+    merged.update({k: v for k, v in data.items() if k in DEFAULT_CONFIG})
+    with CONFIG_PATH.open("w", encoding="utf-8") as fh:
+        json.dump(merged, fh, indent=2)
 
 
 def _parse_float(value: str) -> float | None:
@@ -20,9 +50,20 @@ def _parse_float(value: str) -> float | None:
     if not value:
         return None
     try:
-        return float(value)
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            return None
+        return parsed
     except ValueError:
         return None
+
+
+def _order_or_max(order: Any) -> int:
+    if isinstance(order, int):
+        return order
+    if isinstance(order, float) and math.isfinite(order):
+        return int(order)
+    return 10**9
 
 
 def _to_epoch_ms(timestamp_utc: str) -> int | None:
@@ -110,7 +151,7 @@ def _seed_items_from_variants(variants_by_name: dict[str, list[dict[str, Any]]])
                 "baseItemName": base_item_name,
                 "mode": mode,
                 "imagePath": _get_image_path(base_item_name, _mode_to_is_aa(mode)),
-                "sortOrder": variant.get("order", float("inf")),
+                "sortOrder": variant.get("order"),
                 "points": [],
                 "latest": None,
                 "queryId": None,
@@ -212,8 +253,8 @@ def _calculate_next_poll_time() -> int | None:
         first_variant: dict[str, Any] | None = None
         for variants in variants_by_name.values():
             for variant in variants:
-                if first_variant is None or variant.get("order", float("inf")) < first_variant.get(
-                    "order", float("inf")
+                if first_variant is None or _order_or_max(variant.get("order")) < _order_or_max(
+                    first_variant.get("order")
                 ):
                     first_variant = variant
 
@@ -270,12 +311,13 @@ def load_price_data() -> dict[str, Any]:
     """
     variants_by_name, order_by_key = _load_item_variants()
     items: dict[str, dict[str, Any]] = _seed_items_from_variants(variants_by_name)
+    allowed_variant_keys = set(items.keys())
 
     if not CSV_PATH.exists():
         item_list = list(items.values())
         item_list.sort(
             key=lambda it: (
-                it.get("sortOrder", float("inf")),
+                _order_or_max(it.get("sortOrder")),
                 it.get("itemName") or "",
             )
         )
@@ -300,6 +342,9 @@ def load_price_data() -> dict[str, Any]:
             row_count += 1
             item_name = (row.get("item_name") or "").strip()
             if not item_name:
+                continue
+            # Only include items currently declared in items.txt.
+            if item_name not in variants_by_name:
                 continue
 
             name_variants = variants_by_name.get(item_name, [])
@@ -334,7 +379,7 @@ def load_price_data() -> dict[str, Any]:
                         "displayName": item_name,
                         "isAA": variant_mode,
                         "key": f"{item_name}::{_mode_token(variant_mode)}",
-                        "order": float("inf"),
+                        "order": None,
                     }
 
             if variant is None:
@@ -343,8 +388,12 @@ def load_price_data() -> dict[str, Any]:
                     "displayName": _display_name(item_name, row_mode),
                     "isAA": row_mode,
                     "key": f"{item_name}::{row_mode_token}",
-                    "order": order_by_key.get(f"{item_name}::{row_mode_token}", float("inf")),
+                    "order": order_by_key.get(f"{item_name}::{row_mode_token}"),
                 }
+
+            variant_key = str(variant.get("key") or "")
+            if variant_key not in allowed_variant_keys:
+                continue
 
             if query_id:
                 mapped_variants[query_id] = variant
@@ -359,13 +408,13 @@ def load_price_data() -> dict[str, Any]:
                 continue
 
             series = items.setdefault(
-                str(variant["key"]),
+                variant_key,
                 {
                     "itemName": str(variant["displayName"]),
                     "baseItemName": item_name,
                     "mode": _mode_token(variant.get("isAA")),
                     "imagePath": _get_image_path(item_name, variant.get("isAA")),
-                    "sortOrder": variant.get("order", float("inf")),
+                    "sortOrder": variant.get("order"),
                     "points": [],
                     "latest": None,
                     "queryId": None,
@@ -397,7 +446,7 @@ def load_price_data() -> dict[str, Any]:
 
     item_list.sort(
         key=lambda it: (
-            it.get("sortOrder", float("inf")),
+            _order_or_max(it.get("sortOrder")),
             it.get("itemName") or "",
         )
     )

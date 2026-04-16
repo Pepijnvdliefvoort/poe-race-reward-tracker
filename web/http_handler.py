@@ -5,7 +5,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
 
-from data_service import WEB_DIR, load_price_data
+from data_service import WEB_DIR, load_config, load_price_data, save_config
 
 
 def create_server(host: str, port: int) -> ThreadingHTTPServer:
@@ -26,7 +26,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/prices":
             payload = load_price_data()
-            body = json.dumps(payload).encode("utf-8")
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if parsed.path == "/api/config":
+            payload = load_config()
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
@@ -39,3 +50,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.path = "/index.html"
 
         return super().do_GET()
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/config":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length)
+            try:
+                data = json.loads(raw)
+                save_config(data)
+                self.send_response(204)
+                self.end_headers()
+            except Exception as exc:  # noqa: BLE001
+                body = json.dumps({"error": str(exc)}).encode("utf-8")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            return
+
+        self.send_response(404)
+        self.end_headers()
