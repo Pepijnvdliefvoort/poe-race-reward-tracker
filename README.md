@@ -11,8 +11,12 @@ It has 2 parts:
 - `poll_item_prices.py`: polling loop and CSV writer
 - `items.txt`: tracked items (one per line, with optional mode)
 - `price_poll.csv`: generated historical output
-- `web/server.py`: local web server + `/api/prices`
-- `web/index.html`, `web/app.js`, `web/styles.css`: dashboard UI
+- `web/server.py`: server entrypoint
+- `web/http_handler.py`: HTTP handler and `/api/prices` route wiring
+- `web/data_service.py`: CSV + items parsing, API payload shaping
+- `web/index.html`, `web/styles.css`: dashboard shell and styling
+- `web/app.js`: dashboard entrypoint/orchestrator
+- `web/js/state.js`, `web/js/cards.js`, `web/js/utils.js`: reusable UI modules
 - `web/assets/icons/`: local item icons used by the dashboard
 
 ## Requirements

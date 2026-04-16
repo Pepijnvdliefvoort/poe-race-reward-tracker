@@ -1,133 +1,66 @@
-const REFRESH_MS = 4000;
-const MAX_POINTS = 8;
-const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-const FAVORITES_STORAGE_KEY = "poe-market-favorites";
-
-const cardsEl = document.getElementById("cards");
-const overviewEl = document.getElementById("overview");
-const statusDot = document.getElementById("statusDot");
-const statusText = document.getElementById("statusText");
-const searchInput = document.getElementById("searchInput");
-const priceSortSelect = document.getElementById("priceSort");
-const trendSortSelect = document.getElementById("trendSort");
-const favoritesOnlyInput = document.getElementById("favoritesOnly");
-const priceRangeMinInput = document.getElementById("priceRangeMin");
-const priceRangeMaxInput = document.getElementById("priceRangeMax");
-const priceRangeMinLabel = document.getElementById("priceRangeMinLabel");
-const priceRangeMaxLabel = document.getElementById("priceRangeMaxLabel");
-const rangeAtCapEl = document.getElementById("rangeAtCap");
-const rangeFillEl = document.getElementById("rangeFill");
-const resetFiltersBtn = document.getElementById("resetFiltersBtn");
-
-const chartMap = new Map();
-
-let filters = {
-  search: "",
-  priceSort: "",
-  trendSort: "",
-  favoritesOnly: false,
-  priceMin: 0,
-  priceMax: 100,
-};
-
-let globalPriceRange = { min: 0, max: 100 };
-
-let currentItems = [];
-let nextInLineItemName = null;
-let favoriteItems = loadFavorites();
+import { applySorting, getAvailableLowestPrice, updateAllCards, showNoFilterResults } from "./js/cards.js";
+import { dom, REFRESH_MS, state } from "./js/state.js";
+import { formatTime } from "./js/utils.js";
 
 function isPriceRangeActive() {
-  // Only the min end being raised matters; max is always open-ended at the cap.
-  return filters.priceMin > globalPriceRange.min || filters.priceMax < globalPriceRange.max;
+  return (
+    state.filters.priceMin > state.globalPriceRange.min ||
+    state.filters.priceMax < state.globalPriceRange.max
+  );
 }
 
 function updateRangeFill() {
-  const { min, max } = globalPriceRange;
+  const { min, max } = state.globalPriceRange;
   const range = max - min || 1;
-  const leftPct = ((filters.priceMin - min) / range) * 100;
-  const rightPct = ((filters.priceMax - min) / range) * 100;
-  rangeFillEl.style.left = `${leftPct}%`;
-  rangeFillEl.style.width = `${rightPct - leftPct}%`;
-}
-
-function medianOf(values) {
-  if (!values.length) {
-    return 0;
-  }
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function formatMaxLabel(value) {
-  return `${formatNumber(value)}+`;
+  const leftPct = ((state.filters.priceMin - min) / range) * 100;
+  const rightPct = ((state.filters.priceMax - min) / range) * 100;
+  dom.rangeFillEl.style.left = `${leftPct}%`;
+  dom.rangeFillEl.style.width = `${rightPct - leftPct}%`;
 }
 
 function setMinLabel(value) {
-  priceRangeMinLabel.value = Math.round(value);
+  dom.priceRangeMinLabel.value = Math.round(value);
 }
 
 function setMaxLabel(value) {
-  priceRangeMaxLabel.value = Math.round(value);
-  rangeAtCapEl.classList.toggle("visible", value >= globalPriceRange.max);
+  dom.priceRangeMaxLabel.value = Math.round(value);
+  dom.rangeAtCapEl.classList.toggle("visible", value >= state.globalPriceRange.max);
 }
 
 function initPriceRangeSlider() {
   const newMin = 0;
   const newMax = 100;
 
-  if (globalPriceRange.min === newMin && globalPriceRange.max === newMax) {
-    setMinLabel(filters.priceMin);
-    setMaxLabel(filters.priceMax);
+  if (state.globalPriceRange.min === newMin && state.globalPriceRange.max === newMax) {
+    setMinLabel(state.filters.priceMin);
+    setMaxLabel(state.filters.priceMax);
     updateRangeFill();
     return;
   }
 
-  globalPriceRange = { min: newMin, max: newMax };
-  filters.priceMin = newMin;
-  filters.priceMax = newMax;
+  state.globalPriceRange = { min: newMin, max: newMax };
+  state.filters.priceMin = newMin;
+  state.filters.priceMax = newMax;
 
-  for (const input of [priceRangeMinInput, priceRangeMaxInput]) {
+  for (const input of [dom.priceRangeMinInput, dom.priceRangeMaxInput]) {
     input.min = newMin;
     input.max = newMax;
     input.step = 1;
-    input.value = input === priceRangeMinInput ? newMin : newMax;
+    input.value = input === dom.priceRangeMinInput ? newMin : newMax;
   }
 
-  priceRangeMinLabel.min = newMin;
-  priceRangeMinLabel.max = newMax;
-  priceRangeMaxLabel.min = newMin;
-  priceRangeMaxLabel.max = newMax;
+  dom.priceRangeMinLabel.min = newMin;
+  dom.priceRangeMinLabel.max = newMax;
+  dom.priceRangeMaxLabel.min = newMin;
+  dom.priceRangeMaxLabel.max = newMax;
 
-  setMinLabel(filters.priceMin);
-  setMaxLabel(filters.priceMax);
+  setMinLabel(state.filters.priceMin);
+  setMaxLabel(state.filters.priceMax);
   updateRangeFill();
 }
 
-function loadFavorites() {
-  try {
-    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
-    if (!raw) {
-      return new Set();
-    }
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return new Set();
-    }
-
-    return new Set(parsed.filter((value) => typeof value === "string"));
-  } catch {
-    return new Set();
-  }
-}
-
-function saveFavorites() {
-  localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...favoriteItems]));
-}
-
 function isManualSortActive() {
-  return Boolean(filters.priceSort || filters.trendSort);
+  return Boolean(state.filters.priceSort || state.filters.trendSort);
 }
 
 function reorderFavoritesFirst(items) {
@@ -137,8 +70,8 @@ function reorderFavoritesFirst(items) {
 
   const withIndex = items.map((item, index) => ({ item, index }));
   withIndex.sort((a, b) => {
-    const aFav = favoriteItems.has(a.item.itemName) ? 0 : 1;
-    const bFav = favoriteItems.has(b.item.itemName) ? 0 : 1;
+    const aFav = state.favoriteItems.has(a.item.itemName) ? 0 : 1;
+    const bFav = state.favoriteItems.has(b.item.itemName) ? 0 : 1;
     if (aFav !== bFav) {
       return aFav - bFav;
     }
@@ -149,159 +82,52 @@ function reorderFavoritesFirst(items) {
 }
 
 function refreshVisibleOrdering() {
-  const hasActiveFilters = filters.search || filters.priceSort || filters.trendSort || filters.favoritesOnly || isPriceRangeActive();
+  const hasActiveFilters =
+    state.filters.search ||
+    state.filters.priceSort ||
+    state.filters.trendSort ||
+    state.filters.favoritesOnly ||
+    isPriceRangeActive();
+
   if (hasActiveFilters) {
     applyFiltersAndSort();
   } else {
-    updateAllCards(reorderFavoritesFirst(currentItems));
+    updateAllCards(reorderFavoritesFirst(state.currentItems), refreshVisibleOrdering);
   }
 }
 
-// Setup filter event listeners
-searchInput.addEventListener("input", (e) => {
-  filters.search = e.target.value.toLowerCase();
-  applyFiltersAndSort();
-});
+function applyFiltersAndSort() {
+  let filtered = [...state.currentItems];
 
-priceSortSelect.addEventListener("change", (e) => {
-  filters.priceSort = e.target.value;
-  applyFiltersAndSort();
-});
+  dom.cardsEl.querySelector(".empty")?.remove();
 
-trendSortSelect.addEventListener("change", (e) => {
-  filters.trendSort = e.target.value;
-  applyFiltersAndSort();
-});
-
-favoritesOnlyInput.addEventListener("change", (e) => {
-  filters.favoritesOnly = e.target.checked;
-  applyFiltersAndSort();
-});
-
-resetFiltersBtn.addEventListener("click", () => {
-  filters.search = "";
-  filters.priceSort = "";
-  filters.trendSort = "";
-  filters.favoritesOnly = false;
-  filters.priceMin = 0;
-  filters.priceMax = 100;
-
-  searchInput.value = "";
-  priceSortSelect.value = "";
-  trendSortSelect.value = "";
-  favoritesOnlyInput.checked = false;
-  priceRangeMinInput.value = 0;
-  priceRangeMaxInput.value = 100;
-  setMinLabel(0);
-  setMaxLabel(100);
-  updateRangeFill();
-
-  applyFiltersAndSort();
-});
-
-priceRangeMinInput.addEventListener("input", () => {
-  priceRangeMinInput.style.zIndex = 2;
-  priceRangeMaxInput.style.zIndex = 1;
-  const val = parseFloat(priceRangeMinInput.value);
-  if (val > filters.priceMax) {
-    priceRangeMinInput.value = filters.priceMax;
-    filters.priceMin = filters.priceMax;
-  } else {
-    filters.priceMin = val;
-  }
-  setMinLabel(filters.priceMin);
-  updateRangeFill();
-  applyFiltersAndSort();
-});
-
-priceRangeMaxInput.addEventListener("input", () => {
-  priceRangeMaxInput.style.zIndex = 2;
-  priceRangeMinInput.style.zIndex = 1;
-  const val = parseFloat(priceRangeMaxInput.value);
-  if (val < filters.priceMin) {
-    priceRangeMaxInput.value = filters.priceMin;
-    filters.priceMax = filters.priceMin;
-  } else {
-    filters.priceMax = val;
-  }
-  setMaxLabel(filters.priceMax);
-  updateRangeFill();
-  applyFiltersAndSort();
-});
-
-priceRangeMinLabel.addEventListener("change", () => {
-  let val = parseInt(priceRangeMinLabel.value, 10);
-  if (Number.isNaN(val)) val = globalPriceRange.min;
-  val = Math.max(globalPriceRange.min, Math.min(val, filters.priceMax));
-  filters.priceMin = val;
-  priceRangeMinInput.value = val;
-  setMinLabel(val);
-  updateRangeFill();
-  applyFiltersAndSort();
-});
-
-priceRangeMaxLabel.addEventListener("change", () => {
-  let val = parseInt(priceRangeMaxLabel.value, 10);
-  if (Number.isNaN(val)) val = globalPriceRange.max;
-  val = Math.max(filters.priceMin, Math.min(val, globalPriceRange.max));
-  filters.priceMax = val;
-  priceRangeMaxInput.value = val;
-  setMaxLabel(val);
-  updateRangeFill();
-  applyFiltersAndSort();
-});
-
-function getTrendValue(item) {
-  const cutoff = Date.now() - ONE_MONTH_MS;
-  const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
-  const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
-  const valid = chartPoints.map((p) => p.y).filter((v) => v != null && !Number.isNaN(v));
-  
-  if (valid.length >= 2) {
-    const first = valid[0];
-    const last = valid[valid.length - 1];
-    return last - first;
-  }
-  return 0;
-}
-
-function getAvailableLowestPrice(item) {
-  const latest = item.latest;
-  if (!latest?.time || Date.now() - latest.time >= ONE_MONTH_MS) {
-    return null;
+  if (state.filters.search) {
+    filtered = filtered.filter((item) => item.itemName.toLowerCase().includes(state.filters.search));
   }
 
-  const low = latest.lowestMirror;
-  return low == null || Number.isNaN(low) ? null : low;
-}
-
-function getAvailableHighestPrice(item) {
-  const latest = item.latest;
-  if (!latest?.time || Date.now() - latest.time >= ONE_MONTH_MS) {
-    return null;
+  if (state.filters.favoritesOnly) {
+    filtered = filtered.filter((item) => state.favoriteItems.has(item.itemName));
   }
 
-  const high = latest.highestMirror;
-  return high == null || Number.isNaN(high) ? null : high;
-}
-
-function compareByPriceWithMissingLast(a, b, direction) {
-  const aPrice = getAvailableLowestPrice(a);
-  const bPrice = getAvailableLowestPrice(b);
-  const aMissing = aPrice == null;
-  const bMissing = bPrice == null;
-
-  if (aMissing && bMissing) {
-    return 0;
-  }
-  if (aMissing) {
-    return 1;
-  }
-  if (bMissing) {
-    return -1;
+  if (isPriceRangeActive()) {
+    filtered = filtered.filter((item) => {
+      const price = getAvailableLowestPrice(item);
+      if (price == null) {
+        return false;
+      }
+      const belowCap = state.filters.priceMax >= state.globalPriceRange.max || price <= state.filters.priceMax;
+      return price >= state.filters.priceMin && belowCap;
+    });
   }
 
-  return direction === "asc" ? aPrice - bPrice : bPrice - aPrice;
+  filtered = applySorting(filtered, state.filters);
+  filtered = reorderFavoritesFirst(filtered);
+
+  updateAllCards(filtered, refreshVisibleOrdering);
+
+  if (filtered.length === 0) {
+    showNoFilterResults();
+  }
 }
 
 function getNextInLineItemName(items) {
@@ -322,10 +148,7 @@ function getNextInLineItemName(items) {
     const cycle = latest.cycle ?? -Infinity;
     const time = latest.time ?? -Infinity;
 
-    if (
-      cycle > latestCycle ||
-      (cycle === latestCycle && time > latestTime)
-    ) {
+    if (cycle > latestCycle || (cycle === latestCycle && time > latestTime)) {
       latestCycle = cycle;
       latestTime = time;
       latestIndex = i;
@@ -340,200 +163,10 @@ function getNextInLineItemName(items) {
   return items[nextIndex]?.itemName ?? null;
 }
 
-function updateAllCards(itemsToRender = currentItems) {
-  cardsEl.querySelector(".empty")?.remove();
-
-  // Update all existing cards without re-adding to DOM (prevents animation)
-  const seen = new Set();
-  for (let i = 0; i < itemsToRender.length; i += 1) {
-    const item = itemsToRender[i];
-    seen.add(item.itemName);
-    if (!chartMap.has(item.itemName)) {
-      ensureCard(item);
-    }
-
-    const entry = chartMap.get(item.itemName);
-    const currentAtIndex = cardsEl.children[i];
-    if (currentAtIndex !== entry.card) {
-      cardsEl.insertBefore(entry.card, currentAtIndex ?? null);
-    }
-
-    updateCard(item);
-  }
-
-  // Remove cards not in current items
-  for (const [key, entry] of chartMap.entries()) {
-    if (!seen.has(key)) {
-      entry.chart.destroy();
-      entry.card.remove();
-      chartMap.delete(key);
-    }
-  }
-}
-
-function applyFiltersAndSort() {
-  let filtered = [...currentItems];
-
-  cardsEl.querySelector(".empty")?.remove();
-
-  // Apply search filter
-  if (filters.search) {
-    filtered = filtered.filter((item) =>
-      item.itemName.toLowerCase().includes(filters.search)
-    );
-  }
-
-  if (filters.favoritesOnly) {
-    filtered = filtered.filter((item) => favoriteItems.has(item.itemName));
-  }
-
-  if (isPriceRangeActive()) {
-    filtered = filtered.filter((item) => {
-      const price = getAvailableLowestPrice(item);
-      if (price == null) {
-        return false;
-      }
-      // Max thumb at the cap = open-ended (no upper bound applied).
-      const belowCap = filters.priceMax >= globalPriceRange.max || price <= filters.priceMax;
-      return price >= filters.priceMin && belowCap;
-    });
-  }
-
-  // Apply sorting
-  if (filters.priceSort === "asc") {
-    filtered.sort((a, b) => compareByPriceWithMissingLast(a, b, "asc"));
-  } else if (filters.priceSort === "desc") {
-    filtered.sort((a, b) => compareByPriceWithMissingLast(a, b, "desc"));
-  }
-
-  if (filters.trendSort === "highest") {
-    filtered.sort((a, b) => getTrendValue(b) - getTrendValue(a));
-  } else if (filters.trendSort === "lowest") {
-    filtered.sort((a, b) => getTrendValue(a) - getTrendValue(b));
-  }
-
-  filtered = reorderFavoritesFirst(filtered);
-
-  // Reorder cards based on filtered list
-  const seen = new Set();
-  for (let i = 0; i < filtered.length; i += 1) {
-    const item = filtered[i];
-    seen.add(item.itemName);
-    ensureCard(item);
-    const entry = chartMap.get(item.itemName);
-    const currentAtIndex = cardsEl.children[i];
-    if (currentAtIndex !== entry.card) {
-      cardsEl.insertBefore(entry.card, currentAtIndex ?? null);
-    }
-    updateCard(item);
-  }
-
-  // Remove cards not in filtered list
-  for (const [key, entry] of chartMap.entries()) {
-    if (!seen.has(key)) {
-      entry.chart.destroy();
-      entry.card.remove();
-      chartMap.delete(key);
-    }
-  }
-
-  if (filtered.length === 0) {
-    cardsEl.innerHTML = '<div class="empty">No items match your filters.</div>';
-  }
-}
-
-function formatNumber(value) {
-  if (value === null || value === undefined || Number.isNaN(value)) {
-    return "n/a";
-  }
-  if (Math.abs(value) >= 1000) {
-    return value.toFixed(0);
-  }
-  return value.toFixed(2).replace(/\.00$/, "");
-}
-
-function formatTime(ms, withSeconds = false) {
-  const d = new Date(ms);
-  return d.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: withSeconds ? "2-digit" : undefined,
-  });
-}
-
-function getPointMirrorValue(point) {
-  const value = point?.medianMirror ?? point?.lowestMirror ?? point?.highestMirror;
-  return value == null || Number.isNaN(value) ? null : value;
-}
-
-// LTTB keeps the overall line shape when reducing many points to a smaller, readable set.
-function largestTriangleThreeBuckets(data, threshold) {
-  if (threshold >= data.length || threshold === 0) {
-    return data;
-  }
-
-  const sampled = [data[0]];
-  const every = (data.length - 2) / (threshold - 2);
-  let a = 0;
-
-  for (let i = 0; i < threshold - 2; i += 1) {
-    let avgX = 0;
-    let avgY = 0;
-    const avgRangeStart = Math.floor((i + 1) * every) + 1;
-    const avgRangeEnd = Math.min(Math.floor((i + 2) * every) + 1, data.length);
-    const avgRangeLength = Math.max(1, avgRangeEnd - avgRangeStart);
-
-    for (let j = avgRangeStart; j < avgRangeEnd; j += 1) {
-      avgX += data[j].x;
-      avgY += data[j].y;
-    }
-    avgX /= avgRangeLength;
-    avgY /= avgRangeLength;
-
-    const rangeOffs = Math.floor(i * every) + 1;
-    const rangeTo = Math.min(Math.floor((i + 1) * every) + 1, data.length - 1);
-
-    let maxArea = -1;
-    let maxAreaPoint = data[rangeOffs] ?? data[a];
-    let nextA = rangeOffs;
-
-    for (let j = rangeOffs; j < rangeTo; j += 1) {
-      const area = Math.abs(
-        (data[a].x - avgX) * (data[j].y - data[a].y) -
-        (data[a].x - data[j].x) * (avgY - data[a].y)
-      ) * 0.5;
-
-      if (area > maxArea) {
-        maxArea = area;
-        maxAreaPoint = data[j];
-        nextA = j;
-      }
-    }
-
-    sampled.push(maxAreaPoint);
-    a = nextA;
-  }
-
-  sampled.push(data[data.length - 1]);
-  return sampled;
-}
-
-function getCondensedChartPoints(points, maxPoints) {
-  const normalized = points
-    .map((point) => ({ x: point.time, y: getPointMirrorValue(point) }))
-    .filter((point) => point.y != null);
-
-  if (normalized.length <= maxPoints) {
-    return normalized;
-  }
-
-  return largestTriangleThreeBuckets(normalized, maxPoints);
-}
-
-function setStatus(state, text) {
-  statusDot.classList.remove("ok", "warn", "error");
-  statusDot.classList.add(state);
-  statusText.textContent = text;
+function setStatus(stateName, text) {
+  dom.statusDot.classList.remove("ok", "warn", "error");
+  dom.statusDot.classList.add(stateName);
+  dom.statusText.textContent = text;
 }
 
 function statTile(label, value) {
@@ -551,10 +184,7 @@ function updateOverview(payload) {
   const totalRows = payload.rowCount || 0;
   const nextPollTime = payload.nextPollTime;
 
-  const tiles = [
-    statTile("Tracked Items", String(items.length)),
-    statTile("Data points", String(totalRows)),
-  ];
+  const tiles = [statTile("Tracked Items", String(items.length)), statTile("Data points", String(totalRows))];
 
   if (nextPollTime) {
     const nextPollDate = new Date(nextPollTime);
@@ -565,280 +195,32 @@ function updateOverview(payload) {
     tiles.push(statTile("Next Poll", timeString));
   }
 
-  overviewEl.replaceChildren(...tiles);
-}
-
-function ensureCard(item) {
-  const key = item.itemName;
-  let entry = chartMap.get(key);
-
-  if (entry) {
-    return entry;
-  }
-
-  const card = document.createElement("article");
-  card.className = "card card-enter";
-  card.addEventListener("animationend", () => {
-    card.classList.remove("card-enter");
-  }, { once: true });
-
-  const favoriteBtn = document.createElement("button");
-  favoriteBtn.type = "button";
-  favoriteBtn.className = "favorite-toggle";
-  favoriteBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (favoriteItems.has(key)) {
-      favoriteItems.delete(key);
-    } else {
-      favoriteItems.add(key);
-    }
-    saveFavorites();
-    refreshVisibleOrdering();
-  });
-
-  const title = document.createElement("h2");
-  title.textContent = key;
-
-  const artFrame = document.createElement("div");
-  artFrame.className = "art-frame";
-
-  const img = document.createElement("img");
-  img.className = "item-art";
-  img.alt = `${key} art`;
-  img.style.cursor = "pointer";
-
-  artFrame.append(img);
-
-  const priceBox = document.createElement("div");
-  priceBox.className = "price-box";
-
-  const chartWrap = document.createElement("div");
-  chartWrap.className = "chart-wrap";
-  const canvas = document.createElement("canvas");
-  chartWrap.appendChild(canvas);
-
-  const trend = document.createElement("div");
-  trend.className = "trend";
-
-  artFrame.prepend(favoriteBtn);
-  card.append(title, artFrame, priceBox, chartWrap, trend);
-  cardsEl.appendChild(card);
-
-  const chart = new Chart(canvas.getContext("2d"), {
-    type: "line",
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: "Mirror price",
-          data: [],
-          borderColor: "#f8b400",
-          backgroundColor: "rgba(248, 180, 0, 0.18)",
-          borderWidth: 2,
-          pointRadius: 2,
-          pointHoverRadius: 3,
-          pointBorderWidth: 0,
-          pointBackgroundColor: "#f8b400",
-          tension: 0.24,
-          spanGaps: true,
-          fill: false,
-        },
-      ],
-    },
-    options: {
-      maintainAspectRatio: false,
-      responsive: true,
-      animation: false,
-      plugins: {
-        legend: {
-          display: false,
-        },
-        tooltip: {
-          callbacks: {
-            title: () => null,
-            label: (ctx) => `${Math.round(ctx.parsed.y)} mirrors`,
-          },
-          // Enable tooltip for entire chart area
-          enabled: true,
-          mode: "index",
-          intersect: false,
-          displayColors: false,
-          position: "nearest",
-          xAlign: "center",
-          yAlign: "bottom",
-          caretPadding: 6,
-        },
-      },
-      scales: {
-        x: {
-          display: false,
-        },
-        y: {
-          display: false,
-        },
-      },
-      elements: {
-        line: {
-          capBezierPoints: true,
-        },
-      },
-    },
-    plugins: [
-      {
-        id: "sectionedTooltip",
-        afterDatasetsDraw(chart) {
-          const datasetMeta = chart.getDatasetMeta(0);
-          const dataPoints = datasetMeta.data || [];
-
-          if (dataPoints.length === 0) return;
-
-          // Store the pixel positions of each data point
-          const pointPositions = dataPoints.map((point) => ({ x: point.x, y: point.y }));
-
-          chart._sectionTooltipData = {
-            pointPositions,
-            dataLength: dataPoints.length,
-          };
-        },
-      },
-    ],
-    onHover: (event, activeElements) => {
-      if (!chart._sectionTooltipData || !event.native) {
-        // Clear tooltip when mouse leaves
-        chart.tooltip.setActiveElements([], {});
-        chart.draw();
-        return;
-      }
-
-      const { pointPositions, dataLength } = chart._sectionTooltipData;
-      const mouseX = event.native.offsetX;
-
-      if (dataLength === 0) {
-        chart.tooltip.setActiveElements([], {});
-        chart.draw();
-        return;
-      }
-
-      // Find which section the mouse is in based on data point positions
-      let closestIndex = 0;
-      if (dataLength === 1) {
-        closestIndex = 0;
-      } else {
-        // Find the section by comparing mouse position with data point boundaries
-        for (let i = 0; i < dataLength - 1; i++) {
-          if (mouseX < pointPositions[i + 1].x) {
-            closestIndex = i;
-            break;
-          }
-          closestIndex = i + 1;
-        }
-      }
-
-      const activePoint = pointPositions[closestIndex];
-
-      // Trigger tooltip for this section's data point
-      chart.tooltip.setActiveElements(
-        [{ datasetIndex: 0, index: closestIndex }],
-        { x: activePoint.x, y: activePoint.y - 8 }
-      );
-      chart.draw();
-    },
-  });
-
-  entry = { card, favoriteBtn, img, artFrame, priceBox, trend, chart };
-  chartMap.set(key, entry);
-  return entry;
-}
-
-function updateCard(item) {
-  const { card, favoriteBtn, img, artFrame, priceBox, trend, chart } = ensureCard(item);
-  const cutoff = Date.now() - ONE_MONTH_MS;
-  const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
-  const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
-  const sparkValues = chartPoints.map((p) => p.y);
-
-  card.classList.toggle("next-in-line", item.itemName === nextInLineItemName);
-  const isFavorited = favoriteItems.has(item.itemName);
-  card.classList.toggle("favorited", isFavorited);
-  favoriteBtn.classList.toggle("checked", isFavorited);
-  favoriteBtn.textContent = isFavorited ? "★" : "☆";
-  favoriteBtn.setAttribute("aria-label", isFavorited ? `Unfavorite ${item.itemName}` : `Favorite ${item.itemName}`);
-  favoriteBtn.title = isFavorited ? "Unfavorite" : "Favorite";
-
-  chart.data.labels = chartPoints.map((p) => formatTime(p.x));
-  chart.data.datasets[0].data = chartPoints.map((p) => p.y);
-  chart.update();
-
-  const latest = item.latest || {};
-  const latestAge = latest.time ? Date.now() - latest.time : Infinity;
-  const latestValid = latestAge < ONE_MONTH_MS;
-  const low = latestValid ? latest.lowestMirror : null;
-  const high = latestValid ? latest.highestMirror : null;
-
-  if (item.imagePath) {
-    img.src = item.imagePath;
-    img.style.display = "block";
-  } else {
-    img.style.display = "none";
-  }
-
-  if (item.queryId) {
-    artFrame.onclick = () => window.open(`https://www.pathofexile.com/trade/search/Standard/${item.queryId}`, "_blank");
-    artFrame.style.cursor = "pointer";
-    img.onclick = null;
-    img.style.cursor = "inherit";
-  } else {
-    artFrame.onclick = null;
-    artFrame.style.cursor = "default";
-    img.onclick = null;
-    img.style.cursor = "default";
-  }
-
-  const priceText =
-    low != null && high != null
-      ? `Prices: ${formatNumber(low)} to ${formatNumber(high)} mirror`
-      : low != null
-      ? `Price: ${formatNumber(low)} mirror`
-      : "Price: n/a";
-  priceBox.textContent = priceText;
-
-  let trendSymbol = "-";
-  let trendClass = "flat";
-  const valid = sparkValues.filter((v) => v != null && !Number.isNaN(v));
-  if (valid.length >= 2) {
-    const first = valid[0];
-    const last = valid[valid.length - 1];
-    if (last > first) {
-      trendSymbol = "▲";
-      trendClass = "up";
-    } else if (last < first) {
-      trendSymbol = "▼";
-      trendClass = "down";
-    }
-  }
-
-  trend.className = `trend ${trendClass}`;
-  trend.textContent = `Price Trend: ${trendSymbol}   Listings: ${latestValid ? (latest.totalResults ?? 0) : "n/a"}`;
+  dom.overviewEl.replaceChildren(...tiles);
 }
 
 function render(payload) {
   updateOverview(payload);
-  currentItems = payload.items || [];
-  nextInLineItemName = getNextInLineItemName(currentItems);
+  state.currentItems = payload.items || [];
+  state.nextInLineItemName = getNextInLineItemName(state.currentItems);
 
-  if (!currentItems.length) {
-    cardsEl.innerHTML = '<div class="empty">No item rows yet. Start your poller and wait for CSV updates.</div>';
+  if (!state.currentItems.length) {
+    dom.cardsEl.innerHTML = '<div class="empty">No item rows yet. Start your poller and wait for CSV updates.</div>';
     return;
   }
 
   initPriceRangeSlider();
 
-  // If any filters are active, apply them. Otherwise just update card data
-  const hasActiveFilters = filters.search || filters.priceSort || filters.trendSort || filters.favoritesOnly || isPriceRangeActive();
+  const hasActiveFilters =
+    state.filters.search ||
+    state.filters.priceSort ||
+    state.filters.trendSort ||
+    state.filters.favoritesOnly ||
+    isPriceRangeActive();
+
   if (hasActiveFilters) {
     applyFiltersAndSort();
   } else {
-    updateAllCards(reorderFavoritesFirst(currentItems));
+    updateAllCards(reorderFavoritesFirst(state.currentItems), refreshVisibleOrdering);
   }
 }
 
@@ -865,5 +247,101 @@ async function refresh() {
   }
 }
 
+function registerEventListeners() {
+  dom.searchInput.addEventListener("input", (e) => {
+    state.filters.search = e.target.value.toLowerCase();
+    applyFiltersAndSort();
+  });
+
+  dom.priceSortSelect.addEventListener("change", (e) => {
+    state.filters.priceSort = e.target.value;
+    applyFiltersAndSort();
+  });
+
+  dom.trendSortSelect.addEventListener("change", (e) => {
+    state.filters.trendSort = e.target.value;
+    applyFiltersAndSort();
+  });
+
+  dom.favoritesOnlyInput.addEventListener("change", (e) => {
+    state.filters.favoritesOnly = e.target.checked;
+    applyFiltersAndSort();
+  });
+
+  dom.resetFiltersBtn.addEventListener("click", () => {
+    state.filters.search = "";
+    state.filters.priceSort = "";
+    state.filters.trendSort = "";
+    state.filters.favoritesOnly = false;
+    state.filters.priceMin = 0;
+    state.filters.priceMax = 100;
+
+    dom.searchInput.value = "";
+    dom.priceSortSelect.value = "";
+    dom.trendSortSelect.value = "";
+    dom.favoritesOnlyInput.checked = false;
+    dom.priceRangeMinInput.value = 0;
+    dom.priceRangeMaxInput.value = 100;
+    setMinLabel(0);
+    setMaxLabel(100);
+    updateRangeFill();
+
+    applyFiltersAndSort();
+  });
+
+  dom.priceRangeMinInput.addEventListener("input", () => {
+    dom.priceRangeMinInput.style.zIndex = 2;
+    dom.priceRangeMaxInput.style.zIndex = 1;
+    const val = parseFloat(dom.priceRangeMinInput.value);
+    if (val > state.filters.priceMax) {
+      dom.priceRangeMinInput.value = state.filters.priceMax;
+      state.filters.priceMin = state.filters.priceMax;
+    } else {
+      state.filters.priceMin = val;
+    }
+    setMinLabel(state.filters.priceMin);
+    updateRangeFill();
+    applyFiltersAndSort();
+  });
+
+  dom.priceRangeMaxInput.addEventListener("input", () => {
+    dom.priceRangeMaxInput.style.zIndex = 2;
+    dom.priceRangeMinInput.style.zIndex = 1;
+    const val = parseFloat(dom.priceRangeMaxInput.value);
+    if (val < state.filters.priceMin) {
+      dom.priceRangeMaxInput.value = state.filters.priceMin;
+      state.filters.priceMax = state.filters.priceMin;
+    } else {
+      state.filters.priceMax = val;
+    }
+    setMaxLabel(state.filters.priceMax);
+    updateRangeFill();
+    applyFiltersAndSort();
+  });
+
+  dom.priceRangeMinLabel.addEventListener("change", () => {
+    let val = parseInt(dom.priceRangeMinLabel.value, 10);
+    if (Number.isNaN(val)) val = state.globalPriceRange.min;
+    val = Math.max(state.globalPriceRange.min, Math.min(val, state.filters.priceMax));
+    state.filters.priceMin = val;
+    dom.priceRangeMinInput.value = val;
+    setMinLabel(val);
+    updateRangeFill();
+    applyFiltersAndSort();
+  });
+
+  dom.priceRangeMaxLabel.addEventListener("change", () => {
+    let val = parseInt(dom.priceRangeMaxLabel.value, 10);
+    if (Number.isNaN(val)) val = state.globalPriceRange.max;
+    val = Math.max(state.filters.priceMin, Math.min(val, state.globalPriceRange.max));
+    state.filters.priceMax = val;
+    dom.priceRangeMaxInput.value = val;
+    setMaxLabel(val);
+    updateRangeFill();
+    applyFiltersAndSort();
+  });
+}
+
+registerEventListeners();
 refresh();
 setInterval(refresh, REFRESH_MS);
