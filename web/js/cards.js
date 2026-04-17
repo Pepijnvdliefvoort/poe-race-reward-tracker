@@ -87,11 +87,11 @@ function compareTrendHighest(a, b) {
   const directionOrder = { up: 0, flat: 1, down: 2 };
   const dirA = getTrendDirection(a);
   const dirB = getTrendDirection(b);
-  
+
   if (directionOrder[dirA] !== directionOrder[dirB]) {
     return directionOrder[dirA] - directionOrder[dirB];
   }
-  
+
   // Within same direction, sort by percentage
   return getTrendPercentage(b) - getTrendPercentage(a);
 }
@@ -101,11 +101,11 @@ function compareTrendLowest(a, b) {
   const directionOrder = { down: 0, flat: 1, up: 2 };
   const dirA = getTrendDirection(a);
   const dirB = getTrendDirection(b);
-  
+
   if (directionOrder[dirA] !== directionOrder[dirB]) {
     return directionOrder[dirA] - directionOrder[dirB];
   }
-  
+
   // Within same direction, sort by percentage
   return getTrendPercentage(a) - getTrendPercentage(b);
 }
@@ -346,8 +346,8 @@ export function updateCard(item, onFavoriteToggle) {
     low != null && high != null
       ? `Prices: ${formatNumber(low)} to ${formatNumber(high)} mirror`
       : low != null
-      ? `Price: ${formatNumber(low)} mirror`
-      : "Price: n/a";
+        ? `Price: ${formatNumber(low)} mirror`
+        : "Price: n/a";
   priceBox.textContent = priceText;
 
   let trendSymbol = "-";
