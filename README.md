@@ -1,4 +1,4 @@
-# poe-market-flips
+# Path of Exile Race Reward Tracker
 
 [![Deploy to VPS](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml/badge.svg)](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml)
 

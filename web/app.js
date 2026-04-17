@@ -26,6 +26,48 @@ registerKeyboardShortcuts();
 // Initialize settings modal
 initSettingsModal();
 
+initFiltersDrawer();
+
 // Start data refresh cycle
 refresh();
 setInterval(refresh, REFRESH_MS);
+
+function initFiltersDrawer() {
+  const menuBtn = document.getElementById("filtersMenuBtn");
+  const closeBtn = document.getElementById("filtersCloseBtn");
+  const overlay = document.getElementById("filtersOverlay");
+  const drawer = overlay?.querySelector(".filters-drawer");
+
+  if (!menuBtn || !closeBtn || !overlay || !drawer) {
+    return;
+  }
+
+  const openDrawer = () => {
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+    menuBtn.setAttribute("aria-expanded", "true");
+    window.requestAnimationFrame(() => closeBtn.focus());
+  };
+
+  const closeDrawer = () => {
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+    menuBtn.setAttribute("aria-expanded", "false");
+    menuBtn.focus();
+  };
+
+  menuBtn.addEventListener("click", openDrawer);
+  closeBtn.addEventListener("click", closeDrawer);
+
+  overlay.addEventListener("click", (event) => {
+    if (!drawer.contains(event.target)) {
+      closeDrawer();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && overlay.classList.contains("open")) {
+      closeDrawer();
+    }
+  });
+}
