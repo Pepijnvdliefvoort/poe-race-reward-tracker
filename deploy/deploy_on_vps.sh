@@ -12,7 +12,7 @@ fi
 
 cd "$APP_DIR"
 
-echo "[1/5] Pull latest code"
+echo "[1/6] Pull latest code"
 git pull --ff-only
 
 echo "[2/6] Install/update Python dependencies"
@@ -45,6 +45,10 @@ systemctl restart poe-market-server
 systemctl restart poe-market-poller
 
 echo "[6/6] Apply Caddy config"
+if grep -q "PUBLIC_HOSTNAME_HERE" deploy/caddy/Caddyfile; then
+  echo "Refusing deploy: deploy/caddy/Caddyfile still contains PUBLIC_HOSTNAME_HERE"
+  exit 1
+fi
 cp deploy/caddy/Caddyfile /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile
 systemctl reload caddy
