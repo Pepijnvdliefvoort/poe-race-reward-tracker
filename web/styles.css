@@ -1173,6 +1173,9 @@ canvas {
   padding: 34px 18px;
   text-align: center;
   color: var(--ink-soft);
+  width: fit-content;
+  margin: 0 auto;
+  min-height: auto;
 }
 
 .site-footer {
@@ -1418,3 +1421,125 @@ canvas {
     font-size: 0.7rem;
   }
 }
+
+/* Desktop layout: show filters inline, hide hamburger menu */
+@media (min-width: 1025px) {
+  .filters-menu-btn {
+    display: none !important;
+  }
+
+  body {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    grid-template-rows: auto auto 1fr auto;
+    gap: 12px 14px;
+    align-content: start;
+  }
+
+  .topbar {
+    grid-row: 1;
+    grid-column: 1 / -1;
+  }
+
+  main {
+    display: contents;
+  }
+
+  .search-row {
+    grid-row: 2;
+    grid-column: 1;
+    display: flex;
+    gap: 14px;
+    align-items: flex-end;
+    margin-bottom: 0;
+    width: auto;
+  }
+
+  .main-search-group {
+    width: min(460px, 100%);
+    flex-shrink: 0;
+  }
+
+  .cards {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    width: 100%;
+    height: auto;
+    align-self: start;
+  }
+
+  .filters-overlay {
+    grid-row: 2;
+    grid-column: 2;
+    position: static;
+    inset: auto;
+    background: none;
+    backdrop-filter: none;
+    z-index: auto;
+    opacity: 1;
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    width: auto;
+  }
+
+  .filters-drawer {
+    position: static;
+    top: auto;
+    left: auto;
+    width: auto;
+    height: auto;
+    display: flex;
+    flex-direction: row;
+    gap: 14px;
+    padding: 0;
+    background: none;
+    border-right: none;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .filters-overlay.open .filters-drawer {
+    transform: none;
+  }
+
+  .filters-drawer-header {
+    display: none;
+  }
+
+  .filters-drawer .filters-panel {
+    display: flex;
+    flex-direction: row;
+    gap: 14px;
+    align-items: flex-end;
+    width: auto;
+    padding-right: 0;
+    overflow-y: visible;
+  }
+
+  .filters-drawer .filter-group,
+  .filters-drawer .filter-group-checkbox,
+  .filters-drawer .filter-group-range {
+    width: auto;
+    min-width: 0;
+  }
+
+  .filters-drawer .reset-filters-btn {
+    width: auto;
+    height: 33px;
+    margin-left: 0;
+    padding: 0 12px;
+    align-self: flex-end;
+  }
+
+  .site-footer {
+    grid-row: 4;
+    grid-column: 1 / -1;
+  }
+
+  #settingsOverlay {
+    z-index: 2000;
+  }
+}
+

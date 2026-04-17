@@ -67,6 +67,20 @@ export function getNextInLineItemName(items) {
 }
 
 /**
+ * Format milliseconds as hh:mm:ss
+ */
+function formatCountdown(ms) {
+    if (ms <= 0) return "00:00:00";
+    
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+/**
  * Update the overview panel with metadata (next poll time, etc).
  */
 export function updateOverview(payload) {
@@ -75,15 +89,31 @@ export function updateOverview(payload) {
     const pill = document.createElement("div");
     pill.className = "meta next-poll-pill";
     if (nextPollTime) {
-        const nextPollDate = new Date(nextPollTime);
-        const timeString = nextPollDate.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-        });
-        pill.innerHTML = `⏰ Next poll: ${timeString}`;
+        // Update countdown immediately
+        const updateCountdown = () => {
+            const now = Date.now();
+            const timeRemaining = nextPollTime - now;
+            const countdownString = formatCountdown(timeRemaining);
+            pill.innerHTML = `⏰ Next poll: ${countdownString}`;
+        };
+        
+        updateCountdown();
+        
+        // Update every second
+        const interval = setInterval(updateCountdown, 1000);
+        
+        // Store interval ID on the pill so we can clear it later if needed
+        pill.dataset.countdownInterval = interval;
     } else {
         pill.innerHTML = `⏰ Next poll: —`;
     }
+    
+    // Clear any existing interval from previous pill
+    const oldPill = dom.overviewEl.querySelector(".next-poll-pill");
+    if (oldPill?.dataset.countdownInterval) {
+        clearInterval(parseInt(oldPill.dataset.countdownInterval));
+    }
+    
     dom.overviewEl.replaceChildren(pill);
 }
 

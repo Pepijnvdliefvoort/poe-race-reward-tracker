@@ -32,8 +32,9 @@ export function getTrendPercentage(item) {
 
 export function getTrendDirection(item) {
   const percentage = getTrendPercentage(item);
-  if (percentage > 0) return "up";
-  if (percentage < 0) return "down";
+  const rounded = Math.round(percentage);
+  if (rounded > 0) return "up";
+  if (rounded < 0) return "down";
   return "flat";
 }
 
