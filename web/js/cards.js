@@ -15,6 +15,21 @@ export function getTrendValue(item) {
   return 0;
 }
 
+export function getTrendPercentage(item) {
+  const cutoff = Date.now() - THREE_MONTHS_MS;
+  const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
+  const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
+  const valid = chartPoints.map((p) => p.y).filter((v) => v != null && !Number.isNaN(v));
+
+  if (valid.length >= 2) {
+    const first = valid[0];
+    const last = valid[valid.length - 1];
+    if (first === 0) return 0;
+    return ((last - first) / first) * 100;
+  }
+  return 0;
+}
+
 export function getAvailableLowestPrice(item) {
   const latest = item.latest;
   if (!latest?.time || Date.now() - latest.time >= THREE_MONTHS_MS) {
@@ -52,9 +67,9 @@ export function applySorting(filtered, filters) {
   }
 
   if (filters.trendSort === "highest") {
-    filtered.sort((a, b) => getTrendValue(b) - getTrendValue(a));
+    filtered.sort((a, b) => getTrendPercentage(b) - getTrendPercentage(a));
   } else if (filters.trendSort === "lowest") {
-    filtered.sort((a, b) => getTrendValue(a) - getTrendValue(b));
+    filtered.sort((a, b) => getTrendPercentage(a) - getTrendPercentage(b));
   }
 
   return filtered;
