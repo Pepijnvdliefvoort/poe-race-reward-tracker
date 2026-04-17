@@ -1,8 +1,8 @@
-import { chartMap, dom, MAX_POINTS, ONE_MONTH_MS, saveFavorites, state } from "./state.js";
+import { chartMap, dom, MAX_POINTS, THREE_MONTHS_MS, saveFavorites, state } from "./state.js";
 import { formatNumber, formatTime, getCondensedChartPoints } from "./utils.js";
 
 export function getTrendValue(item) {
-  const cutoff = Date.now() - ONE_MONTH_MS;
+  const cutoff = Date.now() - THREE_MONTHS_MS;
   const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
   const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
   const valid = chartPoints.map((p) => p.y).filter((v) => v != null && !Number.isNaN(v));
@@ -17,7 +17,7 @@ export function getTrendValue(item) {
 
 export function getAvailableLowestPrice(item) {
   const latest = item.latest;
-  if (!latest?.time || Date.now() - latest.time >= ONE_MONTH_MS) {
+  if (!latest?.time || Date.now() - latest.time >= THREE_MONTHS_MS) {
     return null;
   }
 
@@ -249,7 +249,7 @@ export function ensureCard(item, onFavoriteToggle) {
 
 export function updateCard(item, onFavoriteToggle) {
   const { card, favoriteBtn, img, artFrame, priceBox, trend, trendIndicator, trendListings, chart } = ensureCard(item, onFavoriteToggle);
-  const cutoff = Date.now() - ONE_MONTH_MS;
+  const cutoff = Date.now() - THREE_MONTHS_MS;
   const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
   const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
   const sparkValues = chartPoints.map((p) => p.y);
@@ -268,7 +268,7 @@ export function updateCard(item, onFavoriteToggle) {
 
   const latest = item.latest || {};
   const latestAge = latest.time ? Date.now() - latest.time : Infinity;
-  const latestValid = latestAge < ONE_MONTH_MS;
+  const latestValid = latestAge < THREE_MONTHS_MS;
   const low = latestValid ? latest.lowestMirror : null;
   const high = latestValid ? latest.highestMirror : null;
 

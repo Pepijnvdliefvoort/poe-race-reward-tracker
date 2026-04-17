@@ -24,13 +24,18 @@
         <p class="eyebrow">Live Dashboard</p>
         <h1>PoE Race Rewards</h1>
       </div>
-      <button id="themeToggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
-        <span class="theme-icon">🌙</span>
-      </button>
-      <button id="settingsBtn" class="settings-btn" title="Alert settings" aria-label="Alert settings">⚙️</button>
-      <div class="meta" id="meta">
-        <span id="statusDot" class="status-dot"></span>
-        <span id="statusText">Connecting...</span>
+      <div class="topbar-right">
+        <div class="topbar-actions">
+          <button id="themeToggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+            <span class="theme-icon">🌙</span>
+          </button>
+          <button id="settingsBtn" class="settings-btn" title="Alert settings" aria-label="Alert settings">⚙️</button>
+        </div>
+        <div class="meta" id="meta">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">Connecting...</span>
+        </div>
+        <div id="overview"></div>
       </div>
     </header>
 
@@ -91,7 +96,6 @@
           </div>
           <button id="resetFiltersBtn" class="reset-filters-btn" title="Clear all filters">Reset Filters</button>
         </aside>
-        <section class="stats-grid" id="overview"></section>
       </div>
       <section class="cards" id="cards"></section>
     </main>

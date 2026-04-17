@@ -157,9 +157,26 @@ def send_discord_alert(
     pct_drop: float,
     query_id: str,
     webhook_url: str,
+    listing_summary: str | None = None,
     item_image_url: str | None = None,
 ) -> None:
     trade_url = f"https://www.pathofexile.com/trade/search/{DEFAULT_LEAGUE}/{query_id}"
+    fields = [
+        {
+            "name": "Trade Link",
+            "value": f"[View listing]({trade_url})",
+            "inline": False,
+        }
+    ]
+    if listing_summary:
+        fields.append(
+            {
+                "name": "Top Listings",
+                "value": listing_summary,
+                "inline": False,
+            }
+        )
+
     embed = {
         "title": f"\N{BELL} Price Alert: {item.name}",
         "description": (
@@ -167,13 +184,7 @@ def send_discord_alert(
             f"**{pct_drop:.1f}% below** baseline of {format_amount(baseline)} mirrors"
         ),
         "color": 0xFF6B35,
-        "fields": [
-            {
-                "name": "Trade Link",
-                "value": f"[View listing]({trade_url})",
-                "inline": False,
-            }
-        ],
+        "fields": fields,
     }
     if item_image_url:
         embed["thumbnail"] = {"url": item_image_url}
@@ -610,6 +621,62 @@ def extract_listing_prices(listings: list[dict[str, Any]]) -> tuple[list[float],
     return mirror_prices, divine_prices, unsupported_count
 
 
+def format_listing_summary_price(currency: str, amount: float, divines_per_mirror: float) -> str:
+    formatted_amount = format_amount(amount)
+    if currency == "mirror":
+        unit = "mirror" if amount == 1 else "mirrors"
+        return f"{formatted_amount} {unit}"
+
+    mirror_equivalent = to_mirror_equivalent(amount, currency, divines_per_mirror)
+    return f"{formatted_amount} divines (~{format_amount(mirror_equivalent)} mirrors)"
+
+
+def extract_listing_seller_name(entry: dict[str, Any]) -> str:
+    listing = entry.get("listing") if isinstance(entry, dict) else None
+    account = listing.get("account") if isinstance(listing, dict) else None
+    if isinstance(account, dict):
+        account_name = account.get("name")
+        if isinstance(account_name, str) and account_name:
+            return account_name
+
+        character_name = account.get("lastCharacterName")
+        if isinstance(character_name, str) and character_name:
+            return character_name
+
+    return "unknown seller"
+
+
+def build_top_listing_summary(
+    listings: list[dict[str, Any]],
+    divines_per_mirror: float,
+    max_entries: int = 5,
+) -> str | None:
+    summary_lines: list[str] = []
+
+    for entry in listings:
+        listing = entry.get("listing") if isinstance(entry, dict) else None
+        price = listing.get("price") if isinstance(listing, dict) else None
+        if not isinstance(price, dict):
+            continue
+
+        normalized = normalize_price_currency(price)
+        if normalized is None:
+            continue
+
+        currency, amount = normalized
+        seller_name = extract_listing_seller_name(entry)
+        price_text = format_listing_summary_price(currency, amount, divines_per_mirror)
+        summary_lines.append(f"{len(summary_lines) + 1}. {price_text} - {seller_name}")
+
+        if len(summary_lines) >= max_entries:
+            break
+
+    if not summary_lines:
+        return None
+
+    return "\n".join(summary_lines)
+
+
 def find_cheapest_listing_icon(
     listings: list[dict[str, Any]],
     divines_per_mirror: float,
@@ -861,6 +928,7 @@ def run_cycle(
         query_id, result_ids, total_results = search_item(session, rate_limiter, item)
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
         cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
+        top_listing_summary = build_top_listing_summary(listings, divines_per_mirror)
 
         raw_mirror_prices, divine_prices, unsupported_count = extract_listing_prices(listings)
 
@@ -942,6 +1010,7 @@ def run_cycle(
                                 pct_drop,
                                 query_id,
                                 alert_config.webhook_url,
+                                listing_summary=top_listing_summary,
                                 item_image_url=cheapest_icon_url,
                             )
                             alert_state[item_key] = (cycle, low_mirror)

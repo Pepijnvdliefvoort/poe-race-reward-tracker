@@ -98,8 +98,21 @@ main {
   display: flex;
   justify-content: space-between;
   gap: 18px;
-  align-items: end;
+  align-items: flex-start;
   margin-bottom: 20px;
+}
+
+.topbar-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .eyebrow {
@@ -153,55 +166,12 @@ h1 {
   animation: none;
 }
 
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(130px, auto));
-  gap: 12px;
-}
-
-.stat-tile {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 12px 14px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(8px);
-}
-
-.stat-label {
-  color: var(--ink-soft);
-  font-size: 0.78rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.stat-value {
-  margin-top: 6px;
-  font-size: 1.4rem;
-  font-weight: 700;
-}
-
 .controls-row {
   display: flex;
   gap: 18px;
   align-items: flex-end;
   margin-bottom: 14px;
   justify-content: space-between;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(130px, auto));
-  gap: 12px;
-}
-
-.stat-tile {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 12px 14px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(8px);
 }
 
 .filters-panel {
