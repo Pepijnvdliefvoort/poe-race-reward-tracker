@@ -30,6 +30,13 @@ export function getTrendPercentage(item) {
   return 0;
 }
 
+export function getTrendDirection(item) {
+  const percentage = getTrendPercentage(item);
+  if (percentage > 0) return "up";
+  if (percentage < 0) return "down";
+  return "flat";
+}
+
 export function getAvailableLowestPrice(item) {
   const latest = item.latest;
   if (!latest?.time || Date.now() - latest.time >= THREE_MONTHS_MS) {
@@ -67,12 +74,40 @@ export function applySorting(filtered, filters) {
   }
 
   if (filters.trendSort === "highest") {
-    filtered.sort((a, b) => getTrendPercentage(b) - getTrendPercentage(a));
+    filtered.sort((a, b) => compareTrendHighest(a, b));
   } else if (filters.trendSort === "lowest") {
-    filtered.sort((a, b) => getTrendPercentage(a) - getTrendPercentage(b));
+    filtered.sort((a, b) => compareTrendLowest(a, b));
   }
 
   return filtered;
+}
+
+function compareTrendHighest(a, b) {
+  // Direction priority: up > flat > down
+  const directionOrder = { up: 0, flat: 1, down: 2 };
+  const dirA = getTrendDirection(a);
+  const dirB = getTrendDirection(b);
+
+  if (directionOrder[dirA] !== directionOrder[dirB]) {
+    return directionOrder[dirA] - directionOrder[dirB];
+  }
+
+  // Within same direction, sort by percentage
+  return getTrendPercentage(b) - getTrendPercentage(a);
+}
+
+function compareTrendLowest(a, b) {
+  // Direction priority: down > flat > up
+  const directionOrder = { down: 0, flat: 1, up: 2 };
+  const dirA = getTrendDirection(a);
+  const dirB = getTrendDirection(b);
+
+  if (directionOrder[dirA] !== directionOrder[dirB]) {
+    return directionOrder[dirA] - directionOrder[dirB];
+  }
+
+  // Within same direction, sort by percentage
+  return getTrendPercentage(a) - getTrendPercentage(b);
 }
 
 export function ensureCard(item, onFavoriteToggle) {
@@ -311,8 +346,8 @@ export function updateCard(item, onFavoriteToggle) {
     low != null && high != null
       ? `Prices: ${formatNumber(low)} to ${formatNumber(high)} mirror`
       : low != null
-      ? `Price: ${formatNumber(low)} mirror`
-      : "Price: n/a";
+        ? `Price: ${formatNumber(low)} mirror`
+        : "Price: n/a";
   priceBox.textContent = priceText;
 
   let trendSymbol = "-";
