@@ -174,6 +174,21 @@ h1 {
   justify-content: space-between;
 }
 
+.search-row {
+  margin-bottom: 12px;
+  display: flex;
+  width: 100%;
+}
+
+.main-search-group {
+  width: min(460px, 100%);
+}
+
+.main-search-group .search-input-wrap,
+.main-search-group .search-input-wrap input {
+  width: 100%;
+}
+
 .filters-panel {
   display: flex;
   flex-direction: column;
@@ -742,6 +757,7 @@ h1 {
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(3px);
   z-index: 2000;
+  padding: clamp(10px, 2.4vh, 24px);
   align-items: center;
   justify-content: center;
 }
@@ -754,8 +770,8 @@ h1 {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
-  width: min(480px, 95vw);
-  max-height: 90vh;
+  width: min(520px, 100%);
+  max-height: 100%;
   overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   display: flex;
@@ -784,6 +800,8 @@ h1 {
   color: var(--ink-soft);
   cursor: pointer;
   padding: 4px 8px;
+  min-width: 36px;
+  min-height: 36px;
   border-radius: 6px;
   line-height: 1;
   transition: background 0.15s ease;
@@ -1277,6 +1295,14 @@ canvas {
     margin-top: 18px;
   }
 
+  .search-row {
+    margin-bottom: 10px;
+  }
+
+  .main-search-group {
+    width: 100%;
+  }
+
   .range-label-row {
     flex-wrap: wrap;
     row-gap: 3px;
@@ -1309,8 +1335,14 @@ canvas {
   }
 
   .settings-modal {
-    width: min(96vw, 520px);
-    max-height: 88vh;
+    width: 100%;
+    max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom)));
+    border-radius: 14px;
+  }
+
+  .settings-overlay {
+    align-items: flex-end;
+    padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
   }
 
   .settings-header,
@@ -1318,6 +1350,19 @@ canvas {
   .settings-footer {
     padding-left: 14px;
     padding-right: 14px;
+  }
+
+  .settings-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface-strong);
+  }
+
+  .settings-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface-strong);
   }
 
   .settings-grid {
