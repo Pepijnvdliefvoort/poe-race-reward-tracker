@@ -11,6 +11,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="apple-touch-icon" href="./assets/icons/FairgravesTricorneAlt.png" />
     <link rel="icon" type="image/png" href="./assets/icons/FairgravesTricorneAlt.png" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
     <script type="module" src="./app.js" defer></script>
@@ -50,6 +51,17 @@
     </header>
 
     <main>
+      <div class="search-row">
+        <div class="filter-group main-search-group">
+          <label for="searchInput">Search</label>
+          <div class="search-input-wrap">
+            <input type="text" id="searchInput" placeholder="Filter by name..." />
+            <button type="button" id="searchClearBtn" class="search-clear-btn" aria-label="Clear search" title="Clear search">
+              &times;
+            </button>
+          </div>
+        </div>
+      </div>
       <section class="cards" id="cards"></section>
     </main>
 
@@ -60,15 +72,6 @@
           <button id="filtersCloseBtn" class="filters-drawer-close" aria-label="Close filters">&times;</button>
         </div>
         <div class="filters-panel">
-          <div class="filter-group">
-            <label for="searchInput">Search</label>
-            <div class="search-input-wrap">
-              <input type="text" id="searchInput" placeholder="Filter by name..." />
-              <button type="button" id="searchClearBtn" class="search-clear-btn" aria-label="Clear search" title="Clear search">
-                &times;
-              </button>
-            </div>
-          </div>
           <div class="filter-group">
             <label for="priceSort">Price</label>
             <select id="priceSort">
