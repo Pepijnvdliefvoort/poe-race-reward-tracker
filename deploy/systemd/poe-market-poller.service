@@ -11,6 +11,7 @@ ExecStart=/opt/poe-market-flips/.venv/bin/python poll_item_prices.py --poll-inte
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/poe-market-flips/secrets.env
 
 [Install]
 WantedBy=multi-user.target

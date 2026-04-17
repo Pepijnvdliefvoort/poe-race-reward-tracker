@@ -19,7 +19,11 @@ DEFAULT_CONFIG = {
     "alert_enabled": False,
     "alert_threshold_pct": 30,
     "alert_history_cycles": 10,
-    "discord_webhook_url": "",
+    "alert_min_total_results": 10,
+    "alert_min_floor_listings": 2,
+    "alert_floor_band_pct": 7.5,
+    "alert_low_liquidity_extra_drop_pct": 20.0,
+    "alert_cooldown_cycles": 6,
 }
 
 

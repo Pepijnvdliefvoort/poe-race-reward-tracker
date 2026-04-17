@@ -44,6 +44,14 @@ python3 -m venv .venv
 ```bash
 sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
+
+# Optional: set Discord webhook secret for alerts
+sudo mkdir -p /etc/poe-market-flips
+sudo sh -c 'cat > /etc/poe-market-flips/secrets.env << EOF
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REPLACE_ME
+EOF'
+sudo chmod 600 /etc/poe-market-flips/secrets.env
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now poe-market-server
 sudo systemctl enable --now poe-market-poller
@@ -122,6 +130,7 @@ This repo includes:
 	- `VPS_USER` = `root` (or your deploy user)
 	- `VPS_PORT` = `22`
 	- `VPS_SSH_KEY` = private SSH key content for that VPS user
+	- `DISCORD_WEBHOOK_URL` = your Discord webhook URL for price alerts
 
 ### Generate an SSH key for deploy (if you do not already have one)
 
@@ -142,7 +151,12 @@ Paste the contents of `vps_deploy_key` (private key) into `VPS_SSH_KEY` in GitHu
 ### How it works
 
 - On every push to `main` or `master`, GitHub Actions connects to your VPS over SSH.
-- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, restarts services, and reloads Caddy.
+- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` (if provided), restarts services, and reloads Caddy.
+
+Webhook secret notes:
+
+- If `DISCORD_WEBHOOK_URL` is present in GitHub Secrets, it is synced on each deploy.
+- If it is missing, deploy keeps any existing `/etc/poe-market-flips/secrets.env` file unchanged.
 
 ### First test
 

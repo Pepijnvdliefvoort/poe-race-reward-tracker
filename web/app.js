@@ -454,11 +454,16 @@ async function initSettings() {
   const cfgEnabled = document.getElementById("cfgEnabled");
   const cfgThreshold = document.getElementById("cfgThreshold");
   const cfgHistoryCycles = document.getElementById("cfgHistoryCycles");
-  const cfgWebhook = document.getElementById("cfgWebhook");
+  const cfgMinTotalResults = document.getElementById("cfgMinTotalResults");
+  const cfgMinFloorListings = document.getElementById("cfgMinFloorListings");
+  const cfgFloorBandPct = document.getElementById("cfgFloorBandPct");
+  const cfgLowLiquidityExtraDropPct = document.getElementById("cfgLowLiquidityExtraDropPct");
+  const cfgCooldownCycles = document.getElementById("cfgCooldownCycles");
 
   function openModal() {
     overlay.classList.add("open");
     overlay.removeAttribute("aria-hidden");
+    document.body.classList.add("modal-open");
     saveStatus.textContent = "";
     loadSettings();
   }
@@ -466,6 +471,7 @@ async function initSettings() {
   function closeModal() {
     overlay.classList.remove("open");
     overlay.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
   }
 
   async function loadSettings() {
@@ -476,7 +482,11 @@ async function initSettings() {
       cfgEnabled.checked = Boolean(cfg.alert_enabled);
       cfgThreshold.value = cfg.alert_threshold_pct ?? 30;
       cfgHistoryCycles.value = cfg.alert_history_cycles ?? 10;
-      cfgWebhook.value = cfg.discord_webhook_url ?? "";
+      cfgMinTotalResults.value = cfg.alert_min_total_results ?? 8;
+      cfgMinFloorListings.value = cfg.alert_min_floor_listings ?? 2;
+      cfgFloorBandPct.value = cfg.alert_floor_band_pct ?? 6;
+      cfgLowLiquidityExtraDropPct.value = cfg.alert_low_liquidity_extra_drop_pct ?? 22;
+      cfgCooldownCycles.value = cfg.alert_cooldown_cycles ?? 6;
     } catch {
       // silently ignore; defaults remain
     }
@@ -487,7 +497,11 @@ async function initSettings() {
       alert_enabled: cfgEnabled.checked,
       alert_threshold_pct: Number(cfgThreshold.value) || 30,
       alert_history_cycles: Number(cfgHistoryCycles.value) || 10,
-      discord_webhook_url: cfgWebhook.value.trim(),
+      alert_min_total_results: Number(cfgMinTotalResults.value) || 8,
+      alert_min_floor_listings: Number(cfgMinFloorListings.value) || 2,
+      alert_floor_band_pct: Number(cfgFloorBandPct.value) || 6,
+      alert_low_liquidity_extra_drop_pct: Number(cfgLowLiquidityExtraDropPct.value) || 22,
+      alert_cooldown_cycles: Number(cfgCooldownCycles.value) || 6,
     };
     try {
       const resp = await fetch("/api/config", {

@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import statistics
 import time
 from dataclasses import dataclass
@@ -60,13 +61,38 @@ class AlertConfig:
     enabled: bool
     threshold_pct: float
     history_cycles: int
+    min_total_results: int
+    min_floor_listings: int
+    floor_band_pct: float
+    low_liquidity_extra_drop_pct: float
+    cooldown_cycles: int
     webhook_url: str
 
 
+def load_discord_webhook_url_from_env() -> str:
+    """Load Discord webhook from environment-managed secret."""
+    for env_name in ("DISCORD_WEBHOOK_URL", "POE_DISCORD_WEBHOOK_URL"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
+
+
 def load_alert_config() -> AlertConfig:
+    webhook_url = load_discord_webhook_url_from_env()
     path = Path(DEFAULT_CONFIG_FILE)
     if not path.exists():
-        return AlertConfig(enabled=False, threshold_pct=30.0, history_cycles=10, webhook_url="")
+        return AlertConfig(
+            enabled=False,
+            threshold_pct=30.0,
+            history_cycles=10,
+            min_total_results=10,
+            min_floor_listings=2,
+            floor_band_pct=7.5,
+            low_liquidity_extra_drop_pct=20.0,
+            cooldown_cycles=6,
+            webhook_url=webhook_url,
+        )
     try:
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -74,11 +100,26 @@ def load_alert_config() -> AlertConfig:
             enabled=bool(data.get("alert_enabled", False)),
             threshold_pct=float(data.get("alert_threshold_pct", 30.0)),
             history_cycles=max(1, int(data.get("alert_history_cycles", 10))),
-            webhook_url=str(data.get("discord_webhook_url", "")),
+            min_total_results=max(1, int(data.get("alert_min_total_results", 10))),
+            min_floor_listings=max(1, int(data.get("alert_min_floor_listings", 2))),
+            floor_band_pct=max(0.0, float(data.get("alert_floor_band_pct", 7.5))),
+            low_liquidity_extra_drop_pct=max(0.0, float(data.get("alert_low_liquidity_extra_drop_pct", 20.0))),
+            cooldown_cycles=max(0, int(data.get("alert_cooldown_cycles", 6))),
+            webhook_url=webhook_url,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Warning: Could not load alert config: {exc}")
-        return AlertConfig(enabled=False, threshold_pct=30.0, history_cycles=10, webhook_url="")
+        return AlertConfig(
+            enabled=False,
+            threshold_pct=30.0,
+            history_cycles=10,
+            min_total_results=10,
+            min_floor_listings=2,
+            floor_band_pct=7.5,
+            low_liquidity_extra_drop_pct=20.0,
+            cooldown_cycles=6,
+            webhook_url=webhook_url,
+        )
 
 
 def seed_price_history(output_csv: Path, history_cycles: int) -> dict[str, list[float]]:
@@ -139,7 +180,7 @@ def send_discord_alert(
     try:
         resp = alert_session.post(
             webhook_url,
-            json={"content": "@everyone", "embeds": [embed]},
+            json={"content": "@here", "embeds": [embed]},
             timeout=10.0,
         )
         resp.raise_for_status()
@@ -616,6 +657,14 @@ def summarize_prices(prices: list[float]) -> tuple[float | None, float | None, f
     return low, high, median
 
 
+def count_prices_within_band(prices: list[float], anchor: float, band_pct: float) -> int:
+    """Count listings priced near the floor to avoid one-off low outliers triggering alerts."""
+    if anchor <= 0:
+        return 0
+    ceiling = anchor * (1.0 + (band_pct / 100.0))
+    return sum(1 for price in prices if price <= ceiling)
+
+
 def format_amount(value: float) -> str:
     if value.is_integer():
         return str(int(value))
@@ -794,6 +843,7 @@ def run_cycle(
     cycle: int,
     divines_per_mirror: float = DIVINES_PER_MIRROR,
     price_history: dict[str, list[float]] | None = None,
+    alert_state: dict[str, tuple[int, float]] | None = None,
     alert_config: AlertConfig | None = None,
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
@@ -843,7 +893,7 @@ def run_cycle(
         cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
         # --- Alert check ---
-        if price_history is None or alert_config is None:
+        if price_history is None or alert_state is None or alert_config is None:
             pass  # Skip alert processing if context missing
         elif not alert_config.enabled:
             pass  # Skip alert processing if disabled
@@ -855,17 +905,46 @@ def run_cycle(
                 baseline = statistics.median(history[-alert_config.history_cycles:])
                 if baseline > 0:
                     pct_drop = (baseline - low_mirror) / baseline * 100
-                    if pct_drop >= alert_config.threshold_pct and alert_config.webhook_url:
-                        send_discord_alert(
-                            session,
-                            item,
-                            low_mirror,
-                            baseline,
-                            pct_drop,
-                            query_id,
-                            alert_config.webhook_url,
-                            item_image_url=cheapest_icon_url,
-                        )
+                    floor_depth = count_prices_within_band(
+                        mirror_prices,
+                        low_mirror,
+                        alert_config.floor_band_pct,
+                    )
+                    required_drop_pct = alert_config.threshold_pct
+                    if total_results < alert_config.min_total_results:
+                        # Thin markets can still alert, but require a larger discount to reduce noise.
+                        required_drop_pct += alert_config.low_liquidity_extra_drop_pct
+                        meets_floor_depth = floor_depth >= 1
+                    else:
+                        meets_floor_depth = floor_depth >= alert_config.min_floor_listings
+
+                    if (
+                        pct_drop >= required_drop_pct
+                        and alert_config.webhook_url
+                        and meets_floor_depth
+                    ):
+                        last_alert = alert_state.get(item_key)
+                        suppress_for_cooldown = False
+                        if last_alert is not None and alert_config.cooldown_cycles > 0:
+                            last_cycle, last_price = last_alert
+                            same_price = abs(last_price - low_mirror) <= max(0.01, last_price * 0.01)
+                            if same_price and (cycle - last_cycle) < alert_config.cooldown_cycles:
+                                suppress_for_cooldown = True
+
+                        if suppress_for_cooldown:
+                            pass
+                        else:
+                            send_discord_alert(
+                                session,
+                                item,
+                                low_mirror,
+                                baseline,
+                                pct_drop,
+                                query_id,
+                                alert_config.webhook_url,
+                                item_image_url=cheapest_icon_url,
+                            )
+                            alert_state[item_key] = (cycle, low_mirror)
 
             # Append median (not lowest) to history — more stable baseline.
             if median_mirror is not None:
@@ -918,11 +997,22 @@ def main() -> None:
     # Load alert config and seed price history from existing CSV.
     alert_config = load_alert_config()
     price_history = seed_price_history(output_csv, alert_config.history_cycles)
+    alert_state: dict[str, tuple[int, float]] = {}
     print(
         f"Alert config: enabled={alert_config.enabled}, "
         f"threshold={alert_config.threshold_pct}%, "
-        f"history_cycles={alert_config.history_cycles}"
+        f"history_cycles={alert_config.history_cycles}, "
+        f"min_total_results={alert_config.min_total_results}, "
+        f"min_floor_listings={alert_config.min_floor_listings}, "
+        f"floor_band_pct={alert_config.floor_band_pct}%, "
+        f"low_liquidity_extra_drop_pct={alert_config.low_liquidity_extra_drop_pct}%, "
+        f"cooldown_cycles={alert_config.cooldown_cycles}"
     )
+    if alert_config.enabled and not alert_config.webhook_url:
+        print(
+            "Warning: Alerts are enabled but no Discord webhook secret is set. "
+            "Set DISCORD_WEBHOOK_URL (or POE_DISCORD_WEBHOOK_URL)."
+        )
 
     while cfg.max_cycles is None or cycle < cfg.max_cycles:
         cycle += 1
@@ -936,7 +1026,7 @@ def main() -> None:
         try:
             divines_per_mirror = run_cycle(
                 session, rate_limiter, output_csv, item_specs, cycle,
-                divines_per_mirror, price_history, alert_config,
+                divines_per_mirror, price_history, alert_state, alert_config,
             )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "?"
