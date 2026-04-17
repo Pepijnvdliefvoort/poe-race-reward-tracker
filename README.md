@@ -95,6 +95,25 @@ Headhunter|any
 
 If the CSV header does not match the current schema, the poller creates a backup and writes a fresh file with the expected header.
 
+## Alert Noise Control
+
+Alerts compare current cheapest listing vs. a history-based baseline, but low-liquidity markets can produce false positives.
+You can tune these `config.json` keys to reduce noise:
+
+- `alert_min_total_results` (default `10`): requires enough total market listings before alerts can fire.
+- `alert_min_floor_listings` (default `2`): requires at least this many listings near the cheapest price.
+- `alert_floor_band_pct` (default `7.5`): defines what "near the floor" means.
+- `alert_low_liquidity_extra_drop_pct` (default `20`): extra discount required when total listings are below `alert_min_total_results`.
+- `alert_cooldown_cycles` (default `6`): suppresses repeated alerts for essentially the same floor price.
+
+For very thin markets, increase `alert_low_liquidity_extra_drop_pct` to reduce false positives while still allowing alerts for rare 1-2 listing opportunities.
+
+Discord webhook URL is no longer stored in `config.json` or editable in the web UI.
+Set it through an environment secret:
+
+- `DISCORD_WEBHOOK_URL` (preferred)
+- `POE_DISCORD_WEBHOOK_URL` (fallback alias)
+
 ## Notes
 
 - Poll timing is aligned to a fixed start-time grid, not just "sleep N seconds after completion".

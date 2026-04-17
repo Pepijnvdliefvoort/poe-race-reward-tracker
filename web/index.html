@@ -122,19 +122,42 @@
               Enable Discord alerts
             </label>
           </div>
-          <div class="settings-field">
-            <label class="settings-label" for="cfgThreshold">Threshold (%)</label>
-            <input type="number" id="cfgThreshold" class="settings-input" min="1" max="99" step="1" value="30" />
-            <span class="settings-hint-inline">How far below the baseline before an alert fires</span>
-          </div>
-          <div class="settings-field">
-            <label class="settings-label" for="cfgHistoryCycles">History cycles (N)</label>
-            <input type="number" id="cfgHistoryCycles" class="settings-input" min="2" max="100" step="1" value="10" />
-            <span class="settings-hint-inline">Number of past cycles used to compute the baseline</span>
-          </div>
-          <div class="settings-field">
-            <label class="settings-label" for="cfgWebhook">Discord webhook URL</label>
-            <input type="url" id="cfgWebhook" class="settings-input settings-input-wide" placeholder="https://discord.com/api/webhooks/..." />
+          <div class="settings-grid">
+            <div class="settings-field">
+              <label class="settings-label" for="cfgThreshold">Threshold (%)</label>
+              <input type="number" id="cfgThreshold" class="settings-input" min="1" max="99" step="1" value="30" />
+              <span class="settings-hint-inline">How far below the baseline before an alert fires</span>
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="cfgHistoryCycles">History cycles (N)</label>
+              <input type="number" id="cfgHistoryCycles" class="settings-input" min="2" max="100" step="1" value="10" />
+              <span class="settings-hint-inline">Number of past cycles used to compute the baseline</span>
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="cfgMinTotalResults">Min total listings (normal market)</label>
+              <input type="number" id="cfgMinTotalResults" class="settings-input" min="1" max="200" step="1" value="8" />
+              <span class="settings-hint-inline">Below this listing count, thin-market rules are used</span>
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="cfgMinFloorListings">Min near-floor listings (normal market)</label>
+              <input type="number" id="cfgMinFloorListings" class="settings-input" min="1" max="20" step="1" value="2" />
+              <span class="settings-hint-inline">How many listings must be near the cheapest price in normal markets</span>
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="cfgFloorBandPct">Near-floor band (%)</label>
+              <input type="number" id="cfgFloorBandPct" class="settings-input" min="0" max="50" step="0.5" value="6" />
+              <span class="settings-hint-inline">Listings within this percent above the floor count as near-floor</span>
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="cfgLowLiquidityExtraDropPct">Thin-market extra drop (%)</label>
+              <input type="number" id="cfgLowLiquidityExtraDropPct" class="settings-input" min="0" max="100" step="1" value="22" />
+              <span class="settings-hint-inline">Extra discount required when listings are below Min total listings</span>
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="cfgCooldownCycles">Cooldown cycles</label>
+              <input type="number" id="cfgCooldownCycles" class="settings-input" min="0" max="200" step="1" value="6" />
+              <span class="settings-hint-inline">Suppress repeated alerts for the same item/price for this many cycles</span>
+            </div>
           </div>
         </div>
         <div class="settings-footer">
