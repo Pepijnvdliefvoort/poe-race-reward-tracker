@@ -180,7 +180,7 @@ function getNextInLineItemName(items) {
 
   // If no item has been polled yet, start with the first one (lowest sortOrder)
   if (latestItem === null) {
-    const first = items.reduce((min, it) => 
+    const first = items.reduce((min, it) =>
       (it.sortOrder ?? Infinity) < (min.sortOrder ?? Infinity) ? it : min
     );
     return first?.itemName ?? null;
@@ -202,7 +202,7 @@ function getNextInLineItemName(items) {
 
   // If no next item found (we're at the end), wrap to the beginning
   if (nextItem === null) {
-    nextItem = items.reduce((min, it) => 
+    nextItem = items.reduce((min, it) =>
       (it.sortOrder ?? Infinity) < (min.sortOrder ?? Infinity) ? it : min
     );
   }
@@ -227,13 +227,11 @@ function statTile(label, value) {
 }
 
 function updateOverview(payload) {
-  const items = payload.items || [];
-  const totalRows = payload.rowCount || 0;
   // nextPollTime is epoch milliseconds (UTC-based) from backend
   const nextPollTime = payload.nextPollTime;
 
-  const tiles = [statTile("Tracked Items", String(items.length)), statTile("Data points", String(totalRows))];
-
+  const pill = document.createElement("div");
+  pill.className = "meta next-poll-pill";
   if (nextPollTime) {
     // Create Date from epoch ms and convert to browser's local timezone
     const nextPollDate = new Date(nextPollTime);
@@ -241,10 +239,11 @@ function updateOverview(payload) {
       hour: "2-digit",
       minute: "2-digit",
     });
-    tiles.push(statTile("Next Poll", timeString));
+    pill.innerHTML = `⏰ Next poll: ${timeString}`;
+  } else {
+    pill.innerHTML = `⏰ Next poll: —`;
   }
-
-  dom.overviewEl.replaceChildren(...tiles);
+  dom.overviewEl.replaceChildren(pill);
 }
 
 function render(payload) {

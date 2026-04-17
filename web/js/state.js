@@ -1,6 +1,6 @@
 export const REFRESH_MS = 4000;
-export const MAX_POINTS = 8;
-export const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+export const MAX_POINTS = 10;
+export const THREE_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
 export const FAVORITES_STORAGE_KEY = "poe-market-favorites";
 export const FILTERS_STORAGE_KEY = "poe-market-filters";
 
