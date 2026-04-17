@@ -1,4 +1,4 @@
-# poe-market-flips
+# Path of Exile Race Reward Tracker
 
 [![Deploy to VPS](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml/badge.svg)](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml)
 
@@ -100,6 +100,19 @@ If the CSV header does not match the current schema, the poller creates a backup
 ## Alert Noise Control
 
 Alerts compare current cheapest listing vs. a history-based baseline, but low-liquidity markets can produce false positives.
+They also require a live resale path: after buying the cheapest listing, the poller checks whether you can relist on your pricing grid and still undercut the next remaining listing.
+
+Current resale grid:
+
+- below or equal to `10` mirrors: relist prices can step in `0.5` mirror increments
+- above `10` mirrors: relist prices must leave a full `1` mirror gap
+
+Examples:
+
+- `3.5, 5, 8, 8, 8` alerts because buying at `3.5` can be relisted at `4` or `4.5` and still stay below the next `5` mirror listing
+- `5, 5, 8, 8, 8` does not alert because buying one `5` mirror listing still leaves another `5` mirror competitor, so there is no profitable undercut price
+- `11, 12, 12, 14, 16` does not alert because the best whole-mirror relist below `12` is `11`, which leaves no profit
+
 You can tune these `config.json` keys to reduce noise:
 
 - `alert_min_total_results` (default `10`): requires enough total market listings before alerts can fire.

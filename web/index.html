@@ -26,6 +26,16 @@
       </div>
       <div class="topbar-right">
         <div class="topbar-actions">
+          <button
+            id="filtersMenuBtn"
+            class="filters-menu-btn"
+            title="Open filters"
+            aria-label="Open filters and sorting options"
+            aria-controls="filtersOverlay"
+            aria-expanded="false"
+          >
+            ☰
+          </button>
           <button id="themeToggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
             <span class="theme-icon">🌙</span>
           </button>
@@ -40,8 +50,16 @@
     </header>
 
     <main>
-      <div class="controls-row">
-        <aside class="filters-panel">
+      <section class="cards" id="cards"></section>
+    </main>
+
+    <div id="filtersOverlay" class="filters-overlay" aria-hidden="true">
+      <aside class="filters-drawer" role="dialog" aria-modal="true" aria-labelledby="filtersDrawerTitle">
+        <div class="filters-drawer-header">
+          <h2 id="filtersDrawerTitle">Filters &amp; Sorting</h2>
+          <button id="filtersCloseBtn" class="filters-drawer-close" aria-label="Close filters">&times;</button>
+        </div>
+        <div class="filters-panel">
           <div class="filter-group">
             <label for="searchInput">Search</label>
             <div class="search-input-wrap">
@@ -95,10 +113,9 @@
             </div>
           </div>
           <button id="resetFiltersBtn" class="reset-filters-btn" title="Clear all filters">Reset Filters</button>
-        </aside>
-      </div>
-      <section class="cards" id="cards"></section>
-    </main>
+        </div>
+      </aside>
+    </div>
 
     <footer class="site-footer">
       <p>
@@ -117,7 +134,8 @@
         <div class="settings-body">
           <p class="settings-hint">
             An alert fires when the current cheapest listing is at least <strong>Threshold %</strong> below
-            the median of the last <strong>N cycles'</strong> median prices for that item.
+            the median of the last <strong>N cycles'</strong> median prices for that item, and when that
+            listing can still be relisted profitably below the next live competitor.
             Requires the poller to be running.
           </p>
           <div class="settings-field">
