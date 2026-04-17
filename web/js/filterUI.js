@@ -47,6 +47,20 @@ export function registerFilterEventListeners() {
         applyFiltersAndRender();
     });
 
+    // On mobile keyboards, Enter/Done should finish editing and return to page zoom.
+    dom.searchInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") {
+            return;
+        }
+
+        event.preventDefault();
+        dom.searchInput.blur();
+    });
+
+    dom.searchInput.addEventListener("blur", () => {
+        forceMobileZoomOut();
+    });
+
     // Search clear button
     dom.searchClearBtn?.addEventListener("click", () => {
         dom.searchInput.value = "";
@@ -116,6 +130,25 @@ export function registerFilterEventListeners() {
     });
 
     syncSearchClearButton();
+}
+
+function forceMobileZoomOut() {
+    const viewport = window.visualViewport;
+    if (!viewport || viewport.scale <= 1) {
+        return;
+    }
+
+    const viewportMeta = document.querySelector('meta[name="viewport"]');
+    if (!viewportMeta) {
+        return;
+    }
+
+    const original = viewportMeta.getAttribute("content") || "width=device-width, initial-scale=1.0";
+    viewportMeta.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1.0");
+
+    window.setTimeout(() => {
+        viewportMeta.setAttribute("content", original);
+    }, 120);
 }
 
 /**
