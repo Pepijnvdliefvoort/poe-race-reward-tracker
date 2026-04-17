@@ -21,6 +21,11 @@ DEFAULT_OUTPUT_FILE = "price_poll.csv"
 DEFAULT_CONFIG_FILE = "config.json"
 TOP_IDS_LIMIT = 5
 DIVINES_PER_MIRROR = 1650.0
+RESALE_PRICE_STEPS: tuple[tuple[float | None, float], ...] = (
+    (10.0, 0.5),
+    (None, 1.0),
+)
+PRICE_EPSILON = 1e-6
 # All timestamps are stored in UTC (Coordinated Universal Time) in ISO 8601 format.
 # When displayed to users via the web dashboard, they are automatically converted to local time.
 CSV_HEADER = [
@@ -67,6 +72,14 @@ class AlertConfig:
     low_liquidity_extra_drop_pct: float
     cooldown_cycles: int
     webhook_url: str
+
+
+@dataclass(frozen=True)
+class ResaleOpportunity:
+    buy_price: float
+    next_market_price: float
+    relist_price: float
+    expected_profit: float
 
 
 def load_discord_webhook_url_from_env() -> str:
@@ -157,6 +170,7 @@ def send_discord_alert(
     pct_drop: float,
     query_id: str,
     webhook_url: str,
+    resale_opportunity: ResaleOpportunity | None = None,
     listing_summary: str | None = None,
     item_image_url: str | None = None,
 ) -> None:
@@ -173,6 +187,19 @@ def send_discord_alert(
             {
                 "name": "Top Listings",
                 "value": listing_summary,
+                "inline": False,
+            }
+        )
+    if resale_opportunity is not None:
+        fields.append(
+            {
+                "name": "Flip Window",
+                "value": (
+                    f"Buy at **{format_amount(resale_opportunity.buy_price)}** mirrors\n"
+                    f"Next live listing: **{format_amount(resale_opportunity.next_market_price)}** mirrors\n"
+                    f"Best relist: **{format_amount(resale_opportunity.relist_price)}** mirrors\n"
+                    f"Estimated gross profit: **{format_amount(resale_opportunity.expected_profit)}** mirrors"
+                ),
                 "inline": False,
             }
         )
@@ -732,6 +759,50 @@ def count_prices_within_band(prices: list[float], anchor: float, band_pct: float
     return sum(1 for price in prices if price <= ceiling)
 
 
+def find_best_relist_price(limit_price: float) -> float | None:
+    """Return the highest allowed relist price that still undercuts the next live listing."""
+    if limit_price <= 0:
+        return None
+
+    best_price: float | None = None
+    target_limit = limit_price - PRICE_EPSILON
+
+    for max_price, step in RESALE_PRICE_STEPS:
+        band_limit = target_limit if max_price is None else min(target_limit, max_price)
+        if band_limit <= 0:
+            continue
+
+        units = math.floor(band_limit / step)
+        candidate = round(units * step, 6)
+        if candidate <= 0 or candidate >= limit_price:
+            continue
+
+        if best_price is None or candidate > best_price:
+            best_price = candidate
+
+    return best_price
+
+
+def find_resale_opportunity(prices: list[float]) -> ResaleOpportunity | None:
+    """Check whether the cheapest listing can be flipped while staying cheapest on the live ladder."""
+    sorted_prices = sorted(price for price in prices if price > 0)
+    if len(sorted_prices) < 2:
+        return None
+
+    buy_price = sorted_prices[0]
+    next_market_price = sorted_prices[1]
+    relist_price = find_best_relist_price(next_market_price)
+    if relist_price is None or relist_price <= buy_price + PRICE_EPSILON:
+        return None
+
+    return ResaleOpportunity(
+        buy_price=buy_price,
+        next_market_price=next_market_price,
+        relist_price=relist_price,
+        expected_profit=relist_price - buy_price,
+    )
+
+
 def format_amount(value: float) -> str:
     if value.is_integer():
         return str(int(value))
@@ -937,6 +1008,7 @@ def run_cycle(
         mirror_prices = raw_mirror_prices + converted
 
         low_mirror, high_mirror, median_mirror = summarize_prices(mirror_prices)
+        resale_opportunity = find_resale_opportunity(mirror_prices)
         used_results = len(mirror_prices)
 
         append_summary_row(
@@ -990,6 +1062,7 @@ def run_cycle(
                         pct_drop >= required_drop_pct
                         and alert_config.webhook_url
                         and meets_floor_depth
+                        and resale_opportunity is not None
                     ):
                         last_alert = alert_state.get(item_key)
                         suppress_for_cooldown = False
@@ -1010,6 +1083,7 @@ def run_cycle(
                                 pct_drop,
                                 query_id,
                                 alert_config.webhook_url,
+                                resale_opportunity=resale_opportunity,
                                 listing_summary=top_listing_summary,
                                 item_image_url=cheapest_icon_url,
                             )
