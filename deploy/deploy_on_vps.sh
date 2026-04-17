@@ -13,6 +13,11 @@ fi
 cd "$APP_DIR"
 
 echo "[1/6] Pull latest code"
+# GitHub is the source of truth for config.json during deploy.
+git reset --quiet HEAD -- "config.json" || true
+git checkout -- "config.json" || true
+echo "Reset local config.json to repository version"
+
 git pull --ff-only
 
 echo "[2/6] Install/update Python dependencies"
