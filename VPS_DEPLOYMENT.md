@@ -151,7 +151,19 @@ Paste the contents of `vps_deploy_key` (private key) into `VPS_SSH_KEY` in GitHu
 ### How it works
 
 - On every push to `main` or `master`, GitHub Actions connects to your VPS over SSH.
-- It runs `deploy/deploy_on_vps.sh`, which treats GitHub as the source of truth for `config.json` (overwriting local VPS edits), pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` (if provided), restarts services, and reloads Caddy.
+- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` (if provided), restarts services, and reloads Caddy.
+
+`config.json` is intentionally untracked. Keep a server-local copy at `/opt/poe-market-flips/config.json` (for example by copying `config.example.json` once and editing values).
+
+One-time migration on existing VPS hosts (if `config.json` was previously tracked and edited locally):
+
+```bash
+cd /opt/poe-market-flips
+cp config.json /tmp/poe-config.json.backup
+git checkout -- config.json
+git pull --ff-only
+cp /tmp/poe-config.json.backup config.json
+```
 
 Webhook secret notes:
 
