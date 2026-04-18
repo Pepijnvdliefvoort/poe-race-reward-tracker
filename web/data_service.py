@@ -489,7 +489,12 @@ def load_price_data() -> dict[str, Any]:
                 "usedResults": int(row.get("used_results") or 0),
             }
             series["points"].append(point)
-            series["latest"] = point
+            # Only update 'latest' if this point has a valid price (lowestMirror not None/NaN)
+            if (
+                point["lowestMirror"] is not None
+                and not (isinstance(point["lowestMirror"], float) and math.isnan(point["lowestMirror"]))
+            ):
+                series["latest"] = point
 
     item_list = list(items.values())
 
