@@ -55,6 +55,12 @@ function initFiltersDrawer() {
   menuBtn.addEventListener("click", openDrawer);
   closeBtn.addEventListener("click", closeDrawer);
 
+  // Apply button closes the drawer
+  const applyBtn = document.getElementById("applyFiltersBtn");
+  if (applyBtn) {
+    applyBtn.addEventListener("click", closeDrawer);
+  }
+
   overlay.addEventListener("click", (event) => {
     if (!drawer.contains(event.target)) {
       closeDrawer();

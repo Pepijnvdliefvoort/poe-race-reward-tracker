@@ -214,6 +214,11 @@ async function loadListingsPreview(entry, options = {}) {
       return;
     }
 
+    if (!payload) {
+      setListingsPopoverBody(entry, "Could not load listings (no data returned).", "listings-popover-error");
+      return;
+    }
+
     renderListingsPreview(entry, payload);
     entry.loadedQueryId = queryId;
   } catch (error) {
