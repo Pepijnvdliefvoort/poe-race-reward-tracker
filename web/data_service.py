@@ -13,6 +13,7 @@ WEB_DIR = ROOT_DIR / "web"
 CSV_PATH = ROOT_DIR / "price_poll.csv"
 CONFIG_PATH = ROOT_DIR / "config.json"
 ITEMS_FILE = ROOT_DIR / "items.txt"
+LISTINGS_CACHE_PATH = WEB_DIR / "listings_cache.json"
 POLL_INTERVAL_SECONDS = 3600
 
 DEFAULT_CONFIG = {
@@ -113,7 +114,7 @@ def _mode_token(is_aa: bool | None) -> str:
 
 def _display_name(item_name: str, is_aa: bool | None) -> str:
     if is_aa is True:
-        return f"{item_name} AA"
+        return f"{item_name}"
     if is_aa is False:
         return f"{item_name} Normal"
     return item_name
@@ -305,6 +306,53 @@ def _calculate_next_poll_time() -> int | None:
         return int(next_dt.timestamp() * 1000)
     except Exception:
         return None
+
+
+def fetch_listing_preview(query_id: str) -> dict[str, Any]:
+    cleaned_query_id = query_id.strip()
+    if not cleaned_query_id:
+        raise ValueError("queryId is required")
+
+    if not LISTINGS_CACHE_PATH.exists():
+        return {
+            "queryId": cleaned_query_id,
+            "league": "Standard",
+            "totalResults": 0,
+            "listings": [],
+            "source": "cache-miss",
+        }
+
+    try:
+        with LISTINGS_CACHE_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return {
+            "queryId": cleaned_query_id,
+            "league": "Standard",
+            "totalResults": 0,
+            "listings": [],
+            "source": "cache-read-error",
+        }
+
+    by_query = payload.get("byQueryId") if isinstance(payload, dict) else None
+    entry = by_query.get(cleaned_query_id) if isinstance(by_query, dict) else None
+    if not isinstance(entry, dict):
+        return {
+            "queryId": cleaned_query_id,
+            "league": payload.get("league", "Standard") if isinstance(payload, dict) else "Standard",
+            "totalResults": 0,
+            "listings": [],
+            "source": "cache-not-found",
+        }
+
+    return {
+        "queryId": cleaned_query_id,
+        "league": entry.get("league") or payload.get("league") or "Standard",
+        "totalResults": int(entry.get("totalResults") or 0),
+        "listings": entry.get("listings") if isinstance(entry.get("listings"), list) else [],
+        "updatedAt": entry.get("updatedAt"),
+        "source": "cache",
+    }
 
 
 def load_price_data() -> dict[str, Any]:

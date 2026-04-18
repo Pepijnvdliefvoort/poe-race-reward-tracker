@@ -19,10 +19,12 @@ DEFAULT_LEAGUE = "Standard"
 DEFAULT_ITEMS_FILE = "items.txt"
 DEFAULT_OUTPUT_FILE = "price_poll.csv"
 DEFAULT_CONFIG_FILE = "config.json"
+DEFAULT_LISTINGS_CACHE_FILE = Path("web") / "listings_cache.json"
+LISTINGS_CACHE_MAX_ENTRIES = 1000
 TOP_IDS_LIMIT = 5
 DIVINES_PER_MIRROR = 1650.0
+MIN_RESALE_PROFIT_MIRRORS = 1.0
 RESALE_PRICE_STEPS: tuple[tuple[float | None, float], ...] = (
-    (10.0, 0.5),
     (None, 1.0),
 )
 PRICE_EPSILON = 1e-6
@@ -673,6 +675,160 @@ def extract_listing_seller_name(entry: dict[str, Any]) -> str:
     return "unknown seller"
 
 
+def format_relative_time(indexed_timestamp: str) -> str:
+    """Format an ISO 8601 timestamp as relative time (e.g., '3 months ago')."""
+    try:
+        posted_time = datetime.fromisoformat(indexed_timestamp.replace("Z", "+00:00"))
+        if posted_time.tzinfo is None:
+            posted_time = posted_time.replace(tzinfo=timezone.utc)
+        
+        now = datetime.now(timezone.utc)
+        diff = now - posted_time
+        
+        # Calculate time units
+        total_seconds = diff.total_seconds()
+        
+        if total_seconds < 60:
+            return "just now"
+        
+        minutes = total_seconds / 60
+        if minutes < 60:
+            m = int(minutes)
+            return f"{m} minute{'s' if m != 1 else ''} ago"
+        
+        hours = minutes / 60
+        if hours < 24:
+            h = int(hours)
+            return f"{h} hour{'s' if h != 1 else ''} ago"
+        
+        days = hours / 24
+        if days < 7:
+            d = int(days)
+            return f"{d} day{'s' if d != 1 else ''} ago"
+        
+        weeks = days / 7
+        if weeks < 4:
+            w = int(weeks)
+            return f"{w} week{'s' if w != 1 else ''} ago"
+        
+        months = days / 30.44
+        if months < 12:
+            mo = int(months)
+            return f"{mo} month{'s' if mo != 1 else ''} ago"
+        
+        years = months / 12
+        y = int(years)
+        return f"{y} year{'s' if y != 1 else ''} ago"
+    except (ValueError, AttributeError):
+        return "unknown"
+
+
+def extract_listing_posted_time(entry: dict[str, Any]) -> str:
+    """Extract and format the posted time from a listing entry."""
+    listing = entry.get("listing") if isinstance(entry, dict) else None
+    indexed = listing.get("indexed") if isinstance(listing, dict) else None
+    if isinstance(indexed, str):
+        return format_relative_time(indexed)
+    return "unknown"
+
+
+def _format_listing_preview_price(price: dict[str, Any] | None) -> tuple[str, float | None, str | None]:
+    if not isinstance(price, dict):
+        return "No listed price", None, None
+
+    amount = price.get("amount")
+    currency = price.get("currency")
+    if not isinstance(amount, (int, float)) or not isinstance(currency, str) or not currency.strip():
+        return "No listed price", None, None
+
+    normalized_currency = currency.strip().lower()
+    amount_float = float(amount)
+    return f"{format_amount(amount_float)} {normalized_currency}", amount_float, normalized_currency
+
+
+def build_listing_preview_entries(listings: list[dict[str, Any]], max_entries: int = TOP_IDS_LIMIT) -> list[dict[str, Any]]:
+    preview_rows: list[dict[str, Any]] = []
+
+    for entry in listings:
+        if len(preview_rows) >= max_entries:
+            break
+
+        listing = entry.get("listing") if isinstance(entry, dict) else None
+        if not isinstance(listing, dict):
+            continue
+
+        price = listing.get("price") if isinstance(listing.get("price"), dict) else None
+        price_text, amount, currency = _format_listing_preview_price(price)
+
+        note = str(listing.get("note") or "")
+        buyout_type = str(price.get("type") or "") if isinstance(price, dict) else ""
+        is_instant_buyout = "b/o" in buyout_type.lower() or "~b/o" in note.lower()
+
+        indexed = listing.get("indexed") if isinstance(listing.get("indexed"), str) else None
+
+        preview_rows.append(
+            {
+                "priceText": price_text,
+                "amount": amount,
+                "currency": currency,
+                "isInstantBuyout": is_instant_buyout,
+                "sellerName": extract_listing_seller_name(entry),
+                "posted": extract_listing_posted_time(entry),
+                "indexed": indexed,
+            }
+        )
+
+    return preview_rows
+
+
+def write_listings_cache(path: Path, by_query_id: dict[str, dict[str, Any]]) -> None:
+    payload = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "league": DEFAULT_LEAGUE,
+        "byQueryId": by_query_id,
+    }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=True)
+    tmp_path.replace(path)
+
+
+def load_listings_cache(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return {}
+
+    by_query = payload.get("byQueryId") if isinstance(payload, dict) else None
+    if not isinstance(by_query, dict):
+        return {}
+
+    cleaned: dict[str, dict[str, Any]] = {}
+    for key, value in by_query.items():
+        if isinstance(key, str) and key and isinstance(value, dict):
+            cleaned[key] = value
+    return cleaned
+
+
+def prune_listings_cache(by_query_id: dict[str, dict[str, Any]], max_entries: int = LISTINGS_CACHE_MAX_ENTRIES) -> dict[str, dict[str, Any]]:
+    if len(by_query_id) <= max_entries:
+        return by_query_id
+
+    def updated_key(item: tuple[str, dict[str, Any]]) -> str:
+        value = item[1]
+        updated_at = value.get("updatedAt") if isinstance(value, dict) else None
+        return updated_at if isinstance(updated_at, str) else ""
+
+    recent_items = sorted(by_query_id.items(), key=updated_key, reverse=True)[:max_entries]
+    return dict(recent_items)
+
+
 def build_top_listing_summary(
     listings: list[dict[str, Any]],
     divines_per_mirror: float,
@@ -692,8 +848,9 @@ def build_top_listing_summary(
 
         currency, amount = normalized
         seller_name = extract_listing_seller_name(entry)
+        posted_time = extract_listing_posted_time(entry)
         price_text = format_listing_summary_price(currency, amount, divines_per_mirror)
-        summary_lines.append(f"{len(summary_lines) + 1}. {price_text} - {seller_name}")
+        summary_lines.append(f"{len(summary_lines) + 1}. {price_text} - {seller_name} - {posted_time}")
 
         if len(summary_lines) >= max_entries:
             break
@@ -795,11 +952,15 @@ def find_resale_opportunity(prices: list[float]) -> ResaleOpportunity | None:
     if relist_price is None or relist_price <= buy_price + PRICE_EPSILON:
         return None
 
+    expected_profit = relist_price - buy_price
+    if expected_profit + PRICE_EPSILON < MIN_RESALE_PROFIT_MIRRORS:
+        return None
+
     return ResaleOpportunity(
         buy_price=buy_price,
         next_market_price=next_market_price,
         relist_price=relist_price,
-        expected_profit=relist_price - buy_price,
+        expected_profit=expected_profit,
     )
 
 
@@ -977,6 +1138,7 @@ def run_cycle(
     session: requests.Session,
     rate_limiter: AdaptiveRateLimiter,
     output_csv: Path,
+    listings_cache_file: Path,
     specs: list[ItemSpec],
     cycle: int,
     divines_per_mirror: float = DIVINES_PER_MIRROR,
@@ -985,6 +1147,8 @@ def run_cycle(
     alert_config: AlertConfig | None = None,
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
+    listings_by_query_id = load_listings_cache(listings_cache_file)
+
     # Fetch Mirror of Kalandra price first so the live ratio is ready before item processing.
     new_mirror_ratio = fetch_mirror_divine_median(session, rate_limiter)
     if new_mirror_ratio is not None:
@@ -1000,6 +1164,15 @@ def run_cycle(
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
         cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
         top_listing_summary = build_top_listing_summary(listings, divines_per_mirror)
+        listing_preview_rows = build_listing_preview_entries(listings)
+
+        listings_by_query_id[query_id] = {
+            "queryId": query_id,
+            "league": DEFAULT_LEAGUE,
+            "totalResults": total_results,
+            "listings": listing_preview_rows,
+            "updatedAt": request_timestamp_utc,
+        }
 
         raw_mirror_prices, divine_prices, unsupported_count = extract_listing_prices(listings)
 
@@ -1029,6 +1202,9 @@ def run_cycle(
             median_divine=None,
             highest_divine=None,
         )
+
+        listings_by_query_id = prune_listings_cache(listings_by_query_id)
+        write_listings_cache(listings_cache_file, listings_by_query_id)
 
         cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
@@ -1107,6 +1283,9 @@ def run_cycle(
             f"{total_field}   cheapest={cheapest_text}"
         )
 
+    listings_by_query_id = prune_listings_cache(listings_by_query_id)
+    write_listings_cache(listings_cache_file, listings_by_query_id)
+
     return divines_per_mirror
 
 
@@ -1121,6 +1300,7 @@ def main() -> None:
     cfg = parse_args()
     items_file = Path(DEFAULT_ITEMS_FILE)
     output_csv = Path(DEFAULT_OUTPUT_FILE)
+    listings_cache_file = Path(DEFAULT_LISTINGS_CACHE_FILE)
     ensure_csv_header(output_csv)
 
     session = build_session()
@@ -1168,7 +1348,7 @@ def main() -> None:
 
         try:
             divines_per_mirror = run_cycle(
-                session, rate_limiter, output_csv, item_specs, cycle,
+                session, rate_limiter, output_csv, listings_cache_file, item_specs, cycle,
                 divines_per_mirror, price_history, alert_state, alert_config,
             )
         except requests.HTTPError as exc:
