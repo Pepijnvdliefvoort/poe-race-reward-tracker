@@ -2,7 +2,6 @@ import { REFRESH_MS } from "./js/state.js";
 import { initTheme, toggleTheme } from "./js/theme.js";
 import { refresh } from "./js/renderer.js";
 import { registerFilterEventListeners, registerKeyboardShortcuts, syncFilterControlsFromState } from "./js/filterUI.js";
-import { initSettingsModal } from "./js/settings.js";
 
 /**
  * Main application entry point.
@@ -22,9 +21,6 @@ if (themeToggle) {
 syncFilterControlsFromState();
 registerFilterEventListeners();
 registerKeyboardShortcuts();
-
-// Initialize settings modal
-initSettingsModal();
 
 initFiltersDrawer();
 

@@ -34,10 +34,12 @@
   box-sizing: border-box;
 }
 
-html,
-body {
+
+html, body {
   margin: 0;
   padding: 0;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 body {
@@ -629,200 +631,9 @@ h1 {
   outline-offset: 2px;
 }
 
-/* Settings button */
-.settings-btn {
-  background: none;
-  border: none;
-  color: var(--ink);
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 6px;
-  background: rgba(9, 12, 18, 0.45);
-  border: 1px solid var(--line);
-  transition: background 0.2s ease, transform 0.2s ease;
-}
-
-:root.light-theme .settings-btn {
-  background: rgba(255, 255, 255, 0.8);
-}
-
-.settings-btn:hover {
-  background: var(--line);
-  transform: scale(1.1);
-}
-
-.settings-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 
 .filters-overlay {
   position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(3px);
-  z-index: 1900;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.22s ease;
-}
-
-.filters-overlay.open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.filters-drawer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: min(390px, 92vw);
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px 14px 20px;
-  background: var(--surface-strong);
-  border-right: 1px solid var(--line);
-  box-shadow: 18px 0 34px rgba(3, 6, 14, 0.5);
-  transform: translateX(-100%);
-  transition: transform 0.24s ease;
-}
-
-.filters-overlay.open .filters-drawer {
-  transform: translateX(0);
-}
-
-.filters-drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.filters-drawer-header h2 {
-  margin: 0;
-  font-size: 1rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.filters-drawer-close {
-  border: 1px solid var(--line);
-  background: rgba(9, 12, 18, 0.45);
-  color: var(--ink-soft);
-  border-radius: 8px;
-  width: 32px;
-  height: 32px;
-  cursor: pointer;
-  font-size: 1.2rem;
-  line-height: 1;
-}
-
-.filters-drawer-close:hover,
-.filters-drawer-close:focus-visible {
-  color: var(--ink);
-  border-color: var(--accent);
-  outline: none;
-}
-
-.filters-drawer .filters-panel {
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.filters-drawer .filter-group,
-.filters-drawer .filter-group-checkbox,
-.filters-drawer .filter-group-range {
-  width: 100%;
-  min-width: 0;
-}
-
-.filters-drawer .filter-group input:not([type="checkbox"]):not([type="range"]),
-.filters-drawer .filter-group select {
-  width: 100%;
-  min-width: 0;
-}
-
-.filters-drawer .range-control {
-  width: 100%;
-}
-
-.filters-drawer .reset-filters-btn {
-  width: 100%;
-  height: 36px;
-}
-
-/* Settings overlay / modal */
-.settings-overlay {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
-  z-index: 2000;
-  padding: clamp(10px, 2.4vh, 24px);
-  align-items: center;
-  justify-content: center;
-}
-
-.settings-overlay.open {
-  display: flex;
-}
-
-.settings-modal {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  width: min(520px, 100%);
-  max-height: 100%;
-  overflow-y: auto;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line);
-}
-
-.settings-header h2 {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.settings-close {
-  background: none;
-  border: none;
-  font-size: 1.4rem;
-  color: var(--ink-soft);
-  cursor: pointer;
-  padding: 4px 8px;
-  min-width: 36px;
-  min-height: 36px;
-  border-radius: 6px;
-  line-height: 1;
-  transition: background 0.15s ease;
-}
-
-.settings-close:hover {
-  background: var(--line);
-  color: var(--ink);
-}
-
-.settings-body {
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -1140,6 +951,7 @@ h1 {
   bottom: calc(100% + 2px);
   transform: translateX(calc(-50% + var(--listings-popover-shift-x, 0px))) scale(0.96);
   width: min(320px, 88vw);
+  max-width: 98vw;
   max-height: 240px;
   overflow: auto;
   border: 1px solid rgba(255, 203, 72, 0.82);
@@ -1152,6 +964,7 @@ h1 {
   pointer-events: none;
   z-index: 10000;
   transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+  box-sizing: border-box;
 }
 
 .listings-popover::before {
