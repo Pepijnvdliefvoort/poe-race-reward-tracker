@@ -1173,6 +1173,47 @@ h1 {
   box-sizing: border-box;
 }
 
+/* Popover is portaled to <body> on mobile; animate from its trigger */
+.listings-popover.listings-popover--global {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, -92%) scale(0.98);
+  transform-origin: 50% 100%;
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+  z-index: 12000;
+}
+
+.listings-popover.listings-popover--global.listings-popover--global-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translate(-50%, -100%) scale(1);
+}
+
+.listings-popover-overlay {
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse), (max-width: 1024px) {
+  .listings-popover-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.02);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 10000;
+  }
+
+  .listings-popover-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .listings-popover::before {
   content: '';
   position: absolute;

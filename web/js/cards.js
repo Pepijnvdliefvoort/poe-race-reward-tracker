@@ -4,6 +4,125 @@ import { formatNumber, formatTime, getCondensedChartPoints } from "./utils.js";
 const listingsPreviewCache = new Map();
 const listingsPreviewInFlight = new Map();
 const LISTINGS_PREVIEW_CACHE_TTL_MS = Math.max(REFRESH_MS * 2, 8000);
+const MOBILE_MEDIA_QUERY = "(hover: none) and (pointer: coarse), (max-width: 1024px)";
+
+let globalListingsOverlay = null;
+let activeListingsOverlayClose = null;
+let globalListingsOverlayOpenedAt = 0;
+
+function isMobileViewport() {
+  return window.matchMedia?.(MOBILE_MEDIA_QUERY)?.matches ?? window.innerWidth <= 1024;
+}
+
+function ensureGlobalListingsOverlay() {
+  if (globalListingsOverlay) {
+    return globalListingsOverlay;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "listings-popover-overlay";
+  overlay.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    // If the overlay was just opened via the same press/tap, the "click" from release
+    // can land on the overlay and immediately close it. Ignore that first click.
+    if (globalListingsOverlayOpenedAt && performance.now() - globalListingsOverlayOpenedAt < 350) {
+      return;
+    }
+    activeListingsOverlayClose?.();
+  });
+  // Overlay is page-level; the listings popover is also portaled to <body> on mobile.
+  // This makes z-index ordering deterministic: card < overlay < popover.
+  document.body.appendChild(overlay);
+  globalListingsOverlay = overlay;
+  return overlay;
+}
+
+function openGlobalListingsOverlay(onClose) {
+  if (!isMobileViewport()) return;
+  ensureGlobalListingsOverlay().classList.add("open");
+  globalListingsOverlayOpenedAt = performance.now();
+  activeListingsOverlayClose = onClose;
+}
+
+function closeGlobalListingsOverlay(onClose) {
+  if (!globalListingsOverlay) return;
+  if (activeListingsOverlayClose === onClose) {
+    activeListingsOverlayClose = null;
+    globalListingsOverlay.classList.remove("open");
+  }
+}
+
+function mountListingsPopoverToBody(entry) {
+  if (!isMobileViewport()) return;
+  if (entry.listingsPopoverMountedToBody) return;
+  if (!entry.listingsPopoverHome || !entry.listingsPopoverPlaceholder) return;
+
+  entry.listingsPopoverMountedToBody = true;
+  // Swap the in-card popover with a placeholder so layout doesn't shift.
+  entry.listingsPopoverHome.replaceChild(entry.listingsPopoverPlaceholder, entry.listingsPopover);
+  document.body.appendChild(entry.listingsPopover);
+
+  entry.listingsPopover.classList.add("listings-popover--global");
+  entry.listingsPopover.style.position = "absolute";
+  entry.listingsPopover.style.left = "0px";
+  entry.listingsPopover.style.top = "0px";
+  entry.listingsPopover.style.bottom = "auto";
+  entry.listingsPopover.style.zIndex = "12000";
+  entry.listingsPopoverPositionLocked = false;
+
+  // Position first (while still hidden), then open on next frame so the animation
+  // originates from the hover area instead of gliding in from (0, 0).
+  positionGlobalListingsPopover(entry, { force: true });
+  window.requestAnimationFrame(() => {
+    entry.listingsPopover.classList.add("listings-popover--global-open");
+    entry.listingsPopoverPositionLocked = true;
+  });
+}
+
+function unmountListingsPopoverFromBody(entry) {
+  if (!entry.listingsPopoverMountedToBody) {
+    return;
+  }
+
+  // Always reset the popover even if something removed the placeholder.
+  entry.listingsPopoverMountedToBody = false;
+  entry.listingsPopoverPositionLocked = false;
+  entry.listingsPopover.classList.remove("listings-popover--global-open", "listings-popover--global");
+  entry.listingsPopover.removeAttribute("style");
+
+  if (entry.listingsPopoverHome && entry.listingsPopoverPlaceholder?.parentNode) {
+    entry.listingsPopoverPlaceholder.parentNode.replaceChild(entry.listingsPopover, entry.listingsPopoverPlaceholder);
+  }
+}
+
+function positionGlobalListingsPopover(entry, options = {}) {
+  if (!entry.listingsPopoverMountedToBody) return;
+  const { force = false } = options;
+  if (!force && entry.listingsPopoverPositionLocked) {
+    return;
+  }
+  const hoverEl = entry.listingsHoverArea;
+  const popoverEl = entry.listingsPopover;
+  if (!hoverEl || !popoverEl) return;
+
+  const margin = 8;
+  const gap = 8;
+  const hoverRect = hoverEl.getBoundingClientRect();
+
+  const popoverRect = popoverEl.getBoundingClientRect();
+  const width = popoverRect.width || Math.min(320, window.innerWidth * 0.88);
+  const idealCenterX = hoverRect.left + hoverRect.width / 2;
+  const minCenterX = margin + width / 2;
+  const maxCenterX = window.innerWidth - margin - width / 2;
+  const centerX = Math.max(minCenterX, Math.min(maxCenterX, idealCenterX));
+
+  const docX = centerX + window.scrollX;
+  const docY = hoverRect.top - gap + window.scrollY;
+  popoverEl.style.left = `${Math.round(docX)}px`;
+  popoverEl.style.top = `${Math.round(docY)}px`;
+  popoverEl.style.transform = "translate(-50%, -100%) scale(1)";
+}
 
 function clearNodeChildren(node) {
   while (node.firstChild) {
@@ -76,6 +195,11 @@ function positionListingsPopover(entry) {
   const popoverEl = entry.listingsPopover;
   const hoverEl = entry.listingsHoverArea;
   if (!popoverEl || !hoverEl) {
+    return;
+  }
+
+  if (entry.listingsPopoverMountedToBody) {
+    positionGlobalListingsPopover(entry);
     return;
   }
 
@@ -427,8 +551,12 @@ export function ensureCard(item, onFavoriteToggle) {
   listingsPopoverBody.className = "listings-popover-body";
   listingsPopoverBody.textContent = "Hover to load listing details.";
 
+  const listingsPopoverPlaceholder = document.createElement("span");
+  listingsPopoverPlaceholder.className = "listings-popover-placeholder";
+  listingsPopoverPlaceholder.style.display = "none";
+
   listingsPopover.append(listingsPopoverHeader, listingsPopoverSubline, listingsPopoverBody);
-  listingsHoverArea.append(trendListings, listingsPopover);
+  listingsHoverArea.append(trendListings, listingsPopover, listingsPopoverPlaceholder);
   trend.append(trendLabel, trendIndicator, listingsHoverArea);
 
   const triggerListingsPreviewLoad = () => {
@@ -441,14 +569,20 @@ export function ensureCard(item, onFavoriteToggle) {
   const openPopover = () => {
     triggerListingsPreviewLoad();
     listingsHoverArea.classList.add("popover-open");
-    card.classList.add("popover-active");
+    if (!isMobileViewport()) {
+      card.classList.add("popover-active");
+    } else {
+      mountListingsPopoverToBody(entry);
+      positionListingsPopover(entry);
+    }
     startListingsLiveRefresh(entry);
+    openGlobalListingsOverlay(closePopover);
     if (!entry.handleViewportChange) {
       entry.handleViewportChange = () => {
         if (!entry.listingsHoverArea.classList.contains("popover-open")) {
           return;
         }
-        positionListingsPopover(entry);
+        positionGlobalListingsPopover(entry, { force: true });
       };
     }
     window.addEventListener("resize", entry.handleViewportChange);
@@ -461,6 +595,8 @@ export function ensureCard(item, onFavoriteToggle) {
     listingsHoverArea.classList.remove("popover-open");
     card.classList.remove("popover-active");
     stopListingsLiveRefresh(entry);
+    closeGlobalListingsOverlay(closePopover);
+    unmountListingsPopoverFromBody(entry);
     listingsHoverArea.style.setProperty("--listings-popover-shift-x", "0px");
     if (entry.handleViewportChange) {
       window.removeEventListener("resize", entry.handleViewportChange);
@@ -469,15 +605,41 @@ export function ensureCard(item, onFavoriteToggle) {
 
   listingsHoverArea.addEventListener("mouseenter", openPopover);
   listingsHoverArea.addEventListener("focusin", triggerListingsPreviewLoad);
-  listingsHoverArea.addEventListener("mouseleave", closePopover);
+  const togglePopoverFromTap = (event) => {
+    if (!isMobileViewport()) return;
+    if (listingsHoverArea.classList.contains("disabled")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (listingsHoverArea.classList.contains("popover-open")) {
+      closePopover();
+    } else {
+      openPopover();
+    }
+  };
+
+  if ("PointerEvent" in window) {
+    // Avoid pointerdown + click double-toggling on mobile.
+    listingsHoverArea.addEventListener("pointerdown", togglePopoverFromTap);
+  } else {
+    listingsHoverArea.addEventListener("click", togglePopoverFromTap);
+  }
+
+  listingsHoverArea.addEventListener("mouseleave", () => {
+    if (isMobileViewport()) return;
+    closePopover();
+  });
 
   listingsPopover.addEventListener("mouseenter", () => {
+    if (isMobileViewport()) return;
     listingsHoverArea.classList.add("popover-open");
     card.classList.add("popover-active");
     positionListingsPopover(entry);
   });
 
-  listingsPopover.addEventListener("mouseleave", closePopover);
+  listingsPopover.addEventListener("mouseleave", () => {
+    if (isMobileViewport()) return;
+    closePopover();
+  });
 
   artFrame.prepend(favoriteBtn);
   card.append(title, artFrame, priceBox, chartWrap, trend);
@@ -609,6 +771,10 @@ export function ensureCard(item, onFavoriteToggle) {
     trendListings,
     listingsHoverArea,
     listingsPopover,
+    listingsPopoverHome: listingsHoverArea,
+    listingsPopoverPlaceholder,
+    listingsPopoverMountedToBody: false,
+    listingsPopoverPositionLocked: false,
     listingsPopoverHeader,
     listingsPopoverBody,
     listingsPopoverSubline,
