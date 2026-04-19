@@ -10,6 +10,83 @@ let globalListingsOverlay = null;
 let activeListingsOverlayClose = null;
 let globalListingsOverlayOpenedAt = 0;
 
+let activeTooltipChart = null;
+let tooltipGlobalListenersInstalled = false;
+
+function clearChartTooltip(chart) {
+  if (!chart?.tooltip) return;
+  chart.tooltip.setActiveElements([], {});
+  chart.draw();
+}
+
+function clearAllChartTooltips() {
+  for (const entry of chartMap.values()) {
+    clearChartTooltip(entry?.chart);
+  }
+  activeTooltipChart = null;
+}
+
+function installTooltipGlobalListeners() {
+  if (tooltipGlobalListenersInstalled) return;
+  tooltipGlobalListenersInstalled = true;
+
+  const clearActive = () => {
+    if (!activeTooltipChart) return;
+    clearChartTooltip(activeTooltipChart);
+    activeTooltipChart = null;
+  };
+
+  // If the user interacts anywhere else, the pinned chart tooltip should not remain.
+  const clearOnOutsidePress = (event) => {
+    if (!activeTooltipChart) return;
+    const target = event?.target;
+    const canvas = activeTooltipChart?.canvas;
+    if (target && canvas && (target === canvas || canvas.contains?.(target))) {
+      return;
+    }
+    clearActive();
+  };
+
+  // Clear the pinned tooltip when the gesture ends anywhere (release can happen
+  // outside the canvas during scroll/pull-to-refresh).
+  if ("PointerEvent" in window) {
+    window.addEventListener("pointerdown", clearOnOutsidePress, { passive: true, capture: true });
+    window.addEventListener("pointerup", clearActive, { passive: true, capture: true });
+    window.addEventListener("pointercancel", clearActive, { passive: true, capture: true });
+    // Some browsers can "steal" touch pointers for scrolling without sending a
+    // reliable up/cancel to the original target; clearing on scroll is a safe fallback.
+  } else {
+    window.addEventListener("touchstart", clearOnOutsidePress, { passive: true, capture: true });
+    window.addEventListener("touchend", clearActive, { passive: true, capture: true });
+    window.addEventListener("touchcancel", clearActive, { passive: true, capture: true });
+    // When the browser is actively scrolling, touchmove becomes non-cancelable.
+    // This is a strong signal that the user is scrolling/pulling-to-refresh, so
+    // we should not keep the chart tooltip pinned.
+    window.addEventListener(
+      "touchmove",
+      (event) => {
+        if (!activeTooltipChart) return;
+        if (event.cancelable === false) {
+          clearActive();
+        }
+      },
+      { passive: true, capture: true }
+    );
+  }
+
+  // Scrolling should reset *all* pinned value tags/tooltips.
+  window.addEventListener("scroll", clearAllChartTooltips, { passive: true });
+  window.addEventListener("blur", clearActive, { passive: true });
+  window.addEventListener("pagehide", clearActive, { passive: true });
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      if (document.visibilityState !== "visible") clearActive();
+    },
+    { passive: true }
+  );
+}
+
 function isMobileViewport() {
   return window.matchMedia?.(MOBILE_MEDIA_QUERY)?.matches ?? window.innerWidth <= 1024;
 }
@@ -720,11 +797,24 @@ export function ensureCard(item, onFavoriteToggle) {
           };
         },
       },
+      {
+        id: "tooltipActivityTracker",
+        afterEvent(chartInstance) {
+          const tooltip = chartInstance?.tooltip;
+          const active = tooltip?.getActiveElements?.() ?? [];
+          if (active.length > 0) {
+            activeTooltipChart = chartInstance;
+            installTooltipGlobalListeners();
+          } else if (activeTooltipChart === chartInstance) {
+            activeTooltipChart = null;
+          }
+        },
+      },
     ],
     onHover: (event) => {
       if (!chart._sectionTooltipData || !event.native) {
-        chart.tooltip.setActiveElements([], {});
-        chart.draw();
+        clearChartTooltip(chart);
+        if (activeTooltipChart === chart) activeTooltipChart = null;
         return;
       }
 
@@ -732,8 +822,8 @@ export function ensureCard(item, onFavoriteToggle) {
       const mouseX = event.native.offsetX;
 
       if (dataLength === 0) {
-        chart.tooltip.setActiveElements([], {});
-        chart.draw();
+        clearChartTooltip(chart);
+        if (activeTooltipChart === chart) activeTooltipChart = null;
         return;
       }
 
