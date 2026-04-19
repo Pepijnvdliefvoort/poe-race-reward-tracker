@@ -20,6 +20,8 @@ from admin_service import (
 )
 from data_service import WEB_DIR, fetch_listing_preview, load_config, load_price_data, save_config
 
+_ADMIN_UNAUTHORIZED_HTML = WEB_DIR / "admin-unauthorized.html"
+
 
 def create_server(host: str, port: int) -> ThreadingHTTPServer:
     return ThreadingHTTPServer((host, port), DashboardHandler)
@@ -30,20 +32,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
     def _send_admin_unauthorized_page(self) -> None:
-        body = (
-            "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/>"
-            "<title>Admin — Authentication required</title>"
-            "<style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:0 1.5rem;"
-            "line-height:1.5;color:#1a1a1a;}code{background:#eee;padding:0.15em 0.4em;border-radius:4px;}"
-            "</style></head><body>"
-            "<h1>Authentication required</h1>"
-            "<p>Visit <code>/admin?token=…</code> <strong>once</strong> using the same value as "
-            "<code>ADMIN_TOKEN</code> on the server (e.g. your GitHub Actions secret). "
-            "The server sets an HttpOnly cookie; then <code>/admin</code> works without the query string.</p>"
-            "<p>If you already did that, check that the service loads <code>/etc/poe-market-flips/secrets.env</code> "
-            "and restart <code>poe-market-server</code> after deploy.</p>"
-            "</body></html>"
-        ).encode("utf-8")
+        if _ADMIN_UNAUTHORIZED_HTML.is_file():
+            body = _ADMIN_UNAUTHORIZED_HTML.read_bytes()
+        else:
+            body = b"<!DOCTYPE html><html><head><meta charset=utf-8><title>401</title></head>"
+            body += b"<body><p>Unauthorized</p></body></html>"
         self.send_response(401)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")

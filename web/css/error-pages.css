@@ -1,0 +1,52 @@
+/* Minimal full-page errors; uses variables.css tokens + .light-theme */
+
+body.error-page {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(1.5rem, 5vw, 3rem);
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.error-page-inner {
+  text-align: center;
+  max-width: 22rem;
+}
+
+.error-page-code {
+  margin: 0 0 0.35rem;
+  font-size: clamp(3rem, 12vw, 4.5rem);
+  font-weight: 700;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  color: var(--ink-soft);
+}
+
+.error-page-inner h1 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.error-page-hint {
+  margin: 0 0 1.75rem;
+  font-size: 0.95rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.error-page-inner a {
+  color: var(--accent-2);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+.error-page-inner a:hover {
+  text-decoration: underline;
+}

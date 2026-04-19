@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Access denied</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/variables.css" />
+    <link rel="stylesheet" href="/css/error-pages.css" />
+    <script>
+      (function () {
+        try {
+          var k = "poe-market-theme";
+          var saved = localStorage.getItem(k);
+          var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var theme = saved || (prefersDark ? "dark" : "light");
+          if (theme === "light") document.documentElement.classList.add("light-theme");
+        } catch (_) {}
+      })();
+    </script>
+  </head>
+  <body class="error-page">
+    <main class="error-page-inner">
+      <p class="error-page-code">401</p>
+      <h1>Access denied</h1>
+      <p class="error-page-hint">You don’t have permission to view this page.</p>
+      <a href="/">Return to home</a>
+    </main>
+  </body>
+</html>
