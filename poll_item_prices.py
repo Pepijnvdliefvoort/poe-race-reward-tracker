@@ -1296,7 +1296,20 @@ def seconds_until_next_tick(start_monotonic: float, delay_seconds: int, now_mono
     return max(0.0, next_tick - now_monotonic)
 
 
+def _install_poller_log_tee() -> None:
+    import sys
+
+    server_dir = Path(__file__).resolve().parent / "server"
+    sd = str(server_dir)
+    if sd not in sys.path:
+        sys.path.insert(0, sd)
+    from console_tee import install_console_tee
+
+    install_console_tee("poller.log")
+
+
 def main() -> None:
+    _install_poller_log_tee()
     cfg = parse_args()
     items_file = Path(DEFAULT_ITEMS_FILE)
     output_csv = Path(DEFAULT_OUTPUT_FILE)

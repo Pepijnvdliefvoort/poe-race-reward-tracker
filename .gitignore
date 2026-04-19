@@ -36,6 +36,7 @@ Thumbs.db
 # Local runtime/output files
 price_poll.csv
 listings_cache.json
+logs/
 
 # Server-local config (do not commit)
 config.json

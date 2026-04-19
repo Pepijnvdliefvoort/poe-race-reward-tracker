@@ -24,19 +24,24 @@ echo "[2/6] Install/update Python dependencies"
 
 echo "[3/6] Sync runtime secrets"
 mkdir -p "$SECRETS_DIR"
-if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
+FINAL_DISCORD="${DISCORD_WEBHOOK_URL:-}"
+FINAL_ADMIN="${ADMIN_TOKEN:-}"
+if [ -f "$SECRETS_FILE" ]; then
+  [ -z "$FINAL_DISCORD" ] && FINAL_DISCORD="$(grep '^DISCORD_WEBHOOK_URL=' "$SECRETS_FILE" 2>/dev/null | sed 's/^DISCORD_WEBHOOK_URL=//' | head -1)" || true
+  [ -z "$FINAL_ADMIN" ] && FINAL_ADMIN="$(grep '^ADMIN_TOKEN=' "$SECRETS_FILE" 2>/dev/null | sed 's/^ADMIN_TOKEN=//' | head -1)" || true
+fi
+if [ -n "${DISCORD_WEBHOOK_URL:-}" ] || [ -n "${ADMIN_TOKEN:-}" ] || { [ -n "$FINAL_DISCORD" ] || [ -n "$FINAL_ADMIN" ]; }; then
   umask 077
-  cat > "$SECRETS_FILE" <<EOF
-DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-EOF
+  MERGE_TMP="$(mktemp)"
+  {
+    [ -n "$FINAL_DISCORD" ] && printf '%s\n' "DISCORD_WEBHOOK_URL=$FINAL_DISCORD"
+    [ -n "$FINAL_ADMIN" ] && printf '%s\n' "ADMIN_TOKEN=$FINAL_ADMIN"
+  } > "$MERGE_TMP"
+  mv "$MERGE_TMP" "$SECRETS_FILE"
   chmod 600 "$SECRETS_FILE"
-  echo "Updated $SECRETS_FILE from GitHub secret DISCORD_WEBHOOK_URL"
+  echo "Updated $SECRETS_FILE (merge GitHub env with existing values)"
 else
-  if [ -f "$SECRETS_FILE" ]; then
-    echo "DISCORD_WEBHOOK_URL not provided by workflow; keeping existing $SECRETS_FILE"
-  else
-    echo "DISCORD_WEBHOOK_URL not provided and no existing $SECRETS_FILE; alerts will remain disabled"
-  fi
+  echo "No secrets in workflow or on disk; skipping $SECRETS_FILE"
 fi
 
 echo "[4/6] Sync systemd unit files (dashboard: python server/server.py)"

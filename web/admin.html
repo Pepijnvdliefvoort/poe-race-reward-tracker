@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin — PoE Race Rewards</title>
+    <meta name="robots" content="noindex,nofollow" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <link rel="stylesheet" href="/css/variables.css" />
+    <link rel="stylesheet" href="/css/admin.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script type="module" src="/js/admin.js"></script>
+  </head>
+  <body>
+    <div class="admin-bg" aria-hidden="true"></div>
+    <header class="admin-header">
+      <div>
+        <p class="admin-eyebrow">Operations</p>
+        <h1>Admin panel</h1>
+      </div>
+      <div class="admin-header-actions">
+        <a href="/" class="admin-btn admin-btn-ghost">← Dashboard</a>
+      </div>
+    </header>
+
+    <p id="adminAuthHint" class="admin-hint"></p>
+
+    <section class="admin-section">
+      <div class="admin-section-head">
+        <h2>Logs</h2>
+        <p class="admin-muted">Server and poller output (tee to <code>logs/</code>).</p>
+      </div>
+      <div class="admin-console-grid">
+        <div class="admin-console-wrap">
+          <div class="admin-console-titlebar">
+            <span class="admin-console-dot"></span>
+            <span class="admin-console-dot"></span>
+            <span class="admin-console-dot"></span>
+            <span class="admin-console-title">server.log</span>
+          </div>
+          <pre id="serverConsole" class="admin-console" aria-live="polite"></pre>
+        </div>
+        <div class="admin-console-wrap">
+          <div class="admin-console-titlebar">
+            <span class="admin-console-dot"></span>
+            <span class="admin-console-dot"></span>
+            <span class="admin-console-dot"></span>
+            <span class="admin-console-title">poller.log</span>
+          </div>
+          <pre id="pollerConsole" class="admin-console" aria-live="polite"></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="admin-section">
+      <div class="admin-section-head admin-section-head-row">
+        <div>
+          <h2>Data export</h2>
+          <p class="admin-muted">Download the live CSV the dashboard reads.</p>
+        </div>
+        <a id="csvDownloadBtn" class="admin-btn" href="#" download>Download price_poll.csv</a>
+      </div>
+    </section>
+
+    <section class="admin-section">
+      <div class="admin-section-head">
+        <h2>Visitors</h2>
+        <p class="admin-muted" id="visitorStats"></p>
+      </div>
+      <div id="visitorMap" class="admin-map" role="img" aria-label="Visitor locations map"></div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="visitorTable">
+          <thead>
+            <tr>
+              <th>IP address</th>
+              <th>Visits</th>
+              <th>Last seen (UTC)</th>
+              <th>Map</th>
+            </tr>
+          </thead>
+          <tbody id="visitorTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="admin-footer">
+      <p class="admin-muted">
+        Authentication uses <code>ADMIN_TOKEN</code> from the server environment (e.g. GitHub Actions secret
+        <code>ADMIN_TOKEN</code> written to the VPS on deploy). Open
+        <code>/admin?token=…</code> <strong>once</strong> with that value; the server sets an HttpOnly cookie so you
+        can use <code>/admin</code> afterward. There is no token field on this page.
+      </p>
+    </footer>
+  </body>
+</html>
