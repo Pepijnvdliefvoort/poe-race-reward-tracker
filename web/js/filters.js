@@ -1,4 +1,5 @@
-import { applySorting, getAvailableLowestPrice } from "./cards.js";
+import { applySorting } from "./domain/sorting.js";
+import { getAvailableLowestPrice } from "./domain/pricing.js";
 import { state } from "./state.js";
 
 /**
