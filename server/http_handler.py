@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -28,6 +29,28 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
+    def _send_admin_unauthorized_page(self) -> None:
+        body = (
+            "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/>"
+            "<title>Admin — Authentication required</title>"
+            "<style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:0 1.5rem;"
+            "line-height:1.5;color:#1a1a1a;}code{background:#eee;padding:0.15em 0.4em;border-radius:4px;}"
+            "</style></head><body>"
+            "<h1>Authentication required</h1>"
+            "<p>Visit <code>/admin?token=…</code> <strong>once</strong> using the same value as "
+            "<code>ADMIN_TOKEN</code> on the server (e.g. your GitHub Actions secret). "
+            "The server sets an HttpOnly cookie; then <code>/admin</code> works without the query string.</p>"
+            "<p>If you already did that, check that the service loads <code>/etc/poe-market-flips/secrets.env</code> "
+            "and restart <code>poe-market-server</code> after deploy.</p>"
+            "</body></html>"
+        ).encode("utf-8")
+        self.send_response(401)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress logging for static assets; only log API requests."""
         # args[0] contains the request line like 'GET /path HTTP/1.1'
@@ -49,6 +72,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_header("Location", "/admin")
                 self.send_header("Set-Cookie", set_cookie)
                 self.end_headers()
+                return
+
+        if req_path in {"/admin", "/admin/"} and os.environ.get("ADMIN_TOKEN", "").strip():
+            if not admin_authorized(auth_header, token_param, cookie_header):
+                self._send_admin_unauthorized_page()
                 return
 
         if req_path.startswith("/api/admin/"):
