@@ -76,6 +76,10 @@ function renderVisitorMap(data) {
     const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]));
     map.fitBounds(bounds.pad(0.15));
   }
+
+  requestAnimationFrame(() => {
+    map.invalidateSize({ animate: false });
+  });
 }
 
 function escapeHtml(s) {
@@ -172,8 +176,25 @@ function setupCsvDownload() {
   });
 }
 
+function setupMapResize() {
+  let t;
+  const bump = () => {
+    if (!map) return;
+    clearTimeout(t);
+    t = window.setTimeout(() => {
+      map.invalidateSize({ animate: false });
+    }, 120);
+  };
+  window.addEventListener("resize", bump);
+  window.addEventListener("orientationchange", bump);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", bump);
+  }
+}
+
 function main() {
   setupCsvDownload();
+  setupMapResize();
   refreshLogs();
   refreshVisitors();
   logPollTimer = window.setInterval(refreshLogs, 2500);

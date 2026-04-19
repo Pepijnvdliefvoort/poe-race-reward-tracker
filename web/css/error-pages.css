@@ -1,12 +1,22 @@
 /* Minimal full-page errors; uses variables.css tokens + .light-theme */
 
+html.error-page-root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body.error-page {
   margin: 0;
-  min-height: 100vh;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: clamp(1.5rem, 5vw, 3rem);
+  padding: clamp(1rem, 4vw, 2rem);
   font-family: "Space Grotesk", system-ui, sans-serif;
   background: var(--bg);
   color: var(--ink);
