@@ -1,8 +1,8 @@
 import { updateAllCards } from "./cards.js";
 import { getFilteredAndSortedItems, hasActiveFilters } from "./filters.js";
 import { initPriceRangeSlider } from "./priceRange.js";
-import { dom, state } from "./state.js";
-import { formatTime } from "./utils.js";
+import { dom, state } from "../core/state.js";
+import { formatTime } from "../core/utils.js";
 
 /**
  * Manages data rendering and refresh  operations.

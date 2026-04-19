@@ -1,0 +1,249 @@
+/* Narrow viewports and touch devices: listings popover backdrop */
+@media (hover: none) and (pointer: coarse), (max-width: 1024px) {
+  .listings-popover-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.02);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 10000;
+  }
+
+  .listings-popover-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (max-width: 1024px) {
+  .search-row {
+    margin-left: 0;
+    margin-right: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .main-search-group {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .filters-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(17, 24, 36, 0.72);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: flex-start;
+  }
+
+  .filters-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .filters-drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: min(340px, 90vw);
+    max-width: 100vw;
+    background: var(--surface-strong, #181e2c);
+    box-shadow: 2px 0 18px rgba(0, 0, 0, 0.18);
+    border-right: 1.5px solid var(--line, #8ba3c233);
+    transform: translateX(-100%);
+    transition: transform 0.32s cubic-bezier(0.4, 0.2, 0.2, 1);
+    will-change: transform;
+    z-index: 2100;
+    display: flex;
+    flex-direction: column;
+    padding: 0 0 0 0;
+  }
+
+  .filters-overlay.open .filters-drawer {
+    transform: translateX(0);
+  }
+
+  .filters-menu-btn {
+    margin-right: auto;
+  }
+
+  body {
+    padding: 20px 14px 28px;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .topbar-right {
+    width: 100%;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .theme-toggle,
+  .settings-btn,
+  .filters-menu-btn {
+    position: static;
+    width: 36px;
+    height: 36px;
+    background: rgba(9, 12, 18, 0.45);
+    border: 1px solid var(--line);
+  }
+
+  :root.light-theme .theme-toggle,
+  :root.light-theme .settings-btn,
+  :root.light-theme .filters-menu-btn {
+    background: rgba(255, 255, 255, 0.8);
+  }
+
+  .settings-modal {
+    width: min(560px, 94vw);
+  }
+}
+
+@media (max-width: 740px) {
+  body {
+    padding: 16px 10px 22px;
+  }
+
+  .site-footer {
+    margin-top: 18px;
+  }
+
+  .search-row {
+    margin-bottom: 10px;
+  }
+
+  .range-label-row {
+    flex-wrap: wrap;
+    row-gap: 3px;
+  }
+
+  .range-values {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .checkbox-row,
+  .reset-filters-btn {
+    min-height: 40px;
+  }
+
+  .filters-drawer {
+    width: min(100%, 100vw);
+    padding: 14px 10px 14px;
+  }
+
+  .cards {
+    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  }
+
+  .favorite-toggle {
+    width: 24px;
+    height: 24px;
+    font-size: 1rem;
+  }
+
+  .settings-modal {
+    width: 100%;
+    max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom)));
+    border-radius: 14px;
+  }
+
+  .settings-overlay {
+    align-items: flex-end;
+    padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .settings-header,
+  .settings-body,
+  .settings-footer {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .settings-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface-strong);
+  }
+
+  .settings-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface-strong);
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .settings-input {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  #meta,
+  #overview,
+  .next-poll-pill {
+    width: 100%;
+  }
+
+  #meta,
+  .next-poll-pill {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 420px) {
+  .eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+  }
+
+  h1 {
+    font-size: clamp(1.4rem, 8vw, 1.9rem);
+  }
+
+  .meta {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .cards {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  }
+
+  .art-frame {
+    height: 134px;
+  }
+
+  .item-art {
+    max-height: 118px;
+  }
+
+  .price-box {
+    font-size: 0.7rem;
+  }
+}

@@ -13,12 +13,13 @@ It has 2 parts:
 - `poll_item_prices.py`: polling loop and CSV writer
 - `items.txt`: tracked items (one per line, with optional mode)
 - `price_poll.csv`: generated historical output
-- `web/server.py`: server entrypoint
-- `web/http_handler.py`: HTTP handler and `/api/prices` route wiring
-- `web/data_service.py`: CSV + items parsing, API payload shaping
-- `web/index.html`, `web/styles.css`: dashboard shell and styling
-- `web/app.js`: dashboard entrypoint/orchestrator
-- `web/js/state.js`, `web/js/cards.js`, `web/js/utils.js`: reusable UI modules
+- `server/`: dashboard HTTP server (`server.py` entrypoint), `http_handler.py`, and `data_service.py` (CSV/API payload)
+- `web/index.html`, `web/css/*.css`: dashboard shell and modular styling (layout, filters, cards, mobile/desktop breakpoints)
+- `web/js/app.js`: dashboard entrypoint (module graph under `web/js/`)
+- `web/js/core/`: shared state and utilities
+- `web/js/ui/`: renderer, filters, cards, theme, and filter UI wiring
+- `web/js/domain/`: pricing, sorting, and trend helpers
+- `web/js/cards/`: listings popover module
 - `web/assets/icons/`: local item icons used by the dashboard
 
 ## Requirements
@@ -59,7 +60,7 @@ python poll_item_prices.py --poll-interval 1800
 3. In another terminal, run the dashboard server:
 
 ```powershell
-python web/server.py
+python server/server.py
 ```
 
 4. Open the dashboard:
@@ -139,7 +140,7 @@ Set it through an environment secret:
 
 This project runs well on a small VPS with two always-on services:
 
-- `web/server.py` (dashboard + API)
+- `server/server.py` (dashboard + API)
 - `poll_item_prices.py` (CSV poller)
 
 Use the full step-by-step deployment guide here:
@@ -152,10 +153,15 @@ Quick update commands after you push new code:
 cd /opt/poe-market-flips
 git pull
 .venv/bin/pip install -r requirements.txt
+sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
+sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl restart poe-market-server
 sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
+
+Re-copying the unit files keeps systemd aligned with the repo (for example the dashboard entrypoint `server/server.py`).
 
 Automatic deploy is also supported via GitHub Actions. See:
 

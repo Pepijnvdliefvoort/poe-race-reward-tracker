@@ -1,8 +1,9 @@
-import { REFRESH_MS } from "../state.js";
+import { REFRESH_MS } from "../core/state.js";
 
 const listingsPreviewCache = new Map();
 const listingsPreviewInFlight = new Map();
 const LISTINGS_PREVIEW_CACHE_TTL_MS = Math.max(REFRESH_MS * 2, 8000);
+const LISTINGS_POPOVER_CLOSE_DELAY_MS = 180;
 const MOBILE_MEDIA_QUERY = "(hover: none) and (pointer: coarse), (max-width: 1024px)";
 
 let globalListingsOverlay = null;
@@ -354,6 +355,10 @@ export function stopListingsPopover(entry) {
     window.clearInterval(entry.listingsRefreshTimer);
     entry.listingsRefreshTimer = null;
   }
+  if (entry.listingsPopoverCloseTimer != null) {
+    window.clearTimeout(entry.listingsPopoverCloseTimer);
+    entry.listingsPopoverCloseTimer = null;
+  }
   closeGlobalListingsOverlay(entry.closePopover);
   unmountListingsPopoverFromBody(entry);
   entry.listingsHoverArea?.classList?.remove("popover-open");
@@ -378,7 +383,24 @@ export function wireListingsPopover(entry) {
 
   entry.requestListingsPreviewLoad = triggerListingsPreviewLoad;
 
+  const cancelScheduledClose = () => {
+    if (entry.listingsPopoverCloseTimer != null) {
+      window.clearTimeout(entry.listingsPopoverCloseTimer);
+      entry.listingsPopoverCloseTimer = null;
+    }
+  };
+
+  const scheduleClosePopoverDesktop = () => {
+    if (isMobileViewport()) return;
+    cancelScheduledClose();
+    entry.listingsPopoverCloseTimer = window.setTimeout(() => {
+      entry.listingsPopoverCloseTimer = null;
+      closePopover();
+    }, LISTINGS_POPOVER_CLOSE_DELAY_MS);
+  };
+
   const openPopover = () => {
+    cancelScheduledClose();
     triggerListingsPreviewLoad();
     listingsHoverArea.classList.add("popover-open");
     if (!isMobileViewport()) {
@@ -404,6 +426,7 @@ export function wireListingsPopover(entry) {
   };
 
   const closePopover = () => {
+    cancelScheduledClose();
     listingsHoverArea.classList.remove("popover-open");
     card.classList.remove("popover-active");
     if (entry.listingsRefreshTimer != null) {
@@ -445,11 +468,12 @@ export function wireListingsPopover(entry) {
 
   listingsHoverArea.addEventListener("mouseleave", () => {
     if (isMobileViewport()) return;
-    closePopover();
+    scheduleClosePopoverDesktop();
   });
 
   listingsPopover.addEventListener("mouseenter", () => {
     if (isMobileViewport()) return;
+    cancelScheduledClose();
     listingsHoverArea.classList.add("popover-open");
     card.classList.add("popover-active");
     positionListingsPopover(entry);
@@ -457,7 +481,7 @@ export function wireListingsPopover(entry) {
 
   listingsPopover.addEventListener("mouseleave", () => {
     if (isMobileViewport()) return;
-    closePopover();
+    scheduleClosePopoverDesktop();
   });
 }
 

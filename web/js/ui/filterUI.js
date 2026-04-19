@@ -5,7 +5,7 @@ import {
     handlePriceRangeMinLabelChange,
     syncPriceRangeFromState,
 } from "./priceRange.js";
-import { dom, saveFilters, state } from "./state.js";
+import { dom, saveFilters, state } from "../core/state.js";
 import { applyFiltersAndRender } from "./renderer.js";
 
 /**

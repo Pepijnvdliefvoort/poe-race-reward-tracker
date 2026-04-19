@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Deploy script run on the VPS (see .github/workflows/deploy-vps.yml).
+# Expects repo at APP_DIR with:
+#   - Dashboard: server/server.py (WorkingDirectory=APP_DIR; static files from web/)
+#   - Poller:    poll_item_prices.py
 set -euo pipefail
 
 APP_DIR="/opt/poe-market-flips"
@@ -35,10 +39,11 @@ else
   fi
 fi
 
-echo "[4/6] Sync systemd unit files"
+echo "[4/6] Sync systemd unit files (dashboard: python server/server.py)"
 cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 systemctl daemon-reload
+grep '^ExecStart=' /etc/systemd/system/poe-market-server.service | head -n1 || true
 
 echo "[5/6] Restart app services"
 systemctl restart poe-market-server

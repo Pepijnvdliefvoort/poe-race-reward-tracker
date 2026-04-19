@@ -41,6 +41,10 @@ python3 -m venv .venv
 
 ## 5. Install And Enable systemd Services
 
+The dashboard unit runs the HTTP server from the repo’s **`server/`** package (entrypoint **`server/server.py`**) with `WorkingDirectory=/opt/poe-market-flips`. Static assets are served from **`web/`** (unchanged). Caddy still reverse-proxies to `127.0.0.1:8080`.
+
+If you previously installed a unit that used **`web/server.py`**, replace it by copying the current unit file again (see [§9](#9-updating-after-new-push) or the snippet below), then `daemon-reload` and restart.
+
 ```bash
 sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
@@ -108,10 +112,15 @@ Also ensure your cloud firewall (Hetzner or similar) allows inbound TCP 80 and 4
 cd /opt/poe-market-flips
 git pull
 .venv/bin/pip install -r requirements.txt
+sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
+sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl restart poe-market-server
 sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
+
+The `cp` lines keep `/etc/systemd/system` in sync when `ExecStart` or other unit fields change (for example after moving the dashboard from `web/server.py` to `server/server.py`).
 
 ## 10. Automatic Deploy On Every Push (Recommended)
 
@@ -196,7 +205,7 @@ curl -I http://127.0.0.1
 
 ### Some item icons are missing on VPS but not on Windows
 
-Linux is case-sensitive for filenames. This repo already includes a case-insensitive icon lookup fix in `web/data_service.py`. If icons still look stale, run:
+Linux is case-sensitive for filenames. This repo already includes a case-insensitive icon lookup fix in `server/data_service.py`. If icons still look stale, run:
 
 ```bash
 cd /opt/poe-market-flips

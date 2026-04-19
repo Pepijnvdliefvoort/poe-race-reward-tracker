@@ -1,4 +1,4 @@
-import { dom, saveFilters, state } from "./state.js";
+import { dom, saveFilters, state } from "../core/state.js";
 
 /**
  * Manages price range slider state, UI synchronization, and updates.

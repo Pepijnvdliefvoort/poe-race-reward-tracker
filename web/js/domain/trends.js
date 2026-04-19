@@ -1,5 +1,5 @@
-import { MAX_POINTS, THREE_MONTHS_MS } from "../state.js";
-import { getCondensedChartPoints } from "../utils.js";
+import { MAX_POINTS, THREE_MONTHS_MS } from "../core/state.js";
+import { getCondensedChartPoints } from "../core/utils.js";
 
 export function getTrendValue(item) {
   const cutoff = Date.now() - THREE_MONTHS_MS;

@@ -1,7 +1,7 @@
-import { REFRESH_MS } from "./js/state.js";
-import { initTheme, toggleTheme } from "./js/theme.js";
-import { refresh } from "./js/renderer.js";
-import { registerFilterEventListeners, registerKeyboardShortcuts, syncFilterControlsFromState } from "./js/filterUI.js";
+import { REFRESH_MS } from "./core/state.js";
+import { initTheme, toggleTheme } from "./ui/theme.js";
+import { refresh } from "./ui/renderer.js";
+import { registerFilterEventListeners, registerKeyboardShortcuts, syncFilterControlsFromState } from "./ui/filterUI.js";
 
 /**
  * Main application entry point.

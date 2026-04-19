@@ -1,3 +1,5 @@
+# SSH to VPS and runs deploy/deploy_on_vps.sh (pull, deps, systemd, restart).
+# Dashboard service must target server/server.py (not web/server.py).
 name: Deploy to VPS
 
 on:

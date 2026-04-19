@@ -1,0 +1,45 @@
+canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.empty {
+  border: 2px dashed rgba(145, 173, 207, 0.3);
+  background: rgba(18, 27, 41, 0.58);
+  border-radius: 18px;
+  padding: 34px 18px;
+  text-align: center;
+  color: var(--ink-soft);
+  width: fit-content;
+  margin: 0 auto;
+  min-height: auto;
+}
+
+.site-footer {
+  position: relative;
+  z-index: 1;
+  margin-top: 26px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(139, 163, 194, 0.2);
+}
+
+.site-footer p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+.site-footer a {
+  color: var(--ink);
+  text-decoration-color: rgba(255, 122, 47, 0.8);
+  text-underline-offset: 2px;
+  transition: color 0.2s ease, text-decoration-color 0.2s ease;
+}
+
+.site-footer a:hover,
+.site-footer a:focus-visible {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
+}
