@@ -262,8 +262,14 @@ function renderListingsPreview(entry, payload) {
 
 async function fetchListingsPreview(queryId) {
   const cached = listingsPreviewCache.get(queryId);
-  if (cached && Date.now() - cached.fetchedAt < LISTINGS_PREVIEW_CACHE_TTL_MS) {
-    return cached.payload;
+  // Be defensive: cache entries can be missing/corrupt during hot reloads or partial updates.
+  if (
+    cached &&
+    typeof cached === "object" &&
+    Number.isFinite(cached.fetchedAt) &&
+    Date.now() - cached.fetchedAt < LISTINGS_PREVIEW_CACHE_TTL_MS
+  ) {
+    return cached.payload ?? null;
   }
 
   if (listingsPreviewInFlight.has(queryId)) {
