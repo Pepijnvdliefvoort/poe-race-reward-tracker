@@ -24,6 +24,7 @@ from admin_service import (
 )
 from data_service import WEB_DIR, fetch_listing_preview, load_config, load_price_data, save_config
 from data_service import CSV_PATH, LISTINGS_CACHE_PATH
+from stats_service import system_stats_payload
 
 _ADMIN_UNAUTHORIZED_HTML = WEB_DIR / "admin-unauthorized.html"
 
@@ -108,6 +109,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not admin_authorized(auth_header, token_param, cookie_header):
                 body = json.dumps({"error": "Forbidden"}).encode("utf-8")
                 self.send_response(403)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if req_path.rstrip("/").endswith("/stats"):
+                payload = system_stats_payload()
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200 if payload.get("ok") else 500)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(body)))
@@ -258,6 +270,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+
+        if parsed.path == "/api/stats":
+            # Moved to /api/admin/stats (admin-protected).
+            body = json.dumps({"error": "Not found"}).encode("utf-8")
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
         if parsed.path == "/admin.html":
             loc = "/admin"

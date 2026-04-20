@@ -75,10 +75,10 @@
 
         <div
           class="admin-split-handle"
-          id="adminLogSplitHandle"
+          id="adminLogSplitHandleA"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize log panes"
+          aria-label="Resize server and poller panes"
           tabindex="0"
         ></div>
 
@@ -112,6 +112,49 @@
           </div>
           <div class="admin-console-toolbar" id="pollerConsoleToolbar" aria-label="Poller log filters"></div>
           <pre id="pollerConsole" class="admin-console" aria-live="polite"></pre>
+        </div>
+
+        <div
+          class="admin-split-handle"
+          id="adminLogSplitHandleB"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize poller and stats panes"
+          tabindex="0"
+        ></div>
+
+        <div class="admin-console-wrap" id="statsConsolePane">
+          <div class="admin-console-titlebar">
+            <button
+              class="admin-console-dot admin-console-dot--red"
+              type="button"
+              data-console="stats"
+              data-action="close"
+              aria-label="Close stats panel"
+              title="Close"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--yellow"
+              type="button"
+              data-console="stats"
+              data-action="minimize"
+              aria-label="Minimize stats panel"
+              title="Minimize"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--green"
+              type="button"
+              data-console="stats"
+              data-action="maximize"
+              aria-label="Maximize stats panel"
+              title="Maximize"
+            ></button>
+            <span class="admin-console-title">stats</span>
+          </div>
+          <div class="admin-panel-body" aria-label="Server statistics">
+            <p id="adminStatsHint" class="admin-muted admin-panel-hint" aria-live="polite"></p>
+            <div class="admin-stats-grid admin-stats-grid--panel" id="adminStatsGrid"></div>
+          </div>
         </div>
 
         <div class="admin-console-empty" id="adminLogEmpty" hidden>No console active</div>

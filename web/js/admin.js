@@ -162,6 +162,31 @@ function renderVisitorTable(data) {
 
 let logPollTimer;
 let mapPollTimer;
+let statsPollTimer;
+
+function shouldPollStatsFromStorage() {
+  try {
+    const raw = window.localStorage.getItem("admin.logs.windowState.v1");
+    if (!raw) return true;
+    const parsed = JSON.parse(raw);
+    const mode = parsed?.stats?.mode;
+    return mode !== "closed";
+  } catch {
+    return true;
+  }
+}
+
+function startStatsPolling() {
+  if (statsPollTimer) return;
+  refreshStats();
+  statsPollTimer = window.setInterval(refreshStats, 5000);
+}
+
+function stopStatsPolling() {
+  if (!statsPollTimer) return;
+  window.clearInterval(statsPollTimer);
+  statsPollTimer = null;
+}
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
@@ -169,12 +194,14 @@ function clamp(n, min, max) {
 
 function setupLogConsoleWindowControls() {
   const splitEl = document.getElementById("adminLogSplit");
-  const handle = document.getElementById("adminLogSplitHandle");
-  const leftPane = document.getElementById("serverConsolePane");
-  const rightPane = document.getElementById("pollerConsolePane");
+  const serverPane = document.getElementById("serverConsolePane");
+  const pollerPane = document.getElementById("pollerConsolePane");
+  const statsPane = document.getElementById("statsConsolePane");
+  const handleA = document.getElementById("adminLogSplitHandleA");
+  const handleB = document.getElementById("adminLogSplitHandleB");
   const emptyEl = document.getElementById("adminLogEmpty");
   const taskbarEl = document.getElementById("adminLogTaskbar");
-  if (!splitEl || !handle || !leftPane || !rightPane || !emptyEl || !taskbarEl) return;
+  if (!splitEl || !serverPane || !pollerPane || !statsPane || !handleA || !handleB || !emptyEl || !taskbarEl) return;
 
   const prefersReducedMotion = () => !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
@@ -186,6 +213,15 @@ function setupLogConsoleWindowControls() {
       el.classList.toggle("admin-console-wrap--anim-hide", !shouldShow);
       el.classList.remove("admin-console-wrap--anim-to-tray");
       el.classList.toggle("admin-console-wrap--anim-show", shouldShow);
+      return;
+    }
+
+    // If visibility isn't changing, don't replay the animation.
+    const isDisplayed = el.style.display !== "none";
+    if (shouldShow && isDisplayed && el.classList.contains("admin-console-wrap--anim-show")) {
+      return;
+    }
+    if (!shouldShow && !isDisplayed) {
       return;
     }
 
@@ -212,6 +248,10 @@ function setupLogConsoleWindowControls() {
       } else {
         el.classList.add("admin-console-wrap--anim-hide");
       }
+      // Force layout so the initial transform/opacity is committed before we animate to "show".
+      // Without this, when other panes are already visible, the browser can coalesce style changes
+      // and the open animation becomes imperceptible.
+      void el.getBoundingClientRect();
       await nextFrame();
       await nextFrame();
       el.classList.remove("admin-console-wrap--anim-hide");
@@ -243,6 +283,8 @@ function setupLogConsoleWindowControls() {
     } else {
       el.classList.add("admin-console-wrap--anim-hide");
     }
+    // Commit initial state before transition begins.
+    void el.getBoundingClientRect();
 
     const done = new Promise((resolve) => {
       let settled = false;
@@ -344,6 +386,7 @@ function setupLogConsoleWindowControls() {
   const defaultState = {
     server: { mode: "open" }, // open | minimized | closed
     poller: { mode: "open" }, // open | minimized | closed
+    stats: { mode: "minimized" }, // open | minimized | closed
   };
 
   const readState = () => {
@@ -355,6 +398,7 @@ function setupLogConsoleWindowControls() {
       return {
         server: { mode: norm(parsed?.server?.mode) },
         poller: { mode: norm(parsed?.poller?.mode) },
+        stats: { mode: norm(parsed?.stats?.mode) },
       };
     } catch {
       return structuredClone ? structuredClone(defaultState) : JSON.parse(JSON.stringify(defaultState));
@@ -375,13 +419,19 @@ function setupLogConsoleWindowControls() {
   const isMinimized = (consoleKey) => state[consoleKey].mode === "minimized";
   const isClosed = (consoleKey) => state[consoleKey].mode === "closed";
 
-  const labelFor = (consoleKey) => (consoleKey === "server" ? "server.log" : "poller.log");
+  const labelFor = (consoleKey) =>
+    consoleKey === "server" ? "server.log" : (consoleKey === "poller" ? "poller.log" : "stats");
 
-  const dotColorFor = (consoleKey) => (consoleKey === "server" ? "#28c840" : "#febc2e");
+  const dotColorFor = (consoleKey) =>
+    consoleKey === "server" ? "#28c840" : (consoleKey === "poller" ? "#febc2e" : "#ff7a2f");
 
   const setMode = (consoleKey, mode) => {
     state[consoleKey].mode = mode;
     saveState();
+    if (consoleKey === "stats") {
+      if (mode === "closed") stopStatsPolling();
+      else startStatsPolling();
+    }
     render();
   };
 
@@ -389,10 +439,10 @@ function setupLogConsoleWindowControls() {
   const minimizeConsole = (consoleKey) => setMode(consoleKey, "minimized");
 
   const restoreConsole = (consoleKey) => {
-    // If both are closed, restoring should just open one.
-    if (isClosed("server") && isClosed("poller")) {
+    if (isClosed("server") && isClosed("poller") && isClosed("stats")) {
       state.server.mode = consoleKey === "server" ? "open" : "closed";
       state.poller.mode = consoleKey === "poller" ? "open" : "closed";
+      state.stats.mode = consoleKey === "stats" ? "open" : "closed";
       saveState();
       render();
       return;
@@ -425,10 +475,12 @@ function setupLogConsoleWindowControls() {
   };
 
   const maximizeConsole = (consoleKey) => {
-    const otherKey = consoleKey === "server" ? "poller" : "server";
     state[consoleKey].mode = "open";
-    // Requirement: maximize current console, minimizing the other one.
-    if (!isClosed(otherKey)) state[otherKey].mode = "minimized";
+    // Requirement: maximize current console, minimizing the other ones.
+    ["server", "poller", "stats"].forEach((k) => {
+      if (k === consoleKey) return;
+      if (!isClosed(k)) state[k].mode = "minimized";
+    });
     saveState();
     render();
   };
@@ -436,7 +488,7 @@ function setupLogConsoleWindowControls() {
   const renderTaskbar = async () => {
     taskbarEl.innerHTML = "";
     // Always-visible "dock" with fixed slots for each console.
-    const allKeys = ["server", "poller"];
+    const allKeys = ["server", "poller", "stats"];
     allKeys.forEach((k) => {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -518,21 +570,31 @@ function setupLogConsoleWindowControls() {
     dockTargets = {
       server: taskbarEl.querySelector('button[data-console="server"]'),
       poller: taskbarEl.querySelector('button[data-console="poller"]'),
+      stats: taskbarEl.querySelector('button[data-console="stats"]'),
     };
   };
 
   const renderLayout = async () => {
-    const leftVisible = isVisible("server");
-    const rightVisible = isVisible("poller");
+    const serverVisible = isVisible("server");
+    const pollerVisible = isVisible("poller");
+    const statsVisible = isVisible("stats");
 
     // Show/hide panes based on mode.
     await Promise.all([
-      animatePaneVisibility(leftPane, leftVisible, { toEl: dockTargets?.server, fromEl: dockTargets?.server }),
-      animatePaneVisibility(rightPane, rightVisible, { toEl: dockTargets?.poller, fromEl: dockTargets?.poller }),
+      animatePaneVisibility(serverPane, serverVisible, { toEl: dockTargets?.server, fromEl: dockTargets?.server }),
+      animatePaneVisibility(pollerPane, pollerVisible, { toEl: dockTargets?.poller, fromEl: dockTargets?.poller }),
+      animatePaneVisibility(statsPane, statsVisible, { toEl: dockTargets?.stats, fromEl: dockTargets?.stats }),
     ]);
 
+    // Show handles only when both adjacent panes are visible.
+    handleA.style.display = serverVisible && pollerVisible ? "" : "none";
+    handleB.style.display = pollerVisible && statsVisible ? "" : "none";
+
+    // Re-apply split ratios when visibility changes (e.g. stats closed).
+    window.__adminLogSplit?.apply?.();
+
     // Show placeholder if none visible.
-    const anyVisible = leftVisible || rightVisible;
+    const anyVisible = serverVisible || pollerVisible || statsVisible;
     await animateAuxVisibility(emptyEl, "admin-console-empty--anim-hide", !anyVisible);
     if (!anyVisible) {
       emptyEl.innerHTML = "";
@@ -540,23 +602,10 @@ function setupLogConsoleWindowControls() {
       msg.textContent = "No console active";
       emptyEl.appendChild(msg);
     }
-
-    // Handle + split ratio only makes sense when both are visible and desktop layout.
-    const bothVisible = leftVisible && rightVisible;
-    handle.style.display = bothVisible ? "" : "none";
-
-    // If only one visible, make it take full width.
-    if (leftVisible && !rightVisible) {
-      leftPane.style.flex = "1 1 0";
-      rightPane.style.flex = "";
-    } else if (!leftVisible && rightVisible) {
-      rightPane.style.flex = "1 1 0";
-      leftPane.style.flex = "";
-    }
   };
 
   let renderToken = 0;
-  let dockTargets = { server: null, poller: null };
+  let dockTargets = { server: null, poller: null, stats: null };
   const render = async () => {
     const token = (renderToken += 1);
     // Ensure dock is rendered first so animations have a per-console target.
@@ -572,7 +621,7 @@ function setupLogConsoleWindowControls() {
     if (btn.disabled) return;
     const consoleKey = btn.getAttribute("data-console");
     const action = btn.getAttribute("data-action");
-    if (consoleKey !== "server" && consoleKey !== "poller") return;
+    if (consoleKey !== "server" && consoleKey !== "poller" && consoleKey !== "stats") return;
     if (action === "close") {
       // Server close is disabled (never stop server from this UI).
       if (consoleKey === "server") return;
@@ -601,96 +650,338 @@ function setupLogConsoleWindowControls() {
 
   // Expose tiny hook for split view setup (so it can re-render after ratio changes).
   window.__adminLogWindowState = {
-    getVisiblePair: () => ({ server: isVisible("server"), poller: isVisible("poller") }),
+    getVisiblePair: () => ({ server: isVisible("server"), poller: isVisible("poller"), stats: isVisible("stats") }),
     render,
   };
 }
 
 function setupLogSplitView() {
   const splitEl = document.getElementById("adminLogSplit");
-  const handle = document.getElementById("adminLogSplitHandle");
-  const leftPane = document.getElementById("serverConsolePane");
-  const rightPane = document.getElementById("pollerConsolePane");
-  if (!splitEl || !handle || !leftPane || !rightPane) return;
+  const handleA = document.getElementById("adminLogSplitHandleA");
+  const handleB = document.getElementById("adminLogSplitHandleB");
+  const serverPane = document.getElementById("serverConsolePane");
+  const pollerPane = document.getElementById("pollerConsolePane");
+  const statsPane = document.getElementById("statsConsolePane");
+  if (!splitEl || !handleA || !handleB || !serverPane || !pollerPane || !statsPane) return;
 
-  const storageKey = "admin.logSplit.ratio";
-  const minRatio = 0.22;
-  const maxRatio = 0.78;
+  const tripleKey = "admin.logSplit.triple.v1";
+  const doubleKey = "admin.logSplit.double.v1";
+  const pollerStatsKey = "admin.logSplit.double.pollerStats.v1";
+  const minServer = 0.195; // server pane at least 19.5%
+  const minStats = 0.2; // stats pane at least 20%
+  const min = 0.18; // other panes at least 18%
+  const step = 0.02;
 
-  const applyRatio = (ratio) => {
-    // Only apply ratio when both panes are visible (otherwise the single pane should be full-width).
-    const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    if (vis && (!vis.server || !vis.poller)) return;
-    const r = clamp(Number(ratio) || 0.5, minRatio, maxRatio);
-    leftPane.style.flex = `${r} 1 0`;
-    rightPane.style.flex = `${1 - r} 1 0`;
-    handle.setAttribute("aria-valuenow", String(Math.round(r * 100)));
-    handle.setAttribute("aria-valuemin", String(Math.round(minRatio * 100)));
-    handle.setAttribute("aria-valuemax", String(Math.round(maxRatio * 100)));
+  const _width = (el) => {
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    return Number.isFinite(rect.width) ? rect.width : 0;
   };
 
-  const saved = Number.parseFloat(window.localStorage.getItem(storageKey) || "");
-  applyRatio(Number.isFinite(saved) ? saved : 0.5);
+  const _outerWidth = (el) => {
+    if (!el) return 0;
+    // When display:none, width is 0.
+    const w = _width(el);
+    if (!w) return 0;
+    try {
+      const cs = window.getComputedStyle(el);
+      const ml = Number.parseFloat(cs.marginLeft || "0") || 0;
+      const mr = Number.parseFloat(cs.marginRight || "0") || 0;
+      return w + ml + mr;
+    } catch {
+      return w;
+    }
+  };
 
-  let dragging = false;
-  let activePointerId = null;
+  const ratiosForVisibility = (vis) => {
+    const totalW = _width(splitEl);
+    // Handles have horizontal margins; include them so pane min% matches the visible %.
+    const wA = vis?.server && vis?.poller ? _outerWidth(handleA) : 0;
+    const wB = vis?.poller && vis?.stats ? _outerWidth(handleB) : 0;
+    const paneW = Math.max(1, totalW - wA - wB);
+
+    // Convert "min % of total container" into min ratio of the pane area.
+    const minServerRatio = clamp((minServer * totalW) / paneW, 0, 1);
+    const minOtherRatio = clamp((min * totalW) / paneW, 0, 1);
+    const minStatsRatio = clamp((minStats * totalW) / paneW, 0, 1);
+    return { minServerRatio, minOtherRatio, minStatsRatio };
+  };
+
+  const clampDouble = (ratio, vis) => {
+    const { minServerRatio, minOtherRatio } = ratiosForVisibility(vis);
+    return clamp(Number(ratio) || 0.5, minServerRatio, 1 - minOtherRatio);
+  };
+
+  const clampSplit = (x1, x2, vis) => {
+    let a = Number(x1);
+    let b = Number(x2);
+    if (!Number.isFinite(a)) a = 0.34;
+    if (!Number.isFinite(b)) b = 0.68;
+    const { minServerRatio, minOtherRatio, minStatsRatio } = ratiosForVisibility(vis);
+    // a is the server split point; enforce server min explicitly.
+    a = clamp(a, minServerRatio, 1 - 2 * minOtherRatio);
+    // b splits poller vs stats; enforce poller>=minOther and stats>=minStats.
+    b = clamp(b, a + minOtherRatio, 1 - minStatsRatio);
+    return [a, b];
+  };
+
+  const clampPollerStats = (ratio, vis) => {
+    const { minOtherRatio, minStatsRatio } = ratiosForVisibility(vis);
+    // ratio is poller share
+    return clamp(Number(ratio) || 0.5, minOtherRatio, 1 - minStatsRatio);
+  };
+
+  const applyDouble = (ratio) => {
+    const vis = window.__adminLogWindowState?.getVisiblePair?.();
+    if (vis && (!vis.server || !vis.poller)) return;
+    const r = clampDouble(ratio, vis);
+    serverPane.style.flex = `${r} 1 0`;
+    pollerPane.style.flex = `${1 - r} 1 0`;
+    statsPane.style.flex = "";
+    handleA.setAttribute("aria-valuenow", String(Math.round(r * 100)));
+    handleA.setAttribute("aria-valuemin", String(Math.round(minServer * 1000) / 10));
+    handleA.setAttribute("aria-valuemax", String(Math.round((1 - min) * 1000) / 10));
+  };
+
+  const applyTriple = (x1, x2) => {
+    const vis = window.__adminLogWindowState?.getVisiblePair?.();
+    if (vis && (!vis.server || !vis.poller || !vis.stats)) return;
+    const [a, b] = clampSplit(x1, x2, vis);
+    serverPane.style.flex = `${a} 1 0`;
+    pollerPane.style.flex = `${b - a} 1 0`;
+    statsPane.style.flex = `${1 - b} 1 0`;
+    handleA.setAttribute("aria-valuenow", String(Math.round(a * 100)));
+    handleA.setAttribute("aria-valuemin", String(Math.round(minServer * 1000) / 10));
+    handleA.setAttribute("aria-valuemax", String(Math.round((1 - 2 * min) * 100)));
+    handleB.setAttribute("aria-valuenow", String(Math.round(b * 100)));
+    handleB.setAttribute("aria-valuemin", String(Math.round((min * 2) * 100)));
+    handleB.setAttribute("aria-valuemax", String(Math.round((1 - min) * 100)));
+  };
+
+  const readTriple = () => {
+    try {
+      const raw = window.localStorage.getItem(tripleKey);
+      if (!raw) return [0.34, 0.68];
+      const parsed = JSON.parse(raw);
+      return clampSplit(parsed?.x1, parsed?.x2, window.__adminLogWindowState?.getVisiblePair?.());
+    } catch {
+      return [0.34, 0.68];
+    }
+  };
+
+  const saveTriple = (x1, x2) => {
+    try {
+      const [a, b] = clampSplit(x1, x2, window.__adminLogWindowState?.getVisiblePair?.());
+      window.localStorage.setItem(tripleKey, JSON.stringify({ x1: a, x2: b }));
+    } catch {
+      // ignore storage failures
+    }
+  };
+
+  const readDouble = () => {
+    try {
+      const raw = window.localStorage.getItem(doubleKey);
+      if (!raw) return 0.5;
+      const parsed = JSON.parse(raw);
+      return clampDouble(parsed?.ratio, window.__adminLogWindowState?.getVisiblePair?.());
+    } catch {
+      return 0.5;
+    }
+  };
+
+  const saveDouble = (ratio) => {
+    try {
+      window.localStorage.setItem(
+        doubleKey,
+        JSON.stringify({ ratio: clampDouble(ratio, window.__adminLogWindowState?.getVisiblePair?.()) }),
+      );
+    } catch {
+      // ignore storage failures
+    }
+  };
+
+  const readPollerStats = () => {
+    try {
+      const raw = window.localStorage.getItem(pollerStatsKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const r = clampPollerStats(parsed?.ratio, window.__adminLogWindowState?.getVisiblePair?.());
+      return Number.isFinite(r) ? r : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const savePollerStats = (ratio) => {
+    try {
+      window.localStorage.setItem(
+        pollerStatsKey,
+        JSON.stringify({ ratio: clampPollerStats(ratio, window.__adminLogWindowState?.getVisiblePair?.()) }),
+      );
+    } catch {
+      // ignore storage failures
+    }
+  };
+
+  let [x1, x2] = readTriple();
+  let ratio2 = readDouble();
+  let ratioPS = readPollerStats();
+
+  const applyFromVisibility = () => {
+    const vis = window.__adminLogWindowState?.getVisiblePair?.();
+    // If only one pane is visible, let it take full width.
+    if (vis && vis.server && !vis.poller && !vis.stats) {
+      serverPane.style.flex = "1 1 0";
+      pollerPane.style.flex = "";
+      statsPane.style.flex = "";
+      return;
+    }
+    if (vis && !vis.server && vis.poller && !vis.stats) {
+      serverPane.style.flex = "";
+      pollerPane.style.flex = "1 1 0";
+      statsPane.style.flex = "";
+      return;
+    }
+    if (vis && !vis.server && !vis.poller && vis.stats) {
+      serverPane.style.flex = "";
+      pollerPane.style.flex = "";
+      statsPane.style.flex = "1 1 0";
+      return;
+    }
+    // If poller is closed but the other two are open, split remaining width evenly.
+    if (vis && vis.server && !vis.poller && vis.stats) {
+      serverPane.style.flex = "1 1 0";
+      pollerPane.style.flex = "";
+      statsPane.style.flex = "1 1 0";
+      return;
+    }
+    // If server is minimized/closed but poller + stats are open, allow a dedicated 2-pane split.
+    if (vis && !vis.server && vis.poller && vis.stats) {
+      const fallbackFromTriple = (() => {
+        const [, b] = clampSplit(x1, x2, vis);
+        return clampPollerStats(b, vis);
+      })();
+      const r = ratioPS == null ? fallbackFromTriple : clampPollerStats(ratioPS, vis);
+      serverPane.style.flex = "";
+      pollerPane.style.flex = `${r} 1 0`;
+      statsPane.style.flex = `${1 - r} 1 0`;
+      return;
+    }
+    if (vis && vis.server && vis.poller && vis.stats) {
+      applyTriple(x1, x2);
+      return;
+    }
+    if (vis && vis.server && vis.poller) {
+      applyDouble(ratio2);
+    }
+  };
+
+  applyFromVisibility();
 
   const ratioFromClientX = (clientX) => {
     const rect = splitEl.getBoundingClientRect();
     const x = clamp(clientX - rect.left, 0, rect.width);
-    return clamp(x / rect.width, minRatio, maxRatio);
+    return rect.width > 0 ? x / rect.width : 0.5;
   };
 
-  const onPointerMove = (ev) => {
-    if (!dragging) return;
-    const ratio = ratioFromClientX(ev.clientX);
-    applyRatio(ratio);
-    window.localStorage.setItem(storageKey, String(ratio));
-  };
-
-  const stopDrag = () => {
-    if (!dragging) return;
-    dragging = false;
-    handle.dataset.dragging = "false";
-    if (activePointerId != null) {
-      handle.releasePointerCapture?.(activePointerId);
-    }
-    activePointerId = null;
-  };
-
-  handle.addEventListener("pointerdown", (ev) => {
-    // No split drag in stacked (mobile) layout.
+  const startDrag = (handleEl, which, ev) => {
     if (window.matchMedia?.("(max-width: 768px)")?.matches) return;
     const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    if (vis && (!vis.server || !vis.poller)) return;
-    dragging = true;
-    handle.dataset.dragging = "true";
-    activePointerId = ev.pointerId;
-    handle.setPointerCapture?.(ev.pointerId);
+    if (which === "a") {
+      if (vis && (!vis.server || !vis.poller)) return;
+    } else {
+      if (vis && (!vis.poller || !vis.stats)) return;
+    }
+    handleEl.dataset.dragging = "true";
+    const pointerId = ev.pointerId;
+    handleEl.setPointerCapture?.(pointerId);
     ev.preventDefault();
-  });
 
-  window.addEventListener("pointermove", onPointerMove);
-  window.addEventListener("pointerup", stopDrag);
-  window.addEventListener("pointercancel", stopDrag);
+    const onMove = (moveEv) => {
+      const r = ratioFromClientX(moveEv.clientX);
+      if (which === "a") {
+        // If stats is not visible, handleA becomes a simple 2-pane splitter.
+        if (vis && vis.server && vis.poller && !vis.stats) {
+          ratio2 = clampDouble(r, vis);
+          applyDouble(ratio2);
+          saveDouble(ratio2);
+          return;
+        }
+        [x1, x2] = clampSplit(r, x2, vis);
+        applyTriple(x1, x2);
+        saveTriple(x1, x2);
+        return;
+      }
 
-  handle.addEventListener("keydown", (ev) => {
-    // Keyboard accessibility: arrow keys resize by 2%.
-    const step = 0.02;
+      // handleB: if server is not visible, make it a 2-pane poller↔stats splitter.
+      if (vis && !vis.server && vis.poller && vis.stats) {
+        ratioPS = clampPollerStats(r, vis);
+        applyFromVisibility();
+        savePollerStats(ratioPS);
+        return;
+      }
+
+      [x1, x2] = clampSplit(x1, r, vis);
+      applyTriple(x1, x2);
+      saveTriple(x1, x2);
+    };
+
+    const stop = () => {
+      handleEl.dataset.dragging = "false";
+      handleEl.releasePointerCapture?.(pointerId);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+
+  handleA.addEventListener("pointerdown", (ev) => startDrag(handleA, "a", ev));
+  handleB.addEventListener("pointerdown", (ev) => startDrag(handleB, "b", ev));
+
+  const onKey = (which, ev) => {
     const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    if (vis && (!vis.server || !vis.poller)) return;
-    const currentLeft = leftPane.getBoundingClientRect().width;
-    const currentTotal = splitEl.getBoundingClientRect().width;
-    if (currentTotal <= 0) return;
-    let ratio = currentLeft / currentTotal;
-    if (ev.key === "ArrowLeft") ratio -= step;
-    else if (ev.key === "ArrowRight") ratio += step;
-    else return;
-    ratio = clamp(ratio, minRatio, maxRatio);
-    applyRatio(ratio);
-    window.localStorage.setItem(storageKey, String(ratio));
+    if (which === "a") {
+      if (vis && (!vis.server || !vis.poller)) return;
+    } else {
+      if (vis && (!vis.poller || !vis.stats)) return;
+    }
+    if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+    const delta = ev.key === "ArrowLeft" ? -step : step;
+    if (which === "a") {
+      if (vis && vis.server && vis.poller && !vis.stats) {
+        ratio2 = clampDouble(ratio2 + delta, vis);
+        applyDouble(ratio2);
+        saveDouble(ratio2);
+      } else {
+        [x1, x2] = clampSplit(x1 + delta, x2, vis);
+        applyTriple(x1, x2);
+        saveTriple(x1, x2);
+      }
+    } else {
+      if (vis && !vis.server && vis.poller && vis.stats) {
+        ratioPS = clampPollerStats((ratioPS == null ? 0.5 : ratioPS) + delta, vis);
+        applyFromVisibility();
+        savePollerStats(ratioPS);
+      } else {
+        [x1, x2] = clampSplit(x1, x2 + delta, vis);
+        applyTriple(x1, x2);
+        saveTriple(x1, x2);
+      }
+    }
     ev.preventDefault();
-  });
+  };
+
+  handleA.addEventListener("keydown", (ev) => onKey("a", ev));
+  handleB.addEventListener("keydown", (ev) => onKey("b", ev));
+
+  // Let the window manager re-apply ratios when panes open/close.
+  window.__adminLogSplit = {
+    apply: applyFromVisibility,
+  };
 }
 
 class LogViewer {
@@ -969,6 +1260,85 @@ async function refreshVisitors() {
   }
 }
 
+function formatBytesMb(valueMb) {
+  if (!Number.isFinite(valueMb)) return "—";
+  if (valueMb >= 1024) return `${(valueMb / 1024).toFixed(2)} GB`;
+  if (valueMb >= 100) return `${valueMb.toFixed(0)} MB`;
+  return `${valueMb.toFixed(1)} MB`;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "—";
+  return `${value.toFixed(1)}%`;
+}
+
+function formatUptimeFromBootMs(bootTimeMs) {
+  if (!Number.isFinite(bootTimeMs)) return "—";
+  const diffMs = Date.now() - bootTimeMs;
+  if (!Number.isFinite(diffMs) || diffMs < 0) return "—";
+  const s = Math.floor(diffMs / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function setStatsHint(text, isWarn = false) {
+  const hint = document.getElementById("adminStatsHint");
+  if (!hint) return;
+  hint.textContent = text || "";
+  hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+}
+
+function renderStatsCards(payload) {
+  const grid = document.getElementById("adminStatsGrid");
+  if (!grid) return;
+
+  const cpu = payload?.system?.cpu || {};
+  const mem = payload?.system?.memory || {};
+  const swap = payload?.system?.swap || {};
+  const net = payload?.system?.net || {};
+
+  const cards = [
+    { key: "cpu", k: "CPU", v: `${formatPercent(cpu.percent)}` },
+    { key: "uptime", k: "Uptime", v: formatUptimeFromBootMs(payload?.system?.bootTimeMs) },
+    { key: "ram", k: "RAM", v: `${formatPercent(mem.usedPercent)} · ${formatBytesMb(mem.usedMb)} / ${formatBytesMb(mem.totalMb)}` },
+    { key: "swap", k: "Swap", v: `${formatPercent(swap.usedPercent)} · ${formatBytesMb(swap.usedMb)} / ${formatBytesMb(swap.totalMb)}` },
+    { key: "net", k: "Network I/O", v: `${formatBytesMb(net.rxMb)} ↓ / ${formatBytesMb(net.txMb)} ↑` },
+  ];
+
+  grid.innerHTML = cards
+    .map(
+      (c) => `
+    <div class="admin-stats-card admin-stats-card--${escapeHtml(c.key)}">
+      <p class="admin-stats-k">${escapeHtml(c.k)}</p>
+      <p class="admin-stats-v"><strong>${escapeHtml(c.v)}</strong></p>
+    </div>`,
+    )
+    .join("");
+}
+
+async function refreshStats() {
+  try {
+    const payload = await fetchJson("/api/admin/stats");
+    if (!payload?.ok) {
+      setStatsHint(payload?.error ? `Stats: ${payload.error}` : "Stats: unavailable", true);
+      return;
+    }
+    setStatsHint("");
+    renderStatsCards(payload);
+  } catch (e) {
+    setStatsHint(
+      e.status === 403
+        ? "Unauthorized. Open /admin?token=… once using the ADMIN_TOKEN from the server (GitHub Actions secret), then this page will set a cookie."
+        : `Stats: ${e.message || e}`,
+      true,
+    );
+  }
+}
+
 function setupCsvDownload() {
   const a = document.getElementById("csvDownloadBtn");
   if (!a) return;
@@ -1114,6 +1484,8 @@ function main() {
   setupLogConsoleWindowControls();
   setupLogSplitView();
   refreshLogs();
+  if (shouldPollStatsFromStorage()) startStatsPolling();
+  else stopStatsPolling();
   refreshVisitors();
   logPollTimer = window.setInterval(refreshLogs, 2500);
   mapPollTimer = window.setInterval(refreshVisitors, 60000);
