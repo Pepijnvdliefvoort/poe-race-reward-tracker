@@ -25,6 +25,12 @@ _visit_lock = threading.Lock()
 _geo_lock = threading.Lock()
 _geo_cache: dict[str, dict[str, Any]] | None = None
 
+_DEFAULT_PRICE_POLL_HEADER = (
+    "timestamp_utc,cycle,item_name,item_mode,query_id,total_results,used_results,"
+    "unsupported_price_count,mirror_count,lowest_mirror,median_mirror,highest_mirror,"
+    "divine_count,lowest_divine,median_divine,highest_divine\n"
+)
+
 
 def _load_geo_cache_unlocked() -> dict[str, dict[str, Any]]:
     global _geo_cache
@@ -372,6 +378,48 @@ def visitor_map_payload() -> dict[str, Any]:
 def csv_download_headers() -> tuple[str, Path]:
     filename = CSV_PATH.name
     return filename, CSV_PATH
+
+
+def clear_market_data(*, listings_cache_path: Path, csv_path: Path) -> dict[str, Any]:
+    """
+    Clear local cache + CSV history.
+
+    - listings_cache.json: delete if present (dashboard will treat as cache-miss)
+    - price_poll.csv: truncate to header only (preserves column names for downstream readers)
+    """
+    cleared_cache = False
+    cleared_csv = False
+
+    try:
+        if listings_cache_path.exists():
+            listings_cache_path.unlink()
+        cleared_cache = True
+    except OSError:
+        cleared_cache = False
+
+    header = _DEFAULT_PRICE_POLL_HEADER
+    if csv_path.exists():
+        try:
+            with csv_path.open("r", encoding="utf-8", newline="") as fh:
+                first_line = fh.readline()
+            if first_line.strip():
+                header = first_line.rstrip("\n") + "\n"
+        except OSError:
+            pass
+
+    try:
+        with csv_path.open("w", encoding="utf-8", newline="") as fh:
+            fh.write(header)
+        cleared_csv = True
+    except OSError:
+        cleared_csv = False
+
+    return {
+        "cleared": {
+            "listingsCache": cleared_cache,
+            "pricePollCsv": cleared_csv,
+        }
+    }
 
 
 def admin_session_cookie_value() -> str:

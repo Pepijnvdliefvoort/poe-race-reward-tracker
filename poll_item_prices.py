@@ -21,7 +21,7 @@ DEFAULT_OUTPUT_FILE = "price_poll.csv"
 DEFAULT_CONFIG_FILE = "config.json"
 DEFAULT_LISTINGS_CACHE_FILE = Path("web") / "listings_cache.json"
 LISTINGS_CACHE_MAX_ENTRIES = 1000
-TOP_IDS_LIMIT = 5
+TOP_IDS_LIMIT = 25
 DIVINES_PER_MIRROR = 1650.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
 RESALE_PRICE_STEPS: tuple[tuple[float | None, float], ...] = (
@@ -588,22 +588,60 @@ def fetch_top_listings(
     query_id: str,
     result_ids: list[str],
 ) -> list[dict[str, Any]]:
+    # The trade fetch endpoint has a practical per-request ID limit.
+    # We fetch up to TOP_IDS_LIMIT in small batches to keep summaries robust
+    # (median/high) while still showing only a small preview in the UI.
     top_ids = [x for x in result_ids[:TOP_IDS_LIMIT] if isinstance(x, str)]
     if not top_ids:
         return []
 
-    ids_joined = ",".join(top_ids)
-    url = f"{BASE_URL}/fetch/{ids_joined}"
-    rate_limiter.wait_before_request()
-    response = session.get(url, params={"query": query_id}, timeout=30.0)
-    rate_limiter.update_from_response(response.headers, response.status_code)
-    response.raise_for_status()
+    all_results: list[dict[str, Any]] = []
+    url_base = f"{BASE_URL}/fetch/"
+    batch_size = 10
+    for i in range(0, len(top_ids), batch_size):
+        batch = top_ids[i : i + batch_size]
+        ids_joined = ",".join(batch)
+        url = f"{url_base}{ids_joined}"
+        rate_limiter.wait_before_request()
+        response = session.get(url, params={"query": query_id}, timeout=30.0)
+        rate_limiter.update_from_response(response.headers, response.status_code)
+        response.raise_for_status()
 
-    data = response.json()
-    result = data.get("result", [])
-    if not isinstance(result, list):
-        raise RuntimeError("Fetch endpoint returned malformed result data")
-    return result
+        data = response.json()
+        result = data.get("result", [])
+        if not isinstance(result, list):
+            raise RuntimeError("Fetch endpoint returned malformed result data")
+        all_results.extend(result)
+
+    return all_results
+
+
+def _median_absolute_deviation(values: list[float], median_value: float) -> float:
+    deviations = [abs(v - median_value) for v in values]
+    if not deviations:
+        return 0.0
+    return float(statistics.median(deviations))
+
+
+def filter_prices_mad(prices: list[float], threshold_sigma: float = 6.0) -> list[float]:
+    """Filter out extreme prices using a MAD-based robust z-score cutoff.
+
+    This intentionally removes obvious "show-off" prices (very large) and also
+    discards extreme low anomalies that are far from the market cluster.
+    """
+    cleaned = [p for p in prices if isinstance(p, (int, float)) and math.isfinite(p) and p > 0]
+    if len(cleaned) < 5:
+        return cleaned
+
+    med = float(statistics.median(cleaned))
+    mad = _median_absolute_deviation(cleaned, med)
+    if mad <= 0:
+        return cleaned
+
+    # Consistent estimator for normal distributions.
+    sigma = 1.4826 * mad
+    cutoff = threshold_sigma * sigma
+    return [p for p in cleaned if abs(p - med) <= cutoff]
 
 
 def normalize_price_currency(price: dict[str, Any]) -> tuple[str, float] | None:
@@ -746,11 +784,14 @@ def _format_listing_preview_price(price: dict[str, Any] | None) -> tuple[str, fl
     return f"{format_amount(amount_float)} {normalized_currency}", amount_float, normalized_currency
 
 
-def build_listing_preview_entries(listings: list[dict[str, Any]], max_entries: int = TOP_IDS_LIMIT) -> list[dict[str, Any]]:
+def build_listing_preview_entries(
+    listings: list[dict[str, Any]],
+    max_entries: int | None = None,
+) -> list[dict[str, Any]]:
     preview_rows: list[dict[str, Any]] = []
 
     for entry in listings:
-        if len(preview_rows) >= max_entries:
+        if max_entries is not None and len(preview_rows) >= max_entries:
             break
 
         listing = entry.get("listing") if isinstance(entry, dict) else None
@@ -902,9 +943,21 @@ def summarize_prices(prices: list[float]) -> tuple[float | None, float | None, f
     if not prices:
         return None, None, None
 
-    low = min(prices)
-    high = max(prices)
-    median = statistics.median(prices)
+    cleaned = [p for p in prices if isinstance(p, (int, float)) and math.isfinite(p) and p > 0]
+    if not cleaned:
+        return None, None, None
+
+    # Keep floor from raw (alerts/flip logic depends on cheapest listing),
+    # but compute the chart median/high from a robust "core" set so
+    # one-off vanity prices don't dominate the summary range.
+    low = min(cleaned)
+
+    core = filter_prices_mad(cleaned, threshold_sigma=6.0)
+    if not core:
+        core = cleaned
+
+    high = max(core)
+    median = float(statistics.median(core))
     return low, high, median
 
 

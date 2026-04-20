@@ -11,6 +11,7 @@ from admin_service import (
     SERVER_LOG_PATH,
     admin_authorized,
     build_admin_session_set_cookie,
+    clear_market_data,
     csv_download_headers,
     get_client_ip,
     record_site_visit,
@@ -20,6 +21,7 @@ from admin_service import (
     visitor_map_payload,
 )
 from data_service import WEB_DIR, fetch_listing_preview, load_config, load_price_data, save_config
+from data_service import CSV_PATH, LISTINGS_CACHE_PATH
 
 _ADMIN_UNAUTHORIZED_HTML = WEB_DIR / "admin-unauthorized.html"
 
@@ -262,6 +264,44 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        auth_header = self.headers.get("Authorization")
+        token_param = params.get("token", [None])[0]
+        cookie_header = self.headers.get("Cookie")
+
+        if parsed.path.startswith("/api/admin/"):
+            if not admin_authorized(auth_header, token_param, cookie_header):
+                body = json.dumps({"error": "Forbidden"}).encode("utf-8")
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/clear-data":
+                payload = clear_market_data(
+                    listings_cache_path=LISTINGS_CACHE_PATH,
+                    csv_path=CSV_PATH,
+                )
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            body = json.dumps({"error": "Unknown admin endpoint"}).encode("utf-8")
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if parsed.path == "/api/config":
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length)

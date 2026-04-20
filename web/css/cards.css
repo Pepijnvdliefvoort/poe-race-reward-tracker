@@ -204,7 +204,8 @@
   position: absolute;
   left: 50%;
   bottom: calc(100% + 2px);
-  transform: translateX(calc(-50% + var(--listings-popover-shift-x, 0px))) scale(0.96);
+  /* Avoid transform scaling which can blur text on some browsers. */
+  transform: translateX(calc(-50% + var(--listings-popover-shift-x, 0px)));
   width: min(320px, 88vw);
   max-width: 98vw;
   max-height: 240px;
@@ -218,8 +219,11 @@
   visibility: hidden;
   pointer-events: none;
   z-index: 10000;
-  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+  transition: opacity 0.16s ease, visibility 0.16s ease;
   box-sizing: border-box;
+  text-shadow: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 /* Popover is portaled to <body> on mobile; animate from its trigger */
@@ -227,17 +231,20 @@
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translate(-50%, -92%) scale(0.98);
+  transform: none;
   transform-origin: 50% 100%;
   transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
   z-index: 12000;
+  text-shadow: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 .listings-popover.listings-popover--global.listings-popover--global-open {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transform: translate(-50%, -100%) scale(1);
+  transform: none;
 }
 
 .listings-popover-overlay {
@@ -259,7 +266,7 @@
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transform: translateX(calc(-50% + var(--listings-popover-shift-x, 0px))) scale(1);
+  transform: translateX(calc(-50% + var(--listings-popover-shift-x, 0px)));
 }
 
 .listings-popover-header {
@@ -305,7 +312,28 @@
 
 .listings-row-price {
   color: #ffcb48;
-  font-weight: 600;
+  font-weight: 400;
+  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-shadow: none;
+  font-family: "IBM Plex Mono", monospace;
+  min-width: 0;
+}
+
+.listings-row-currency {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.listings-row-currency-text {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .listings-row-meta {
@@ -319,6 +347,8 @@
   padding: 1px 5px;
   border-radius: 999px;
   border: 1px solid transparent;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .buyout-badge.yes {

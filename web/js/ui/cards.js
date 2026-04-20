@@ -1,83 +1,61 @@
-import { chartMap, dom, MAX_POINTS, THREE_MONTHS_MS, saveFavorites, state } from "../core/state.js";
+import { chartMap, dom, MAX_ACTUAL_POINTS, PREDICTION_POINTS, THREE_MONTHS_MS, saveFavorites, state } from "../core/state.js";
 import { getAvailableLowestPrice } from "../domain/pricing.js";
-import { formatNumber, formatTime, getCondensedChartPoints } from "../core/utils.js";
+import { formatNumber, formatTime, getChartSeriesWithPrediction } from "../core/utils.js";
 import { stopListingsPopover, wireListingsPopover } from "../cards/listingsPopover.js";
 
-let activeTooltipChart = null;
-let tooltipGlobalListenersInstalled = false;
+function ensureTooltipOffsetPositioner() {
+  const tooltip = Chart?.Tooltip;
+  if (!tooltip?.positioners) return;
+  if (tooltip.positioners.offsetPoint) return;
+
+  tooltip.positioners.offsetPoint = (items, eventPosition) => {
+    const base = tooltip.positioners.nearest(items, eventPosition);
+    if (!base) return false;
+    // Shift the tooltip a bit so the hovered point stays visible.
+    return { x: base.x, y: base.y - 14 };
+  };
+}
 
 function clearChartTooltip(chart) {
-  if (!chart?.tooltip) return;
-  chart.tooltip.setActiveElements([], {});
-  chart.draw();
+  if (!chart) return;
+  const tooltip = chart.tooltip;
+  if (!tooltip) return;
+
+  // Chart.js v3/v4: clearing active elements hides the tooltip.
+  if (typeof tooltip.setActiveElements === "function") {
+    tooltip.setActiveElements([], { x: 0, y: 0 });
+  }
+  chart.update("none");
 }
 
-function clearAllChartTooltips() {
-  for (const entry of chartMap.values()) {
-    clearChartTooltip(entry?.chart);
-  }
-  activeTooltipChart = null;
-}
-
-function installTooltipGlobalListeners() {
-  if (tooltipGlobalListenersInstalled) return;
-  tooltipGlobalListenersInstalled = true;
-
-  const clearActive = () => {
-    if (!activeTooltipChart) return;
-    clearChartTooltip(activeTooltipChart);
-    activeTooltipChart = null;
-  };
-
-  // If the user interacts anywhere else, the pinned chart tooltip should not remain.
-  const clearOnOutsidePress = (event) => {
-    if (!activeTooltipChart) return;
-    const target = event?.target;
-    const canvas = activeTooltipChart?.canvas;
-    if (target && canvas && (target === canvas || canvas.contains?.(target))) {
-      return;
-    }
-    clearActive();
-  };
-
-  // Clear the pinned tooltip when the gesture ends anywhere (release can happen
-  // outside the canvas during scroll/pull-to-refresh).
-  if ("PointerEvent" in window) {
-    window.addEventListener("pointerdown", clearOnOutsidePress, { passive: true, capture: true });
-    window.addEventListener("pointerup", clearActive, { passive: true, capture: true });
-    window.addEventListener("pointercancel", clearActive, { passive: true, capture: true });
-    // Some browsers can "steal" touch pointers for scrolling without sending a
-    // reliable up/cancel to the original target; clearing on scroll is a safe fallback.
-  } else {
-    window.addEventListener("touchstart", clearOnOutsidePress, { passive: true, capture: true });
-    window.addEventListener("touchend", clearActive, { passive: true, capture: true });
-    window.addEventListener("touchcancel", clearActive, { passive: true, capture: true });
-    // When the browser is actively scrolling, touchmove becomes non-cancelable.
-    // This is a strong signal that the user is scrolling/pulling-to-refresh, so
-    // we should not keep the chart tooltip pinned.
-    window.addEventListener(
-      "touchmove",
-      (event) => {
-        if (!activeTooltipChart) return;
-        if (event.cancelable === false) {
-          clearActive();
-        }
-      },
-      { passive: true, capture: true }
-    );
+function wireMobileTooltipDismiss(chart) {
+  // Only do this for coarse pointers (phones/tablets). On desktop, hover tooltips
+  // should remain stable while scrolling with a mouse wheel.
+  if (!window.matchMedia?.("(pointer: coarse)").matches) {
+    return () => {};
   }
 
-  // Scrolling should reset *all* pinned value tags/tooltips.
-  window.addEventListener("scroll", clearAllChartTooltips, { passive: true });
-  window.addEventListener("blur", clearActive, { passive: true });
-  window.addEventListener("pagehide", clearActive, { passive: true });
-  document.addEventListener(
-    "visibilitychange",
-    () => {
-      if (document.visibilityState !== "visible") clearActive();
-    },
-    { passive: true }
-  );
+  let lastDismissAt = 0;
+  const dismiss = () => {
+    // Avoid doing work for every scroll tick.
+    const now = performance.now();
+    if (now - lastDismissAt < 50) return;
+    lastDismissAt = now;
+    clearChartTooltip(chart);
+  };
+
+  // `scroll` fires after scrolling begins; `touchmove` catches the gesture early.
+  window.addEventListener("scroll", dismiss, { passive: true, capture: true });
+  window.addEventListener("touchmove", dismiss, { passive: true, capture: true });
+  window.addEventListener("touchcancel", dismiss, { passive: true, capture: true });
+  window.addEventListener("pointercancel", dismiss, { passive: true, capture: true });
+
+  return () => {
+    window.removeEventListener("scroll", dismiss, { capture: true });
+    window.removeEventListener("touchmove", dismiss, { capture: true });
+    window.removeEventListener("touchcancel", dismiss, { capture: true });
+    window.removeEventListener("pointercancel", dismiss, { capture: true });
+  };
 }
 
 export function ensureCard(item, onFavoriteToggle) {
@@ -174,6 +152,8 @@ export function ensureCard(item, onFavoriteToggle) {
   card.append(title, artFrame, priceBox, chartWrap, trend);
   dom.cardsEl.appendChild(card);
 
+  ensureTooltipOffsetPositioner();
+
   const chart = new Chart(canvas.getContext("2d"), {
     type: "line",
     data: {
@@ -193,6 +173,18 @@ export function ensureCard(item, onFavoriteToggle) {
           spanGaps: true,
           fill: false,
         },
+        {
+          label: "Prediction",
+          data: [],
+          borderColor: "rgba(180, 180, 180, 0.9)",
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          borderDash: [2, 2],
+          tension: 0.24,
+          spanGaps: true,
+          fill: false,
+        },
       ],
     },
     options: {
@@ -204,18 +196,44 @@ export function ensureCard(item, onFavoriteToggle) {
           display: false,
         },
         tooltip: {
+          // Single tooltip box; we decide which lines to show via callbacks.
           callbacks: {
             title: () => null,
-            label: (ctx) => `${Math.round(ctx.parsed.y)} mirrors`,
+            label: (ctx) => {
+              const y = ctx?.parsed?.y;
+              if (y == null || Number.isNaN(y)) return null;
+              // Hide the "connector" value for the prediction series (it equals the last actual point),
+              // while keeping it in the dataset so the dotted line visually starts from the last point.
+              if (ctx.datasetIndex === 1) {
+                const data = ctx?.dataset?.data || [];
+                const idx = ctx.dataIndex ?? -1;
+                const prev = idx > 0 ? data[idx - 1] : null;
+                if (prev == null) return null;
+              }
+
+              const tag = ctx.datasetIndex === 1 ? "Pred" : "Price";
+              return `${tag}: ${Math.round(y)} mirrors`;
+            },
           },
           enabled: true,
           mode: "index",
           intersect: false,
+          axis: "x",
           displayColors: false,
-          position: "nearest",
+          position: "offsetPoint",
           xAlign: "center",
           yAlign: "bottom",
-          caretPadding: 6,
+          caretPadding: 10,
+          caretSize: 6,
+          padding: 8,
+          cornerRadius: 8,
+          backgroundColor: "rgba(18, 18, 18, 0.92)",
+          borderColor: "rgba(255, 255, 255, 0.12)",
+          borderWidth: 1,
+          titleColor: "rgba(255, 255, 255, 0.9)",
+          bodyColor: "rgba(255, 255, 255, 0.86)",
+          titleFont: { size: 11, weight: "600" },
+          bodyFont: { size: 11, weight: "500" },
         },
       },
       scales: {
@@ -231,74 +249,6 @@ export function ensureCard(item, onFavoriteToggle) {
           capBezierPoints: true,
         },
       },
-    },
-    plugins: [
-      {
-        id: "sectionedTooltip",
-        afterDatasetsDraw(chartInstance) {
-          const datasetMeta = chartInstance.getDatasetMeta(0);
-          const dataPoints = datasetMeta.data || [];
-
-          if (dataPoints.length === 0) return;
-
-          const pointPositions = dataPoints.map((point) => ({ x: point.x, y: point.y }));
-
-          chartInstance._sectionTooltipData = {
-            pointPositions,
-            dataLength: dataPoints.length,
-          };
-        },
-      },
-      {
-        id: "tooltipActivityTracker",
-        afterEvent(chartInstance) {
-          const tooltip = chartInstance?.tooltip;
-          const active = tooltip?.getActiveElements?.() ?? [];
-          if (active.length > 0) {
-            activeTooltipChart = chartInstance;
-            installTooltipGlobalListeners();
-          } else if (activeTooltipChart === chartInstance) {
-            activeTooltipChart = null;
-          }
-        },
-      },
-    ],
-    onHover: (event) => {
-      if (!chart._sectionTooltipData || !event.native) {
-        clearChartTooltip(chart);
-        if (activeTooltipChart === chart) activeTooltipChart = null;
-        return;
-      }
-
-      const { pointPositions, dataLength } = chart._sectionTooltipData;
-      const mouseX = event.native.offsetX;
-
-      if (dataLength === 0) {
-        clearChartTooltip(chart);
-        if (activeTooltipChart === chart) activeTooltipChart = null;
-        return;
-      }
-
-      let closestIndex = 0;
-      if (dataLength === 1) {
-        closestIndex = 0;
-      } else {
-        for (let i = 0; i < dataLength - 1; i += 1) {
-          if (mouseX < pointPositions[i + 1].x) {
-            closestIndex = i;
-            break;
-          }
-          closestIndex = i + 1;
-        }
-      }
-
-      const activePoint = pointPositions[closestIndex];
-
-      chart.tooltip.setActiveElements(
-        [{ datasetIndex: 0, index: closestIndex }],
-        { x: activePoint.x, y: activePoint.y - 8 }
-      );
-      chart.draw();
     },
   });
 
@@ -321,6 +271,7 @@ export function ensureCard(item, onFavoriteToggle) {
     listingsPopoverBody,
     listingsPopoverSubline,
     chart,
+    chartTooltipCleanup: null,
     currentQueryId: null,
     loadedQueryId: null,
     loadingQueryId: null,
@@ -329,6 +280,7 @@ export function ensureCard(item, onFavoriteToggle) {
     openPopover: null,
     closePopover: null,
   };
+  entry.chartTooltipCleanup = wireMobileTooltipDismiss(chart);
   chartMap.set(key, entry);
   wireListingsPopover(entry);
   return entry;
@@ -353,8 +305,9 @@ export function updateCard(item, onFavoriteToggle) {
   } = ensureCard(item, onFavoriteToggle);
   const cutoff = Date.now() - THREE_MONTHS_MS;
   const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
-  const chartPoints = getCondensedChartPoints(rawPoints, MAX_POINTS);
-  const sparkValues = chartPoints.map((p) => p.y);
+  const { actual, predicted } = getChartSeriesWithPrediction(rawPoints, MAX_ACTUAL_POINTS, PREDICTION_POINTS);
+  const chartPoints = [...actual, ...predicted];
+  const sparkValues = actual.map((p) => p.y);
 
   card.classList.toggle("next-in-line", item.itemName === state.nextInLineItemName);
   const isFavorited = state.favoriteItems.has(item.itemName);
@@ -365,7 +318,25 @@ export function updateCard(item, onFavoriteToggle) {
   favoriteBtn.title = isFavorited ? "Unfavorite" : "Favorite";
 
   chart.data.labels = chartPoints.map((p) => formatTime(p.x));
-  chart.data.datasets[0].data = chartPoints.map((p) => (p.y != null ? Math.round(p.y) : p.y));
+
+  const actualCount = actual.length;
+  const totalCount = chartPoints.length;
+  const actualSeries = new Array(totalCount).fill(null);
+  for (let i = 0; i < actualCount; i += 1) {
+    actualSeries[i] = actual[i].y != null ? Math.round(actual[i].y) : null;
+  }
+
+  const predictionSeries = new Array(totalCount).fill(null);
+  if (predicted.length > 0 && actualCount > 0) {
+    const lastActualIndex = actualCount - 1;
+    predictionSeries[lastActualIndex] = actual[lastActualIndex].y != null ? Math.round(actual[lastActualIndex].y) : null;
+    for (let j = 0; j < predicted.length; j += 1) {
+      predictionSeries[actualCount + j] = predicted[j].y != null ? Math.round(predicted[j].y) : null;
+    }
+  }
+
+  chart.data.datasets[0].data = actualSeries;
+  chart.data.datasets[1].data = predictionSeries;
   chart.update();
 
   const latest = item.latest || {};
@@ -440,12 +411,18 @@ export function updateCard(item, onFavoriteToggle) {
     listingsHoverArea.setAttribute("aria-label", "Listing details unavailable");
     const entry = chartMap.get(item.itemName);
     if (entry) {
-      entry.currentQueryId = null;
-      entry.loadedQueryId = null;
-      entry.loadingQueryId = null;
-      stopListingsPopover(entry);
-      entry.card.classList.remove("popover-active");
-      entry.listingsHoverArea.classList.remove("popover-open");
+      // If the user currently has the popover open, don't force-close it just because
+      // a refresh cycle temporarily removed/invalidated the queryId (or data went stale).
+      // Keep it open and show the "unavailable" message until data returns.
+      const isOpen = entry.listingsHoverArea?.classList?.contains("popover-open");
+      if (!isOpen) {
+        entry.currentQueryId = null;
+        entry.loadedQueryId = null;
+        entry.loadingQueryId = null;
+        stopListingsPopover(entry);
+        entry.card.classList.remove("popover-active");
+        entry.listingsHoverArea.classList.remove("popover-open");
+      }
     }
     return;
   }
@@ -483,17 +460,30 @@ export function updateAllCards(itemsToRender, onFavoriteToggle) {
     }
 
     const entry = chartMap.get(item.itemName);
+    const wasListingsPopoverOpen = Boolean(entry?.listingsHoverArea?.classList?.contains("popover-open"));
     const currentAtIndex = dom.cardsEl.children[i];
     if (currentAtIndex !== entry.card) {
       dom.cardsEl.insertBefore(entry.card, currentAtIndex ?? null);
     }
 
     updateCard(item, onFavoriteToggle);
+
+    // Keep listings preview open across refreshes if the user had it open.
+    // During re-render we may briefly close due to transient payload changes;
+    // re-open if the entry is still eligible for listings preview.
+    if (wasListingsPopoverOpen) {
+      const stillEligible = entry?.listingsHoverArea && !entry.listingsHoverArea.classList.contains("disabled");
+      const isOpenNow = Boolean(entry?.listingsHoverArea?.classList?.contains("popover-open"));
+      if (stillEligible && !isOpenNow) {
+        entry.openPopover?.();
+      }
+    }
   }
 
   for (const [key, entry] of chartMap.entries()) {
     if (!seen.has(key)) {
       stopListingsPopover(entry);
+      entry.chartTooltipCleanup?.();
       entry.chart.destroy();
       entry.card.remove();
       chartMap.delete(key);

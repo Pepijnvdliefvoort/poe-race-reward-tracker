@@ -10,6 +10,33 @@ let globalListingsOverlay = null;
 let activeListingsOverlayClose = null;
 let globalListingsOverlayOpenedAt = 0;
 
+function currencyIconPath(currencyRaw) {
+  const c = (currencyRaw || "").toString().trim().toLowerCase();
+  if (!c) return null;
+
+  // Trade API currencies vary a bit in naming; normalize common variants.
+  if (c === "mirror" || c === "mirrors" || c.includes("mirror of kalandra")) {
+    return "/assets/MirrorofKalandra.png";
+  }
+  if (c === "divine" || c === "divines" || c === "div" || c.includes("divine orb")) {
+    return "/assets/DivineOrb.png";
+  }
+  if (c === "exalted" || c === "exa" || c.includes("exalted orb")) {
+    return "/assets/ExaltedOrb.png";
+  }
+  if (c === "ancient-reliquary-key" || c === "ancient reliquary key" || c.includes("reliquary key")) {
+    return "/assets/AncientReliquaryKey.png";
+  }
+  return null;
+}
+
+function formatCurrencyLabel(currencyRaw) {
+  const c = (currencyRaw || "").toString().trim().toLowerCase();
+  if (!c) return "";
+  if (c === "ancient-reliquary-key") return "ancient reliquary key";
+  return c;
+}
+
 function clearNodeChildren(node) {
   while (node.firstChild) {
     node.removeChild(node.firstChild);
@@ -113,6 +140,7 @@ function positionGlobalListingsPopover(entry, options = {}) {
   const popoverEl = entry.listingsPopover;
   if (!hoverEl || !popoverEl) return;
 
+  const viewportWidth = document.documentElement?.clientWidth || window.innerWidth;
   const margin = 8;
   const gap = 8;
   const hoverRect = hoverEl.getBoundingClientRect();
@@ -121,14 +149,20 @@ function positionGlobalListingsPopover(entry, options = {}) {
   const width = popoverRect.width || Math.min(320, window.innerWidth * 0.88);
   const idealCenterX = hoverRect.left + hoverRect.width / 2;
   const minCenterX = margin + width / 2;
-  const maxCenterX = window.innerWidth - margin - width / 2;
+  const maxCenterX = viewportWidth - margin - width / 2;
   const centerX = Math.max(minCenterX, Math.min(maxCenterX, idealCenterX));
 
-  const docX = centerX + window.scrollX;
-  const docY = hoverRect.top - gap + window.scrollY;
-  popoverEl.style.left = `${Math.round(docX)}px`;
-  popoverEl.style.top = `${Math.round(docY)}px`;
-  popoverEl.style.transform = "translate(-50%, -100%) scale(1)";
+  // Avoid CSS transforms for positioning on mobile because they can make text
+  // look slightly blurry. Use pixel positioning instead.
+  const docCenterX = centerX + window.scrollX;
+  const docTopY = hoverRect.top - gap + window.scrollY;
+
+  const height = popoverRect.height || 0;
+  const left = docCenterX - width / 2;
+  const top = docTopY - height;
+  popoverEl.style.left = `${Math.round(left)}px`;
+  popoverEl.style.top = `${Math.round(top)}px`;
+  popoverEl.style.transform = "none";
 }
 
 function positionListingsPopover(entry) {
@@ -144,17 +178,19 @@ function positionListingsPopover(entry) {
     return;
   }
 
-  hoverEl.style.setProperty("--listings-popover-shift-x", "0px");
+  // Desktop: popover is positioned using `left: 50%` + translateX(-50%) and a shift-x CSS var.
+  // Clamp the visual center so it never overflows the viewport (fixes rightmost cards).
+  const viewportWidth = document.documentElement?.clientWidth || window.innerWidth;
+  const hoverRect = hoverEl.getBoundingClientRect();
+  const popoverRect = popoverEl.getBoundingClientRect();
+  const width = popoverRect.width || popoverEl.offsetWidth || Math.min(320, viewportWidth * 0.88);
 
-  const rect = popoverEl.getBoundingClientRect();
-  let shiftX = 0;
-  if (rect.left < margin) {
-    shiftX += margin - rect.left;
-  }
-  if (rect.right > window.innerWidth - margin) {
-    shiftX -= rect.right - (window.innerWidth - margin);
-  }
+  const idealCenterX = hoverRect.left + hoverRect.width / 2;
+  const minCenterX = margin + width / 2;
+  const maxCenterX = viewportWidth - margin - width / 2;
+  const clampedCenterX = Math.max(minCenterX, Math.min(maxCenterX, idealCenterX));
 
+  const shiftX = clampedCenterX - idealCenterX;
   hoverEl.style.setProperty("--listings-popover-shift-x", `${Math.round(shiftX)}px`);
 }
 
@@ -231,7 +267,36 @@ function renderListingsPreview(entry, payload) {
 
     const price = document.createElement("span");
     price.className = "listings-row-price";
-    price.textContent = rowData.priceText || "No listed price";
+    const amountText = rowData.amount != null ? rowData.amount : null;
+    const currencyText = rowData.currency != null ? rowData.currency : null;
+    if (amountText == null || currencyText == null) {
+      price.textContent = rowData.priceText || "No listed price";
+    } else {
+      const amountEl = document.createElement("span");
+      amountEl.className = "listings-row-amount";
+      amountEl.textContent = String(amountText);
+
+      const iconPath = currencyIconPath(currencyText);
+      if (iconPath) {
+        const icon = document.createElement("img");
+        icon.className = "listings-row-currency";
+        icon.src = iconPath;
+        icon.alt = String(currencyText);
+        icon.decoding = "async";
+        icon.loading = "lazy";
+        icon.width = 18;
+        icon.height = 18;
+        price.appendChild(amountEl);
+        price.appendChild(icon);
+      } else {
+        price.appendChild(amountEl);
+      }
+
+      const currencyEl = document.createElement("span");
+      currencyEl.className = "listings-row-currency-text";
+      currencyEl.textContent = formatCurrencyLabel(currencyText);
+      price.appendChild(currencyEl);
+    }
 
     const buyout = document.createElement("span");
     buyout.className = `buyout-badge ${rowData.isInstantBuyout ? "yes" : "no"}`;
@@ -466,8 +531,54 @@ export function wireListingsPopover(entry) {
   };
 
   if ("PointerEvent" in window) {
-    // Avoid pointerdown + click double-toggling on mobile.
-    listingsHoverArea.addEventListener("pointerdown", togglePopoverFromTap);
+    // On mobile, a scroll gesture starts with a pointerdown; toggling on pointerdown
+    // causes the popover to "open while scrolling". Treat it as a tap only if the
+    // pointer doesn't move beyond a small threshold before release.
+    let tapPointerId = null;
+    let tapStartX = 0;
+    let tapStartY = 0;
+    let tapMoved = false;
+    const TAP_MOVE_PX = 10;
+
+    const onPointerDown = (event) => {
+      if (!isMobileViewport()) return;
+      if (listingsHoverArea.classList.contains("disabled")) return;
+      if (event.pointerType === "mouse") return;
+      tapPointerId = event.pointerId;
+      tapStartX = event.clientX;
+      tapStartY = event.clientY;
+      tapMoved = false;
+    };
+
+    const onPointerMove = (event) => {
+      if (tapPointerId == null) return;
+      if (event.pointerId !== tapPointerId) return;
+      const dx = event.clientX - tapStartX;
+      const dy = event.clientY - tapStartY;
+      if (Math.hypot(dx, dy) > TAP_MOVE_PX) {
+        tapMoved = true;
+      }
+    };
+
+    const onPointerUp = (event) => {
+      if (tapPointerId == null) return;
+      if (event.pointerId !== tapPointerId) return;
+      const shouldToggle = !tapMoved;
+      tapPointerId = null;
+      if (!shouldToggle) return;
+      togglePopoverFromTap(event);
+    };
+
+    const onPointerCancel = (event) => {
+      if (tapPointerId == null) return;
+      if (event.pointerId !== tapPointerId) return;
+      tapPointerId = null;
+    };
+
+    listingsHoverArea.addEventListener("pointerdown", onPointerDown, { passive: true });
+    listingsHoverArea.addEventListener("pointermove", onPointerMove, { passive: true });
+    listingsHoverArea.addEventListener("pointerup", onPointerUp, { passive: false });
+    listingsHoverArea.addEventListener("pointercancel", onPointerCancel, { passive: true });
   } else {
     listingsHoverArea.addEventListener("click", togglePopoverFromTap);
   }

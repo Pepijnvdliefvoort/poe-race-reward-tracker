@@ -39,6 +39,17 @@ async function fetchText(path) {
   return res.text();
 }
 
+async function fetchJsonWithInit(path, init) {
+  const res = await fetch(path, { ...fetchOpts, ...(init || {}) });
+  if (res.status === 403) {
+    const err = new Error("Forbidden");
+    err.status = 403;
+    throw err;
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 let map;
 let heatLayer;
 let markersLayer;
@@ -506,6 +517,45 @@ function setupCsvDownload() {
   });
 }
 
+function setupClearData() {
+  const btn = document.getElementById("clearDataBtn");
+  const hint = document.getElementById("adminDataHint");
+  if (!btn) return;
+
+  const setHint = (text, isWarn = false) => {
+    if (!hint) return;
+    hint.textContent = text || "";
+    hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  btn.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "This will clear:\n\n- web/listings_cache.json (deleted)\n- price_poll.csv (keeps the header row)\n\nContinue?",
+    );
+    if (!ok) return;
+
+    btn.disabled = true;
+    setHint("Clearing data…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/clear-data", { method: "POST" });
+      const cleared = payload?.cleared || {};
+      const csv = cleared.pricePollCsv ? "price_poll.csv" : null;
+      const cache = cleared.listingsCache ? "listings_cache.json" : null;
+      const names = [csv, cache].filter(Boolean).join(", ");
+      setHint(names ? `Cleared: ${names}` : "Cleared.");
+    } catch (e) {
+      setHint(
+        e.status === 403
+          ? "Unauthorized. Open /admin?token=… once using the ADMIN_TOKEN from the server (GitHub Actions secret), then this page will set a cookie."
+          : `Clear data: ${e.message || e}`,
+        true,
+      );
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 function setupMapResize() {
   let t;
   const bump = () => {
@@ -524,6 +574,7 @@ function setupMapResize() {
 
 function main() {
   setupCsvDownload();
+  setupClearData();
   setupMapResize();
   setupLogSplitView();
   refreshLogs();
