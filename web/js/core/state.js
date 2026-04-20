@@ -1,8 +1,8 @@
 export const REFRESH_MS = 4000;
-// Charts render 10 historical points + 2 forecast points.
-export const MAX_POINTS = 12;
+// Charts render 10 historical points + 1 forecast point.
+export const MAX_POINTS = 11;
 export const MAX_ACTUAL_POINTS = 10;
-export const PREDICTION_POINTS = 2;
+export const PREDICTION_POINTS = 1;
 export const THREE_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
 export const FAVORITES_STORAGE_KEY = "poe-market-favorites";
 export const FILTERS_STORAGE_KEY = "poe-market-filters";

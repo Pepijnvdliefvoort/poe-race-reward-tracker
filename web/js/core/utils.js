@@ -194,7 +194,7 @@ function linearFitSlope(points) {
   return (n * sumTY - sumT * sumY) / denom; // mirrors per hour
 }
 
-export function getChartSeriesWithPrediction(points, maxActualPoints, predictionPoints = 2) {
+export function getChartSeriesWithPrediction(points, maxActualPoints, predictionPoints = 1) {
   const actual = getCondensedChartPoints(points, maxActualPoints);
   if (!actual.length || predictionPoints <= 0) {
     return { actual, predicted: [] };
