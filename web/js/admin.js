@@ -150,14 +150,8 @@ function renderVisitorMap(data) {
       fillOpacity: 0.6,
     });
     const lastSeen = p.lastSeen ? formatLocalDateTime(p.lastSeen) : "";
-    const adminLine =
-      p.adminLoginAttempt && p.adminLoginLastAt
-        ? `<br/>Admin login: ${escapeHtml(formatLocalDateTime(p.adminLoginLastAt))}`
-        : p.adminLoginAttempt
-          ? "<br/>Admin login: yes"
-          : "";
     m.bindPopup(
-      `<strong>${escapeHtml(p.ip)}</strong><br/>Visits: ${p.visits}<br/>${lastSeen ? escapeHtml(lastSeen) : ""}${adminLine}`,
+      `<strong>${escapeHtml(p.ip)}</strong><br/>Visits: ${p.visits}<br/>${lastSeen ? escapeHtml(lastSeen) : ""}`,
     );
     markersLayer.addLayer(m);
   });
@@ -201,14 +195,6 @@ function renderVisitorTable(data) {
       <td><code>${escapeHtml(v.ip)}</code></td>
       <td>${v.visits}</td>
       <td>${v.lastSeen ? escapeHtml(formatLocalDateTime(v.lastSeen)) : "—"}</td>
-      <td>${
-        v.adminLoginAttempt
-          ? v.adminLoginLastAt
-            ? `<span title="Last time this IP sent admin credentials">${escapeHtml(formatLocalDateTime(v.adminLoginLastAt))}</span>`
-            : "Yes"
-          : "—"
-      }</td>
-      <td>${v.onMap ? "Yes" : "—"}</td>
     </tr>`,
     )
     .join("");

@@ -15,7 +15,6 @@ from admin_service import (
     admin_note_auth_failure,
     admin_note_auth_success,
     admin_security_enabled,
-    maybe_record_admin_login_attempt,
     build_admin_session_set_cookie,
     clear_market_data,
     csv_download_headers,
@@ -98,16 +97,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if admin_security_enabled():
             admin_note_auth_success(self._client_ip())
 
-    def _maybe_record_admin_login_attempt(
-        self,
-        auth_header: str | None,
-        query_token: str | None,
-        cookie_header: str | None,
-    ) -> None:
-        maybe_record_admin_login_attempt(
-            self._client_ip(), auth_header, query_token, cookie_header
-        )
-
     def _send_admin_unauthorized_page(self) -> None:
         if _ADMIN_UNAUTHORIZED_HTML.is_file():
             body = _ADMIN_UNAUTHORIZED_HTML.read_bytes()
@@ -165,7 +154,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if admin_security_enabled() and (
             req_path in {"/admin", "/admin/"} or req_path.startswith("/api/admin/")
         ):
-            self._maybe_record_admin_login_attempt(auth_header, token_param, cookie_header)
             if self._reject_if_admin_ip_locked(want_json=req_path.startswith("/api/admin/")):
                 return
 
@@ -393,7 +381,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if parsed.path.startswith("/api/admin/"):
             if admin_security_enabled():
-                self._maybe_record_admin_login_attempt(auth_header, token_param, cookie_header)
                 if self._reject_if_admin_ip_locked(want_json=True):
                     return
             if not admin_authorized(auth_header, token_param, cookie_header):
@@ -473,7 +460,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/config":
             if admin_security_enabled():
-                self._maybe_record_admin_login_attempt(auth_header, token_param, cookie_header)
                 if self._reject_if_admin_ip_locked(want_json=True):
                     return
                 if not admin_authorized(auth_header, token_param, cookie_header):
