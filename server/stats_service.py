@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import socket
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +27,52 @@ def _to_mb(value_bytes: float | int | None) -> float | None:
         return None
 
 
+_CPU_SAMPLE_SECONDS = 5.0
+_cpu_lock = threading.Lock()
+_cpu_latest: float | None = None
+_cpu_latest_at_s: float | None = None
+_cpu_thread_started = False
+
+
+def _ensure_cpu_sampler_started() -> None:
+    global _cpu_thread_started
+    if psutil is None:
+        return
+    if _cpu_thread_started:
+        return
+    _cpu_thread_started = True
+
+    def worker() -> None:
+        global _cpu_latest, _cpu_latest_at_s
+        # Prime psutil's internal counters.
+        try:
+            psutil.cpu_percent(interval=None)
+        except Exception:
+            pass
+
+        while True:
+            try:
+                value = float(psutil.cpu_percent(interval=_CPU_SAMPLE_SECONDS))
+            except Exception:
+                value = None
+            with _cpu_lock:
+                _cpu_latest = value
+                _cpu_latest_at_s = time.time()
+
+    t = threading.Thread(target=worker, name="cpu-sampler", daemon=True)
+    t.start()
+
+
+def _cpu_percent_5s() -> float | None:
+    """
+    Return the most recent 5-second CPU usage sample (overall system).
+    The sampler runs in the background so API responses stay fast.
+    """
+    _ensure_cpu_sampler_started()
+    with _cpu_lock:
+        return _cpu_latest
+
+
 def system_stats_payload() -> dict[str, Any]:
     """
     Cross-platform system + process stats for lightweight dashboards.
@@ -47,11 +94,7 @@ def system_stats_payload() -> dict[str, Any]:
     vm = psutil.virtual_memory()
     sm = psutil.swap_memory()
 
-    # psutil needs an interval sample; interval=None often returns 0.0 if not previously primed.
-    try:
-        cpu_percent = float(psutil.cpu_percent(interval=0.2))
-    except Exception:
-        cpu_percent = None
+    cpu_percent = _cpu_percent_5s()
 
     try:
         cpu_count_logical = int(psutil.cpu_count(logical=True) or 0) or None
