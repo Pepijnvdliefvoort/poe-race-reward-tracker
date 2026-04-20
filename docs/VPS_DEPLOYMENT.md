@@ -68,6 +68,9 @@ Edit Caddy template and set your hostname:
 - Best: your own domain like `poe.example.com`
 - Good free option: `YOUR_SERVER_IP.sslip.io`
 
+This project’s Caddy config is set up to serve static files (`/assets`, `/css`, `/js`) directly from
+`/opt/poe-market-flips/web` (more reliable, and avoids proxying lots of small icon requests through Python).
+
 Then copy config and reload:
 
 ```bash
