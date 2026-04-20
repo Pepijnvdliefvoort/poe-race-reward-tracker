@@ -76,15 +76,18 @@
     <section class="admin-section">
       <div class="admin-section-head admin-section-head-row">
         <div>
-          <h2>Data export</h2>
-          <p class="admin-muted">Download the live CSV the dashboard reads.</p>
+          <h2>Data + poller</h2>
+          <p class="admin-muted">Export the live CSV, clear cached data, or restart the poller process.</p>
         </div>
         <div class="admin-header-actions">
           <a id="csvDownloadBtn" class="admin-btn" href="#" download>Download price_poll.csv</a>
           <button id="clearDataBtn" class="admin-btn admin-btn-secondary" type="button">Clear data…</button>
+          <button id="stopPollerBtn" class="admin-btn admin-btn-secondary" type="button">Stop poller</button>
+          <button id="restartPollerBtn" class="admin-btn admin-btn-secondary" type="button">Restart poller</button>
         </div>
       </div>
       <p id="adminDataHint" class="admin-muted" aria-live="polite"></p>
+      <p id="adminPollerHint" class="admin-muted" aria-live="polite"></p>
     </section>
 
     <section class="admin-section">

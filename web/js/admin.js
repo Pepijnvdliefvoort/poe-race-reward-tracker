@@ -396,6 +396,17 @@ let serverLogViewer;
 let pollerLogViewer;
 let logRefreshTick = 0;
 
+function appendLocalConsoleLine(viewer, { msg, level = "info" }) {
+  if (!viewer) return;
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    msg,
+    name: "admin",
+  };
+  viewer.appendEntries({ entries: [entry] });
+}
+
 async function refreshLogs() {
   const serverEl = document.getElementById("serverConsole");
   const pollerEl = document.getElementById("pollerConsole");
@@ -556,6 +567,78 @@ function setupClearData() {
   });
 }
 
+function setupRestartPoller() {
+  const btn = document.getElementById("restartPollerBtn");
+  const hint = document.getElementById("adminPollerHint");
+  if (!btn) return;
+
+  const setHint = (text, isWarn = false) => {
+    if (!hint) return;
+    hint.textContent = text || "";
+    hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  btn.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "Restart the poller process?\n\nThis will stop the current poller (if one is running) and start a new one owned by the server.\n\nContinue?",
+    );
+    if (!ok) return;
+
+    btn.disabled = true;
+    setHint("Restarting poller…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/restart-poller", { method: "POST" });
+      const pid = payload?.start?.pid ?? payload?.pid;
+      setHint(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
+    } catch (e) {
+      setHint(
+        e.status === 403
+          ? "Unauthorized. Open /admin?token=… once using the ADMIN_TOKEN from the server (GitHub Actions secret), then this page will set a cookie."
+          : `Restart poller: ${e.message || e}`,
+        true,
+      );
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function setupStopPoller() {
+  const btn = document.getElementById("stopPollerBtn");
+  const hint = document.getElementById("adminPollerHint");
+  if (!btn) return;
+
+  const setHint = (text, isWarn = false) => {
+    if (!hint) return;
+    hint.textContent = text || "";
+    hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  btn.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "Stop the poller process?\n\nThis stops polling until you restart it.\n\nContinue?",
+    );
+    if (!ok) return;
+
+    btn.disabled = true;
+    setHint("Stopping poller…");
+    try {
+      await fetchJsonWithInit("/api/admin/stop-poller", { method: "POST" });
+      setHint("Poller stopped.");
+      appendLocalConsoleLine(pollerLogViewer, { msg: "[admin] Poller stopped." });
+    } catch (e) {
+      setHint(
+        e.status === 403
+          ? "Unauthorized. Open /admin?token=… once using the ADMIN_TOKEN from the server (GitHub Actions secret), then this page will set a cookie."
+          : `Stop poller: ${e.message || e}`,
+        true,
+      );
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 function setupMapResize() {
   let t;
   const bump = () => {
@@ -575,6 +658,8 @@ function setupMapResize() {
 function main() {
   setupCsvDownload();
   setupClearData();
+  setupStopPoller();
+  setupRestartPoller();
   setupMapResize();
   setupLogSplitView();
   refreshLogs();

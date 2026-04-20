@@ -1,0 +1,10 @@
+{
+  "alert_enabled": true,
+  "alert_threshold_pct": 28,
+  "alert_history_cycles": 5,
+  "alert_min_total_results": 8,
+  "alert_min_floor_listings": 2,
+  "alert_floor_band_pct": 6,
+  "alert_low_liquidity_extra_drop_pct": 22,
+  "alert_cooldown_cycles": 2
+}

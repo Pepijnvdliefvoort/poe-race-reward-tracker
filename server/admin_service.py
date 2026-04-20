@@ -5,6 +5,8 @@ import hmac
 import ipaddress
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -18,12 +20,324 @@ from data_service import CSV_PATH
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 SERVER_LOG_PATH = LOG_DIR / "server.log"
 POLLER_LOG_PATH = LOG_DIR / "poller.log"
+POLLER_STDIO_LOG_PATH = LOG_DIR / "poller-stdio.log"
 VISITORS_PATH = LOG_DIR / "visitors.jsonl"
 IP_GEO_CACHE_PATH = LOG_DIR / "ip_geo_cache.json"
 
 _visit_lock = threading.Lock()
 _geo_lock = threading.Lock()
 _geo_cache: dict[str, dict[str, Any]] | None = None
+_poller_log_lock = threading.Lock()
+
+_DEFAULT_SYSTEMD_POLLER_SERVICE = "poe-market-poller"
+
+
+def _run_systemctl(args: list[str], timeout_s: float = 12.0) -> tuple[int, str, str]:
+    try:
+        p = subprocess.run(
+            ["systemctl", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+    except FileNotFoundError:
+        return 127, "", "systemctl not found"
+    except subprocess.TimeoutExpired:
+        return 124, "", "systemctl timed out"
+
+
+def _restart_poller_systemd(service: str) -> dict[str, Any]:
+    rc, out, err = _run_systemctl(["restart", service])
+    ok = rc == 0
+    # Best-effort status snippet (non-fatal if it fails).
+    rc2, out2, err2 = _run_systemctl(["is-active", service], timeout_s=6.0)
+    active = out2.strip() if rc2 == 0 else ""
+    return {
+        "ok": ok,
+        "action": "restarted",
+        "mode": "systemd",
+        "service": service,
+        "systemctl": {"rc": rc, "stdout": out, "stderr": err},
+        "active": active or None,
+        "activeCheck": {"rc": rc2, "stdout": out2, "stderr": err2},
+    }
+
+
+def _append_poller_log(msg: str, *, level: str = "info", name: str = "poller") -> None:
+    """
+    Append a JSONL entry to poller.log so the admin poller console can show
+    operator actions even across page reloads.
+    """
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "level": (level or "info").lower(),
+        "name": name,
+        "msg": msg,
+    }
+    line = json.dumps(payload, ensure_ascii=False)
+    with _poller_log_lock:
+        with POLLER_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+
+
+def _stop_poller_systemd(service: str) -> dict[str, Any]:
+    rc, out, err = _run_systemctl(["stop", service])
+    ok = rc == 0
+    rc2, out2, err2 = _run_systemctl(["is-active", service], timeout_s=6.0)
+    active = out2.strip() if rc2 == 0 else ""
+    return {
+        "ok": ok,
+        "action": "stopped",
+        "mode": "systemd",
+        "service": service,
+        "systemctl": {"rc": rc, "stdout": out, "stderr": err},
+        "active": active or None,
+        "activeCheck": {"rc": rc2, "stdout": out2, "stderr": err2},
+    }
+
+
+def _kill_external_pollers() -> dict[str, Any]:
+    """
+    Kill pollers not owned by this server process.
+
+    This is primarily for local dev: if you start `poll_item_prices.py` manually in a
+    PowerShell window, hitting "restart" should not create a second poller.
+    """
+    killed: list[int] = []
+    errors: list[str] = []
+
+    if os.name == "nt":
+        # Use PowerShell to find and kill *any* poller processes.
+        #
+        # Local dev often starts the poller as:
+        #   python.exe poll_item_prices.py
+        # which does not include the full repo path in the command line, so we
+        # match on the script name only. This keeps "Restart poller" from ever
+        # spawning a second concurrent poller.
+        script = r"""
+$procs = Get-CimInstance Win32_Process | Where-Object {
+  $_.CommandLine -and ($_.CommandLine -match "poll_item_prices\.py")
+}
+foreach ($p in $procs) {
+  try {
+    Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+    Write-Output ("killed:" + $p.ProcessId)
+  } catch {
+    Write-Output ("error:" + $p.ProcessId + ":" + $_.Exception.Message)
+  }
+}
+"""
+        try:
+            p = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=12.0,
+                check=False,
+            )
+            lines = (p.stdout or "").splitlines()
+            for line in lines:
+                line = line.strip()
+                if line.startswith("killed:"):
+                    try:
+                        killed.append(int(line.split(":", 1)[1]))
+                    except ValueError:
+                        continue
+                elif line.startswith("error:"):
+                    errors.append(line)
+            stderr = (p.stderr or "").strip()
+            if stderr:
+                errors.append(stderr)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(str(exc))
+    else:
+        # On Linux, systemd is the preferred mode. This is fallback-only.
+        try:
+            p = subprocess.run(
+                ["pgrep", "-f", "poll_item_prices.py"],
+                capture_output=True,
+                text=True,
+                timeout=6.0,
+                check=False,
+            )
+            for raw in (p.stdout or "").split():
+                try:
+                    pid = int(raw.strip())
+                except ValueError:
+                    continue
+                if pid == os.getpid():
+                    continue
+                try:
+                    os.kill(pid, 15)
+                    killed.append(pid)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"kill {pid}: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(str(exc))
+
+    return {"killedPids": killed, "errors": errors}
+
+
+class PollerManager:
+    """
+    Manage the poller as a subprocess owned by the dashboard server.
+
+    This is optional: if POE_POLLER_AUTOSTART is not set, the poller will only be
+    started when an admin triggers a restart/start endpoint.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen[str] | None = None
+        self._last_start_ts: float | None = None
+
+    def _default_cmd(self) -> list[str]:
+        repo_root = Path(__file__).resolve().parent.parent
+        script = repo_root / "poll_item_prices.py"
+        return [sys.executable, str(script)]
+
+    def _build_cmd(self) -> list[str]:
+        raw = (os.environ.get("POE_POLLER_CMD") or "").strip()
+        if not raw:
+            return self._default_cmd()
+        # Very small "shell-like" split; users can always use a wrapper script if needed.
+        return raw.split()
+
+    def _ensure_started_unlocked(self) -> subprocess.Popen[str]:
+        if self._proc is not None and self._proc.poll() is None:
+            return self._proc
+
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+        cmd = self._build_cmd()
+        # Redirect stdout/stderr to a separate file so it doesn't disappear.
+        # poller.log is written by structured logging inside the poller.
+        stdio_fh = POLLER_STDIO_LOG_PATH.open("a", encoding="utf-8", buffering=1)
+        try:
+            self._proc = subprocess.Popen(
+                cmd,
+                cwd=str(Path(__file__).resolve().parent.parent),
+                stdout=stdio_fh,
+                stderr=stdio_fh,
+                text=True,
+            )
+            self._last_start_ts = time.time()
+            return self._proc
+        except Exception:
+            try:
+                stdio_fh.close()
+            except Exception:
+                pass
+            raise
+
+    def start(self) -> dict[str, Any]:
+        with self._lock:
+            proc = self._ensure_started_unlocked()
+            return {
+                "ok": True,
+                "action": "started",
+                "pid": proc.pid,
+                "cmd": self._build_cmd(),
+                "stdioLog": str(POLLER_STDIO_LOG_PATH),
+            }
+
+    def stop(self, timeout_s: float = 6.0) -> dict[str, Any]:
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None:
+                self._proc = None
+                return {"ok": True, "action": "already_stopped"}
+
+            proc = self._proc
+            pid = proc.pid
+            try:
+                proc.terminate()
+                proc.wait(timeout=timeout_s)
+                stopped = True
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                    stopped = True
+                except Exception:
+                    stopped = False
+            except Exception:
+                stopped = False
+
+            self._proc = None
+            return {"ok": stopped, "action": "stopped", "pid": pid}
+
+    def restart(self) -> dict[str, Any]:
+        stop_res = self.stop()
+        if not stop_res.get("ok", True):
+            return {"ok": False, "action": "restart_failed", "stop": stop_res}
+        start_res = self.start()
+        return {"ok": True, "action": "restarted", "stop": stop_res, "start": start_res}
+
+
+_poller_manager = PollerManager()
+
+
+def restart_poller() -> dict[str, Any]:
+    strategy = (os.environ.get("POE_POLLER_RESTART_STRATEGY") or "auto").strip().lower()
+    systemd_service = (os.environ.get("POE_POLLER_SYSTEMD_SERVICE") or _DEFAULT_SYSTEMD_POLLER_SERVICE).strip()
+
+    # Production (VPS) expectation: poller is managed by systemd.
+    if strategy in {"auto", "systemd"} and os.name != "nt":
+        res = _restart_poller_systemd(systemd_service)
+        if res.get("ok") or strategy == "systemd":
+            if res.get("ok"):
+                _append_poller_log("[admin] Poller restarted (systemd).")
+            return res
+        # auto fallback if systemd restart fails
+
+    # Local/dev fallback: stop any externally-started pollers, then restart the server-owned one.
+    external = _kill_external_pollers()
+    managed = _poller_manager.restart()
+    if managed.get("ok") and not external.get("errors"):
+        killed = external.get("killedPids") or []
+        suffix = f" (killed {len(killed)} existing process(es))" if killed else ""
+        _append_poller_log(f"[admin] Poller restarted.{suffix}")
+    return {
+        "ok": bool(managed.get("ok")),
+        "action": "restarted",
+        "mode": "subprocess",
+        "external": external,
+        "managed": managed,
+    }
+
+
+def stop_poller() -> dict[str, Any]:
+    strategy = (os.environ.get("POE_POLLER_RESTART_STRATEGY") or "auto").strip().lower()
+    systemd_service = (os.environ.get("POE_POLLER_SYSTEMD_SERVICE") or _DEFAULT_SYSTEMD_POLLER_SERVICE).strip()
+
+    if strategy in {"auto", "systemd"} and os.name != "nt":
+        res = _stop_poller_systemd(systemd_service)
+        if res.get("ok") or strategy == "systemd":
+            if res.get("ok"):
+                _append_poller_log("[admin] Poller stopped (systemd).")
+            return res
+
+    # Local/dev: kill any pollers + stop server-owned poller if it exists.
+    external = _kill_external_pollers()
+    managed = _poller_manager.stop()
+    if managed.get("ok", True) and not external.get("errors"):
+        killed = external.get("killedPids") or []
+        suffix = f" (killed {len(killed)} existing process(es))" if killed else ""
+        _append_poller_log(f"[admin] Poller stopped.{suffix}")
+    return {
+        "ok": bool(managed.get("ok", True)) and not external.get("errors"),
+        "action": "stopped",
+        "mode": "subprocess",
+        "external": external,
+        "managed": managed,
+    }
+
+
+def poller_autostart_enabled() -> bool:
+    return (os.environ.get("POE_POLLER_AUTOSTART") or "").strip().lower() in {"1", "true", "yes"}
 
 _DEFAULT_PRICE_POLL_HEADER = (
     "timestamp_utc,cycle,item_name,item_mode,query_id,total_results,used_results,"

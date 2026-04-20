@@ -15,6 +15,8 @@ from admin_service import (
     csv_download_headers,
     get_client_ip,
     record_site_visit,
+    restart_poller,
+    stop_poller,
     should_issue_admin_session_cookie,
     tail_log_file,
     query_log_entries,
@@ -61,11 +63,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if "/api/admin/visitor-map" in request_line:
             return
         # Use stdout so it stays INFO-level in captured logs.
+        #
+        # BaseHTTPRequestHandler calls log_message('"%s" %s %s', requestline, code, size)
+        # where size is '-' when unknown. We omit that trailing dash for cleaner logs,
+        # and we also omit the (always-local) client IP prefix.
         try:
-            message = f"{self.address_string()} - {format % args}"
+            if len(args) >= 3 and format.strip() == '"%s" %s %s':
+                req, status, size = (str(args[0]), str(args[1]), str(args[2]))
+                message = f'{req} {status}'
+                if size and size != "-":
+                    message += f" {size}"
+            else:
+                message = str(format % args)
+                if message.endswith(" -"):
+                    message = message[: -len(" -")]
         except Exception:
             message = request_line
-        print(message)
+
+        print(message, flush=True)
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -292,6 +307,46 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/restart-poller":
+                try:
+                    payload = restart_poller()
+                    body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                    self.send_response(200 if payload.get("ok") else 500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except Exception as exc:  # noqa: BLE001
+                    body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/stop-poller":
+                try:
+                    payload = stop_poller()
+                    body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                    self.send_response(200 if payload.get("ok") else 500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except Exception as exc:  # noqa: BLE001
+                    body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                 return
 
             body = json.dumps({"error": "Unknown admin endpoint"}).encode("utf-8")

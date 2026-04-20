@@ -11,6 +11,8 @@ ExecStart=/opt/poe-market-flips/.venv/bin/python server/server.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=POE_POLLER_RESTART_STRATEGY=systemd
+Environment=POE_POLLER_SYSTEMD_SERVICE=poe-market-poller
 EnvironmentFile=-/etc/poe-market-flips/secrets.env
 
 [Install]

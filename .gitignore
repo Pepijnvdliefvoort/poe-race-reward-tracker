@@ -37,6 +37,3 @@ Thumbs.db
 price_poll.csv
 listings_cache.json
 logs/
-
-# Server-local config (do not commit)
-config.json
