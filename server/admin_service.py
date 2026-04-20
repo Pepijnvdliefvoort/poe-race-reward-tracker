@@ -538,7 +538,11 @@ def query_log_entries(
         if since_mode == "session":
             last_start_idx: int | None = None
             for idx, e in enumerate(snapshot_entries):
-                if str(e.get("event") or "") == "session_start":
+                # Prefer an explicit structured session marker, but also support
+                # older/plain logs that only emit a human line like "session start".
+                event = str(e.get("event") or "")
+                msg = str(e.get("msg") or "")
+                if event == "session_start" or "session start" in msg.strip().lower():
                     last_start_idx = idx
             if last_start_idx is not None:
                 snapshot_entries = snapshot_entries[last_start_idx + 1 :]

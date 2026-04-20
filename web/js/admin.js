@@ -167,6 +167,445 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function setupLogConsoleWindowControls() {
+  const splitEl = document.getElementById("adminLogSplit");
+  const handle = document.getElementById("adminLogSplitHandle");
+  const leftPane = document.getElementById("serverConsolePane");
+  const rightPane = document.getElementById("pollerConsolePane");
+  const emptyEl = document.getElementById("adminLogEmpty");
+  const taskbarEl = document.getElementById("adminLogTaskbar");
+  if (!splitEl || !handle || !leftPane || !rightPane || !emptyEl || !taskbarEl) return;
+
+  const prefersReducedMotion = () => !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+  const animatePaneVisibility = async (el, shouldShow, opts) => {
+    if (!el) return;
+    if (prefersReducedMotion()) {
+      el.style.display = shouldShow ? "" : "none";
+      el.classList.toggle("admin-console-wrap--anim-hide", !shouldShow);
+      el.classList.remove("admin-console-wrap--anim-to-tray");
+      el.classList.toggle("admin-console-wrap--anim-show", shouldShow);
+      return;
+    }
+
+    if (shouldShow) {
+      el.style.display = "";
+      // Start from hidden state then transition to shown.
+      el.classList.remove("admin-console-wrap--anim-show");
+      el.classList.remove("admin-console-wrap--anim-to-tray");
+      el.classList.remove("admin-console-wrap--anim-hide");
+
+      const fromEl = opts?.fromEl || null;
+      if (fromEl && !fromEl.hidden) {
+        const to = el.getBoundingClientRect();
+        const from = fromEl.getBoundingClientRect();
+        const toCx = to.left + to.width / 2;
+        const toCy = to.top + to.height / 2;
+        const fromCx = from.left + from.width / 2;
+        const fromCy = from.top + from.height / 2;
+        const dx = fromCx - toCx;
+        const dy = fromCy - toCy;
+        el.style.setProperty("--tray-dx", `${Math.round(dx)}px`);
+        el.style.setProperty("--tray-dy", `${Math.round(dy)}px`);
+        el.classList.add("admin-console-wrap--anim-to-tray");
+      } else {
+        el.classList.add("admin-console-wrap--anim-hide");
+      }
+      await nextFrame();
+      await nextFrame();
+      el.classList.remove("admin-console-wrap--anim-hide");
+      el.classList.remove("admin-console-wrap--anim-to-tray");
+      el.classList.add("admin-console-wrap--anim-show");
+      el.style.removeProperty("--tray-dx");
+      el.style.removeProperty("--tray-dy");
+      return;
+    }
+
+    // Hide: animate then set display none.
+    el.classList.remove("admin-console-wrap--anim-show");
+    el.classList.remove("admin-console-wrap--anim-hide");
+    el.classList.remove("admin-console-wrap--anim-to-tray");
+
+    const toEl = opts?.toEl || null;
+    if (toEl && !toEl.hidden) {
+      const from = el.getBoundingClientRect();
+      const to = toEl.getBoundingClientRect();
+      const fromCx = from.left + from.width / 2;
+      const fromCy = from.top + from.height / 2;
+      const toCx = to.left + to.width / 2;
+      const toCy = to.top + to.height / 2;
+      const dx = toCx - fromCx;
+      const dy = toCy - fromCy;
+      el.style.setProperty("--tray-dx", `${Math.round(dx)}px`);
+      el.style.setProperty("--tray-dy", `${Math.round(dy)}px`);
+      el.classList.add("admin-console-wrap--anim-to-tray");
+    } else {
+      el.classList.add("admin-console-wrap--anim-hide");
+    }
+
+    const done = new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        el.removeEventListener("transitionend", onEnd);
+        resolve();
+      };
+      const onEnd = (ev) => {
+        if (ev.target !== el) return;
+        finish();
+      };
+      el.addEventListener("transitionend", onEnd);
+      window.setTimeout(finish, 260);
+    });
+    await done;
+    el.style.display = "none";
+    el.style.removeProperty("--tray-dx");
+    el.style.removeProperty("--tray-dy");
+  };
+
+  const animateAuxVisibility = async (el, hideClass, shouldShow) => {
+    if (!el) return;
+    if (prefersReducedMotion()) {
+      el.hidden = !shouldShow;
+      el.classList.toggle(hideClass, !shouldShow);
+      return;
+    }
+
+    if (shouldShow) {
+      el.hidden = false;
+      el.classList.add(hideClass);
+      await nextFrame();
+      await nextFrame();
+      el.classList.remove(hideClass);
+      return;
+    }
+
+    el.classList.add(hideClass);
+    const done = new Promise((resolve) => window.setTimeout(resolve, 240));
+    await done;
+    el.hidden = true;
+  };
+
+  const storageKey = "admin.logs.windowState.v1";
+  const pollerHintEl = document.getElementById("adminPollerHint");
+
+  const setPollerHint = (text, isWarn = false) => {
+    if (!pollerHintEl) return;
+    pollerHintEl.textContent = text || "";
+    pollerHintEl.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  const stopPollerProcess = async () => {
+    setPollerHint("Stopping poller…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/stop-poller", { method: "POST" });
+      setPollerHint("Poller stopped.");
+      return payload;
+    } catch (e) {
+      setPollerHint(
+        e.status === 403
+          ? "Unauthorized. Open /admin?token=… once using the ADMIN_TOKEN from the server (GitHub Actions secret), then this page will set a cookie."
+          : `Stop poller: ${e.message || e}`,
+        true,
+      );
+      throw e;
+    }
+  };
+
+  const restartPollerProcess = async () => {
+    setPollerHint("Restarting poller…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/restart-poller", { method: "POST" });
+      const pid = payload?.start?.pid ?? payload?.pid;
+      setPollerHint(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
+      return payload;
+    } catch (e) {
+      setPollerHint(
+        e.status === 403
+          ? "Unauthorized. Open /admin?token=… once using the ADMIN_TOKEN from the server (GitHub Actions secret), then this page will set a cookie."
+          : `Start poller: ${e.message || e}`,
+        true,
+      );
+      throw e;
+    }
+  };
+
+  const resetLogViewerToSessionStart = (viewer) => {
+    if (!viewer) return;
+    viewer.entries = [];
+    // Force refreshLogs() to do a full snapshot request (no cursor) next time.
+    viewer.cursor = null;
+    viewer._filterKey = "";
+    if (viewer.preEl) viewer.preEl.innerHTML = "";
+  };
+
+  const defaultState = {
+    server: { mode: "open" }, // open | minimized | closed
+    poller: { mode: "open" }, // open | minimized | closed
+  };
+
+  const readState = () => {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) return structuredClone ? structuredClone(defaultState) : JSON.parse(JSON.stringify(defaultState));
+      const parsed = JSON.parse(raw);
+      const norm = (v) => (v === "open" || v === "minimized" || v === "closed" ? v : "open");
+      return {
+        server: { mode: norm(parsed?.server?.mode) },
+        poller: { mode: norm(parsed?.poller?.mode) },
+      };
+    } catch {
+      return structuredClone ? structuredClone(defaultState) : JSON.parse(JSON.stringify(defaultState));
+    }
+  };
+
+  let state = readState();
+
+  const saveState = () => {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(state));
+    } catch {
+      // ignore storage failures
+    }
+  };
+
+  const isVisible = (consoleKey) => state[consoleKey].mode === "open";
+  const isMinimized = (consoleKey) => state[consoleKey].mode === "minimized";
+  const isClosed = (consoleKey) => state[consoleKey].mode === "closed";
+
+  const labelFor = (consoleKey) => (consoleKey === "server" ? "server.log" : "poller.log");
+
+  const dotColorFor = (consoleKey) => (consoleKey === "server" ? "#28c840" : "#febc2e");
+
+  const setMode = (consoleKey, mode) => {
+    state[consoleKey].mode = mode;
+    saveState();
+    render();
+  };
+
+  const closeConsole = (consoleKey) => setMode(consoleKey, "closed");
+  const minimizeConsole = (consoleKey) => setMode(consoleKey, "minimized");
+
+  const restoreConsole = (consoleKey) => {
+    // If both are closed, restoring should just open one.
+    if (isClosed("server") && isClosed("poller")) {
+      state.server.mode = consoleKey === "server" ? "open" : "closed";
+      state.poller.mode = consoleKey === "poller" ? "open" : "closed";
+      saveState();
+      render();
+      return;
+    }
+    setMode(consoleKey, "open");
+  };
+
+  const toggleFromDock = (consoleKey) => {
+    const mode = state[consoleKey].mode;
+    if (mode === "open") {
+      minimizeConsole(consoleKey);
+      return;
+    }
+    // If poller is "closed", treat dock click as "start it back up".
+    if (consoleKey === "poller" && mode === "closed") {
+      void (async () => {
+        try {
+          await restartPollerProcess();
+          // After a stop→start, show only the new run's logs.
+          resetLogViewerToSessionStart(pollerLogViewer);
+          await refreshLogs();
+          restoreConsole(consoleKey);
+        } catch {
+          // hint already set
+        }
+      })();
+      return;
+    }
+    restoreConsole(consoleKey);
+  };
+
+  const maximizeConsole = (consoleKey) => {
+    const otherKey = consoleKey === "server" ? "poller" : "server";
+    state[consoleKey].mode = "open";
+    // Requirement: maximize current console, minimizing the other one.
+    if (!isClosed(otherKey)) state[otherKey].mode = "minimized";
+    saveState();
+    render();
+  };
+
+  const renderTaskbar = async () => {
+    taskbarEl.innerHTML = "";
+    // Always-visible "dock" with fixed slots for each console.
+    const allKeys = ["server", "poller"];
+    allKeys.forEach((k) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      const mode = state[k].mode;
+      const modeClass =
+        mode === "open"
+          ? "admin-console-taskbar-btn--open"
+          : (mode === "minimized" ? "admin-console-taskbar-btn--minimized" : "admin-console-taskbar-btn--closed");
+      btn.className = `admin-console-taskbar-btn ${modeClass}`.trim();
+      btn.setAttribute("data-console", k);
+      btn.setAttribute("aria-label", `${mode === "open" ? "Minimize" : "Open"} ${labelFor(k)}`);
+
+      const dot = document.createElement("span");
+      dot.className = "admin-console-taskbar-dot";
+      dot.style.background = mode === "closed" ? "rgba(148, 163, 184, 0.55)" : dotColorFor(k);
+      btn.appendChild(dot);
+
+      const text = document.createElement("span");
+      text.textContent = labelFor(k);
+      btn.appendChild(text);
+
+      if (k === "poller") {
+        const actions = document.createElement("span");
+        actions.className = "admin-console-dock-actions";
+
+        const stopBtn = document.createElement("button");
+        stopBtn.type = "button";
+        stopBtn.className = "admin-console-dock-action admin-console-dock-action--stop";
+        stopBtn.title = "Stop poller";
+        stopBtn.setAttribute("aria-label", "Stop poller");
+        stopBtn.textContent = "■";
+        stopBtn.disabled = state.poller.mode === "closed";
+        stopBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          void (async () => {
+            try {
+              await stopPollerProcess();
+              // Keep the poller console open; just stop the process.
+              restoreConsole("poller");
+              await refreshLogs();
+            } catch {
+              // hint already set
+            }
+          })();
+        });
+
+        const restartBtn = document.createElement("button");
+        restartBtn.type = "button";
+        restartBtn.className = "admin-console-dock-action admin-console-dock-action--restart";
+        restartBtn.title = "Restart poller";
+        restartBtn.setAttribute("aria-label", "Restart poller");
+        restartBtn.textContent = "↻";
+        restartBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          void (async () => {
+            try {
+              await restartPollerProcess();
+              resetLogViewerToSessionStart(pollerLogViewer);
+              await refreshLogs();
+              restoreConsole("poller");
+            } catch {
+              // hint already set
+            }
+          })();
+        });
+
+        actions.appendChild(stopBtn);
+        actions.appendChild(restartBtn);
+        btn.appendChild(actions);
+      }
+
+      btn.addEventListener("click", () => toggleFromDock(k));
+      taskbarEl.appendChild(btn);
+    });
+
+    // Build per-console target map for animations.
+    dockTargets = {
+      server: taskbarEl.querySelector('button[data-console="server"]'),
+      poller: taskbarEl.querySelector('button[data-console="poller"]'),
+    };
+  };
+
+  const renderLayout = async () => {
+    const leftVisible = isVisible("server");
+    const rightVisible = isVisible("poller");
+
+    // Show/hide panes based on mode.
+    await Promise.all([
+      animatePaneVisibility(leftPane, leftVisible, { toEl: dockTargets?.server, fromEl: dockTargets?.server }),
+      animatePaneVisibility(rightPane, rightVisible, { toEl: dockTargets?.poller, fromEl: dockTargets?.poller }),
+    ]);
+
+    // Show placeholder if none visible.
+    const anyVisible = leftVisible || rightVisible;
+    await animateAuxVisibility(emptyEl, "admin-console-empty--anim-hide", !anyVisible);
+    if (!anyVisible) {
+      emptyEl.innerHTML = "";
+      const msg = document.createElement("div");
+      msg.textContent = "No console active";
+      emptyEl.appendChild(msg);
+    }
+
+    // Handle + split ratio only makes sense when both are visible and desktop layout.
+    const bothVisible = leftVisible && rightVisible;
+    handle.style.display = bothVisible ? "" : "none";
+
+    // If only one visible, make it take full width.
+    if (leftVisible && !rightVisible) {
+      leftPane.style.flex = "1 1 0";
+      rightPane.style.flex = "";
+    } else if (!leftVisible && rightVisible) {
+      rightPane.style.flex = "1 1 0";
+      leftPane.style.flex = "";
+    }
+  };
+
+  let renderToken = 0;
+  let dockTargets = { server: null, poller: null };
+  const render = async () => {
+    const token = (renderToken += 1);
+    // Ensure dock is rendered first so animations have a per-console target.
+    await renderTaskbar();
+    if (token !== renderToken) return;
+    await renderLayout();
+  };
+
+  // Wire dot buttons.
+  splitEl.addEventListener("click", (ev) => {
+    const btn = ev.target?.closest?.("button.admin-console-dot");
+    if (!btn) return;
+    if (btn.disabled) return;
+    const consoleKey = btn.getAttribute("data-console");
+    const action = btn.getAttribute("data-action");
+    if (consoleKey !== "server" && consoleKey !== "poller") return;
+    if (action === "close") {
+      // Server close is disabled (never stop server from this UI).
+      if (consoleKey === "server") return;
+      // Poller close should actually stop the process.
+      if (consoleKey === "poller") {
+        void (async () => {
+          try {
+            await stopPollerProcess();
+          } finally {
+            // Ensure reopening doesn't show pre-stop logs.
+            resetLogViewerToSessionStart(pollerLogViewer);
+            closeConsole("poller");
+            await refreshLogs();
+          }
+        })();
+        return;
+      }
+      closeConsole(consoleKey);
+      return;
+    }
+    else if (action === "minimize") minimizeConsole(consoleKey);
+    else if (action === "maximize") maximizeConsole(consoleKey);
+  });
+
+  render();
+
+  // Expose tiny hook for split view setup (so it can re-render after ratio changes).
+  window.__adminLogWindowState = {
+    getVisiblePair: () => ({ server: isVisible("server"), poller: isVisible("poller") }),
+    render,
+  };
+}
+
 function setupLogSplitView() {
   const splitEl = document.getElementById("adminLogSplit");
   const handle = document.getElementById("adminLogSplitHandle");
@@ -179,6 +618,9 @@ function setupLogSplitView() {
   const maxRatio = 0.78;
 
   const applyRatio = (ratio) => {
+    // Only apply ratio when both panes are visible (otherwise the single pane should be full-width).
+    const vis = window.__adminLogWindowState?.getVisiblePair?.();
+    if (vis && (!vis.server || !vis.poller)) return;
     const r = clamp(Number(ratio) || 0.5, minRatio, maxRatio);
     leftPane.style.flex = `${r} 1 0`;
     rightPane.style.flex = `${1 - r} 1 0`;
@@ -219,6 +661,8 @@ function setupLogSplitView() {
   handle.addEventListener("pointerdown", (ev) => {
     // No split drag in stacked (mobile) layout.
     if (window.matchMedia?.("(max-width: 768px)")?.matches) return;
+    const vis = window.__adminLogWindowState?.getVisiblePair?.();
+    if (vis && (!vis.server || !vis.poller)) return;
     dragging = true;
     handle.dataset.dragging = "true";
     activePointerId = ev.pointerId;
@@ -233,6 +677,8 @@ function setupLogSplitView() {
   handle.addEventListener("keydown", (ev) => {
     // Keyboard accessibility: arrow keys resize by 2%.
     const step = 0.02;
+    const vis = window.__adminLogWindowState?.getVisiblePair?.();
+    if (vis && (!vis.server || !vis.poller)) return;
     const currentLeft = leftPane.getBoundingClientRect().width;
     const currentTotal = splitEl.getBoundingClientRect().width;
     if (currentTotal <= 0) return;
@@ -395,6 +841,7 @@ class LogViewer {
 let serverLogViewer;
 let pollerLogViewer;
 let logRefreshTick = 0;
+let logRefreshSeq = 0;
 
 function appendLocalConsoleLine(viewer, { msg, level = "info" }) {
   if (!viewer) return;
@@ -408,6 +855,7 @@ function appendLocalConsoleLine(viewer, { msg, level = "info" }) {
 }
 
 async function refreshLogs() {
+  const seq = (logRefreshSeq += 1);
   const serverEl = document.getElementById("serverConsole");
   const pollerEl = document.getElementById("pollerConsole");
   try {
@@ -446,7 +894,7 @@ async function refreshLogs() {
           level,
           q,
           limit: "2000",
-          ...(filterChanged ? {} : { cursor: String(viewer?.cursor || 0) }),
+          ...(filterChanged || viewer?.cursor == null ? {} : { cursor: String(viewer?.cursor || 0) }),
           counts: doCounts ? "1" : "0",
         }),
         filterKey,
@@ -462,6 +910,8 @@ async function refreshLogs() {
       fetchJson(`/api/admin/logs?${serverReq.params.toString()}`),
       fetchJson(`/api/admin/logs?${pollerReq.params.toString()}`),
     ]);
+    // If a newer refresh started while we were awaiting, ignore this one.
+    if (seq !== logRefreshSeq) return;
 
     if (serverLogViewer && serverPayload?.format === "jsonl") {
       serverLogViewer.cursor = Number.isFinite(serverPayload.cursor) ? serverPayload.cursor : (serverLogViewer.cursor || 0);
@@ -661,6 +1111,7 @@ function main() {
   setupStopPoller();
   setupRestartPoller();
   setupMapResize();
+  setupLogConsoleWindowControls();
   setupLogSplitView();
   refreshLogs();
   refreshVisitors();

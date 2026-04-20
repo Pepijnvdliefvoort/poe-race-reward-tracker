@@ -42,9 +42,31 @@
       <div class="admin-console-split" id="adminLogSplit" aria-label="Log split view">
         <div class="admin-console-wrap" id="serverConsolePane">
           <div class="admin-console-titlebar">
-            <span class="admin-console-dot"></span>
-            <span class="admin-console-dot"></span>
-            <span class="admin-console-dot"></span>
+            <button
+              class="admin-console-dot admin-console-dot--red"
+              type="button"
+              data-console="server"
+              data-action="close"
+              aria-label="Close server console"
+              title="Close (disabled for server)"
+              disabled
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--yellow"
+              type="button"
+              data-console="server"
+              data-action="minimize"
+              aria-label="Minimize server console"
+              title="Minimize"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--green"
+              type="button"
+              data-console="server"
+              data-action="maximize"
+              aria-label="Maximize server console"
+              title="Maximize"
+            ></button>
             <span class="admin-console-title">server.log</span>
           </div>
           <div class="admin-console-toolbar" id="serverConsoleToolbar" aria-label="Server log filters"></div>
@@ -62,15 +84,39 @@
 
         <div class="admin-console-wrap" id="pollerConsolePane">
           <div class="admin-console-titlebar">
-            <span class="admin-console-dot"></span>
-            <span class="admin-console-dot"></span>
-            <span class="admin-console-dot"></span>
+            <button
+              class="admin-console-dot admin-console-dot--red"
+              type="button"
+              data-console="poller"
+              data-action="close"
+              aria-label="Close poller console"
+              title="Close"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--yellow"
+              type="button"
+              data-console="poller"
+              data-action="minimize"
+              aria-label="Minimize poller console"
+              title="Minimize"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--green"
+              type="button"
+              data-console="poller"
+              data-action="maximize"
+              aria-label="Maximize poller console"
+              title="Maximize"
+            ></button>
             <span class="admin-console-title">poller.log</span>
           </div>
           <div class="admin-console-toolbar" id="pollerConsoleToolbar" aria-label="Poller log filters"></div>
           <pre id="pollerConsole" class="admin-console" aria-live="polite"></pre>
         </div>
+
+        <div class="admin-console-empty" id="adminLogEmpty" hidden>No console active</div>
       </div>
+      <div class="admin-console-taskbar" id="adminLogTaskbar" aria-label="Console dock"></div>
     </section>
 
     <section class="admin-section">
@@ -81,9 +127,7 @@
         </div>
         <div class="admin-header-actions">
           <a id="csvDownloadBtn" class="admin-btn" href="#" download>Download price_poll.csv</a>
-          <button id="clearDataBtn" class="admin-btn admin-btn-secondary" type="button">Clear data…</button>
-          <button id="stopPollerBtn" class="admin-btn admin-btn-secondary" type="button">Stop poller</button>
-          <button id="restartPollerBtn" class="admin-btn admin-btn-secondary" type="button">Restart poller</button>
+          <button id="clearDataBtn" class="admin-btn admin-btn-danger" type="button">Clear data…</button>
         </div>
       </div>
       <p id="adminDataHint" class="admin-muted" aria-live="polite"></p>
