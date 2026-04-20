@@ -451,6 +451,12 @@ body {
   .admin-split-handle {
     display: none;
   }
+
+  /* Force one console per row on mobile (avoid ratio-based flex collapse). */
+  .admin-console-split .admin-console-wrap {
+    width: 100%;
+    flex: 0 0 auto !important;
+  }
 }
 
 @media (max-width: 640px) {

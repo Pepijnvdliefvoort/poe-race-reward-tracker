@@ -1,3 +1,20 @@
+// Leaflet heatmap rendering can call getImageData frequently; hint to browsers to optimize readbacks.
+(() => {
+  const orig = HTMLCanvasElement.prototype.getContext;
+  if (typeof orig !== "function") return;
+  HTMLCanvasElement.prototype.getContext = function getContextPatched(type, options) {
+    if (type === "2d") {
+      if (!options) {
+        return orig.call(this, type, { willReadFrequently: true });
+      }
+      if (typeof options === "object" && options.willReadFrequently == null) {
+        return orig.call(this, type, { ...options, willReadFrequently: true });
+      }
+    }
+    return orig.call(this, type, options);
+  };
+})();
+
 const fetchOpts = { credentials: "same-origin" };
 
 async function fetchJson(path) {
