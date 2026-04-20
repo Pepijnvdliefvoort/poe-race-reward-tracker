@@ -14,7 +14,8 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <link rel="stylesheet" href="/css/variables.css" />
     <link rel="stylesheet" href="/css/admin.css" />
-    <link rel="icon" href="data:," />
+    <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
+    <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
     <script type="module" src="/js/admin.js"></script>
@@ -38,23 +39,35 @@
         <h2>Logs</h2>
         <p class="admin-muted">Server and poller output (tee to <code>logs/</code>).</p>
       </div>
-      <div class="admin-console-grid">
-        <div class="admin-console-wrap">
+      <div class="admin-console-split" id="adminLogSplit" aria-label="Log split view">
+        <div class="admin-console-wrap" id="serverConsolePane">
           <div class="admin-console-titlebar">
             <span class="admin-console-dot"></span>
             <span class="admin-console-dot"></span>
             <span class="admin-console-dot"></span>
             <span class="admin-console-title">server.log</span>
           </div>
+          <div class="admin-console-toolbar" id="serverConsoleToolbar" aria-label="Server log filters"></div>
           <pre id="serverConsole" class="admin-console" aria-live="polite"></pre>
         </div>
-        <div class="admin-console-wrap">
+
+        <div
+          class="admin-split-handle"
+          id="adminLogSplitHandle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize log panes"
+          tabindex="0"
+        ></div>
+
+        <div class="admin-console-wrap" id="pollerConsolePane">
           <div class="admin-console-titlebar">
             <span class="admin-console-dot"></span>
             <span class="admin-console-dot"></span>
             <span class="admin-console-dot"></span>
             <span class="admin-console-title">poller.log</span>
           </div>
+          <div class="admin-console-toolbar" id="pollerConsoleToolbar" aria-label="Poller log filters"></div>
           <pre id="pollerConsole" class="admin-console" aria-live="polite"></pre>
         </div>
       </div>
@@ -82,7 +95,7 @@
             <tr>
               <th>IP address</th>
               <th>Visits</th>
-              <th>Last seen (UTC)</th>
+              <th>Last seen</th>
               <th>Map</th>
             </tr>
           </thead>

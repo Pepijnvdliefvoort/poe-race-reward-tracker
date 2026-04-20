@@ -16,6 +16,7 @@ from admin_service import (
     record_site_visit,
     should_issue_admin_session_cookie,
     tail_log_file,
+    query_log_entries,
     visitor_map_payload,
 )
 from data_service import WEB_DIR, fetch_listing_preview, load_config, load_price_data, save_config
@@ -47,8 +48,22 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress logging for static assets; only log API requests."""
         # args[0] contains the request line like 'GET /path HTTP/1.1'
-        if args and "/api/" in str(args[0]):
-            super().log_message(format, *args)
+        if not args:
+            return
+        request_line = str(args[0])
+        if "/api/" not in request_line:
+            return
+        # Avoid the admin log viewer causing a self-reinforcing log flood.
+        if "/api/admin/logs" in request_line:
+            return
+        if "/api/admin/visitor-map" in request_line:
+            return
+        # Use stdout so it stays INFO-level in captured logs.
+        try:
+            message = f"{self.address_string()} - {format % args}"
+        except Exception:
+            message = request_line
+        print(message)
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -86,14 +101,50 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if req_path == "/api/admin/logs":
                 stream = params.get("stream", ["server"])[0]
                 log_path = POLLER_LOG_PATH if stream == "poller" else SERVER_LOG_PATH
-                text = tail_log_file(log_path)
-                body = text.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                fmt = (params.get("format", ["text"])[0] or "text").strip().lower()
+                if fmt == "json":
+                    level = params.get("level", ["all"])[0]
+                    q = params.get("q", [""])[0]
+                    since = params.get("since", ["session"])[0]
+                    limit_raw = params.get("limit", ["2000"])[0]
+                    cursor_raw = params.get("cursor", [None])[0]
+                    counts_raw = params.get("counts", ["1"])[0]
+                    try:
+                        limit = int(limit_raw)
+                    except ValueError:
+                        limit = 2000
+                    cursor = None
+                    if cursor_raw is not None:
+                        try:
+                            cursor = int(cursor_raw)
+                        except ValueError:
+                            cursor = None
+                    include_counts = str(counts_raw).strip() not in {"0", "false", "no"}
+                    payload = query_log_entries(
+                        log_path,
+                        limit=limit,
+                        level=level,
+                        q=q,
+                        cursor=cursor,
+                        include_counts=include_counts,
+                        since=since,
+                    )
+                    body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    text = tail_log_file(log_path)
+                    body = text.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                 return
 
             if req_path == "/api/admin/visitor-map":

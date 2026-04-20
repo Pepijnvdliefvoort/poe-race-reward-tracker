@@ -116,6 +116,160 @@ def tail_log_file(path: Path, max_bytes: int = 262_144) -> str:
         return ""
 
 
+def read_log_file_since(path: Path, cursor: int, max_bytes: int = 262_144) -> tuple[str, int]:
+    """
+    Read newly appended bytes since `cursor` (a file byte offset).
+    Returns (text, new_cursor). If the file shrank or cursor is invalid, starts from 0.
+    """
+    if not path.exists():
+        return "", 0
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            if cursor < 0 or cursor > size:
+                cursor = 0
+            fh.seek(cursor)
+            remaining = size - cursor
+            if remaining <= 0:
+                return "", size
+            data = fh.read(min(remaining, max_bytes)).decode("utf-8", errors="replace")
+        return data, size
+    except OSError:
+        return "", 0
+
+
+def _parse_jsonl_logs(text: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for raw in text.splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        if not raw.startswith("{"):
+            # Mixed log files can contain older plain text lines; ignore them.
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        out.append(row)
+    return out
+
+
+def query_log_entries(
+    path: Path,
+    *,
+    limit: int = 2000,
+    level: str = "all",
+    q: str = "",
+    max_bytes: int = 1_048_576,
+    cursor: int | None = None,
+    include_counts: bool = True,
+    since: str = "session",
+) -> dict[str, Any]:
+    """
+    Return structured log entries + level counts for the tailed window.
+
+    Levels are the standard python logging names lowercased (info/warning/error/critical),
+    but the UI uses: all/info/warn/error. We normalize 'warn' -> 'warning'.
+    """
+    wanted = (level or "all").strip().lower()
+    if wanted == "warn":
+        wanted = "warning"
+    query = (q or "").strip().lower()
+
+    def include(e: dict[str, Any]) -> bool:
+        if wanted != "all":
+            lvl = str(e.get("level") or "").lower()
+            if lvl == "warn":
+                lvl = "warning"
+            if lvl != wanted:
+                return False
+        if query:
+            msg = str(e.get("msg") or "").lower()
+            name = str(e.get("name") or "").lower()
+            exc = str(e.get("exc") or "").lower()
+            if query not in msg and query not in name and query not in exc:
+                return False
+        return True
+
+    limit = max(1, min(int(limit or 2000), 5000))
+    since_mode = (since or "session").strip().lower()
+
+    # Snapshot parsing (for counts + initial render).
+    snapshot_entries: list[dict[str, Any]] = []
+    counts: dict[str, int] | None = None
+    file_cursor: int | None = None
+    if include_counts or cursor is None:
+        raw = tail_log_file(path, max_bytes=max_bytes)
+        snapshot_entries = _parse_jsonl_logs(raw)
+        if not snapshot_entries:
+            return {
+                "format": "text",
+                "text": raw,
+                "counts": {},
+                "entries": [],
+                "cursor": 0,
+            }
+        snapshot_entries = snapshot_entries[-limit:]
+
+        if since_mode == "session":
+            last_start_idx: int | None = None
+            for idx, e in enumerate(snapshot_entries):
+                if str(e.get("event") or "") == "session_start":
+                    last_start_idx = idx
+            if last_start_idx is not None:
+                snapshot_entries = snapshot_entries[last_start_idx + 1 :]
+
+        if include_counts:
+            counts = {"info": 0, "warning": 0, "error": 0, "other": 0, "all": 0}
+            for e in snapshot_entries:
+                lvl = str(e.get("level") or "").lower()
+                counts["all"] += 1
+                if lvl == "info":
+                    counts["info"] += 1
+                elif lvl in {"warn", "warning"}:
+                    counts["warning"] += 1
+                elif lvl == "error":
+                    counts["error"] += 1
+                else:
+                    counts["other"] += 1
+
+    # Incremental parsing (only new bytes).
+    if cursor is not None:
+        delta_text, file_cursor = read_log_file_since(path, cursor, max_bytes=262_144)
+        delta_entries = _parse_jsonl_logs(delta_text)
+        filtered = [e for e in delta_entries if isinstance(e, dict) and include(e)]
+        return {
+            "format": "jsonl",
+            "counts": counts,
+            "entries": filtered,
+            "limit": limit,
+            "cursor": file_cursor or 0,
+            "delta": True,
+            "since": since_mode,
+        }
+
+    # Full response (filtered snapshot).
+    filtered_snapshot = [e for e in snapshot_entries if isinstance(e, dict) and include(e)]
+    # Best-effort cursor for subsequent incremental polls.
+    try:
+        file_cursor = path.stat().st_size
+    except OSError:
+        file_cursor = 0
+    return {
+        "format": "jsonl",
+        "counts": counts,
+        "entries": filtered_snapshot,
+        "limit": limit,
+        "cursor": file_cursor or 0,
+        "delta": False,
+        "since": since_mode,
+    }
+
+
 def _fetch_geo_ip(ip: str) -> dict[str, Any] | None:
     if is_private_or_reserved_ip(ip):
         return None

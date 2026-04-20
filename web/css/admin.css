@@ -127,15 +127,73 @@ body {
   background: var(--surface-strong);
 }
 
-.admin-console-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
-  gap: 1rem;
+.admin-console-split {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
   margin-top: 1rem;
   min-width: 0;
 }
 
+.admin-console-split .admin-console-wrap {
+  flex: 1 1 0;
+}
+
+.admin-split-handle {
+  width: 14px;
+  margin: 0 0.5rem;
+  border-radius: 999px;
+  cursor: col-resize;
+  position: relative;
+  background: linear-gradient(
+    180deg,
+    rgba(148, 163, 184, 0.10) 0%,
+    rgba(148, 163, 184, 0.04) 50%,
+    rgba(148, 163, 184, 0.10) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+  flex: 0 0 auto;
+}
+
+.admin-split-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.35);
+}
+
+.admin-split-handle:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(42, 183, 191, 0.18) 0%,
+    rgba(255, 122, 47, 0.08) 100%
+  );
+  border-color: rgba(42, 183, 191, 0.25);
+}
+
+.admin-split-handle:active,
+.admin-split-handle[data-dragging="true"] {
+  background: linear-gradient(
+    180deg,
+    rgba(42, 183, 191, 0.26) 0%,
+    rgba(255, 122, 47, 0.14) 100%
+  );
+  border-color: rgba(42, 183, 191, 0.45);
+}
+
+.admin-split-handle:focus-visible {
+  outline: 2px solid rgba(42, 183, 191, 0.65);
+  outline-offset: 2px;
+}
+
 .admin-console-wrap {
+  position: relative;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid rgba(0, 0, 0, 0.45);
@@ -175,7 +233,76 @@ body {
   color: #94a3b8;
 }
 
+.admin-console-toolbar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  background: #0b0d10;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  pointer-events: auto;
+}
+
+.admin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.35rem 0.55rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.admin-pill:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.admin-pill[aria-pressed="true"] {
+  border-color: rgba(42, 183, 191, 0.55);
+  background: rgba(42, 183, 191, 0.14);
+  color: #d1fae5;
+}
+
+.admin-pill--warn[aria-pressed="true"] {
+  border-color: rgba(250, 204, 21, 0.6);
+  background: rgba(250, 204, 21, 0.12);
+  color: #fde68a;
+}
+
+.admin-pill--error[aria-pressed="true"] {
+  border-color: rgba(248, 113, 113, 0.6);
+  background: rgba(248, 113, 113, 0.12);
+  color: #fecaca;
+}
+
+.admin-pill-input {
+  min-width: min(220px, 55vw);
+  flex: 1 1 220px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: #e2e8f0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  padding: 0.38rem 0.6rem;
+  outline: none;
+}
+
+.admin-pill-input::placeholder {
+  color: rgba(226, 232, 240, 0.55);
+}
+
 .admin-console {
+  position: relative;
+  z-index: 1;
   margin: 0;
   box-sizing: border-box;
   height: 420px;
@@ -193,6 +320,26 @@ body {
   background-attachment: local;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.log-line {
+  display: inline;
+}
+
+.log-line--info {
+  color: #d1fae5;
+}
+
+.log-line--warn {
+  color: #fde68a;
+}
+
+.log-line--error {
+  color: #fecaca;
+}
+
+.log-line--muted {
+  color: rgba(226, 232, 240, 0.6);
 }
 
 .admin-map {
@@ -296,8 +443,13 @@ body {
     box-sizing: border-box;
   }
 
-  .admin-console-grid {
-    grid-template-columns: 1fr;
+  .admin-console-split {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .admin-split-handle {
+    display: none;
   }
 }
 

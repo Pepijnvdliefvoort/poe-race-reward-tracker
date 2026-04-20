@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from console_tee import install_console_tee
+from structured_logging import install_structured_logging
 
-install_console_tee("server.log")
+install_structured_logging("server", "server.log")
 
 from data_service import CSV_PATH
 from http_handler import create_server

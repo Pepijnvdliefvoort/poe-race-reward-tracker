@@ -1303,9 +1303,9 @@ def _install_poller_log_tee() -> None:
     sd = str(server_dir)
     if sd not in sys.path:
         sys.path.insert(0, sd)
-    from console_tee import install_console_tee
+    from structured_logging import install_structured_logging
 
-    install_console_tee("poller.log")
+    install_structured_logging("poller", "poller.log")
 
 
 def main() -> None:
