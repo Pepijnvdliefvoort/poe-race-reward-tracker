@@ -10,6 +10,12 @@ from admin_service import (
     POLLER_LOG_PATH,
     SERVER_LOG_PATH,
     admin_authorized,
+    admin_credential_material_present,
+    admin_lockout_retry_after_seconds,
+    admin_note_auth_failure,
+    admin_note_auth_success,
+    admin_security_enabled,
+    maybe_record_admin_login_attempt,
     build_admin_session_set_cookie,
     clear_market_data,
     csv_download_headers,
@@ -36,6 +42,71 @@ def create_server(host: str, port: int) -> ThreadingHTTPServer:
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
+
+    def _client_ip(self) -> str:
+        return get_client_ip(self.headers.get("X-Forwarded-For"), self.client_address[0])
+
+    def _reject_if_admin_ip_locked(self, *, want_json: bool) -> bool:
+        if not admin_security_enabled():
+            return False
+        retry_after = admin_lockout_retry_after_seconds(self._client_ip())
+        if retry_after <= 0:
+            return False
+        payload = {
+            "error": "Too many failed authentication attempts. Try again later.",
+            "retryAfterSeconds": retry_after,
+        }
+        if want_json:
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Retry-After", str(retry_after))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+        html = (
+            "<!DOCTYPE html><html><head><meta charset=utf-8><title>429</title></head>"
+            "<body><p>Too many failed authentication attempts. Try again later.</p></body></html>"
+        )
+        body = html.encode("utf-8")
+        self.send_response(429)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Retry-After", str(retry_after))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _note_failed_admin_auth_if_applicable(
+        self,
+        auth_header: str | None,
+        query_token: str | None,
+        cookie_header: str | None,
+    ) -> None:
+        if not admin_security_enabled():
+            return
+        if admin_authorized(auth_header, query_token, cookie_header):
+            return
+        if not admin_credential_material_present(auth_header, query_token, cookie_header):
+            return
+        admin_note_auth_failure(self._client_ip())
+
+    def _note_admin_auth_success(self) -> None:
+        if admin_security_enabled():
+            admin_note_auth_success(self._client_ip())
+
+    def _maybe_record_admin_login_attempt(
+        self,
+        auth_header: str | None,
+        query_token: str | None,
+        cookie_header: str | None,
+    ) -> None:
+        maybe_record_admin_login_attempt(
+            self._client_ip(), auth_header, query_token, cookie_header
+        )
 
     def _send_admin_unauthorized_page(self) -> None:
         if _ADMIN_UNAUTHORIZED_HTML.is_file():
@@ -91,9 +162,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         token_param = params.get("token", [None])[0]
         cookie_header = self.headers.get("Cookie")
 
+        if admin_security_enabled() and (
+            req_path in {"/admin", "/admin/"} or req_path.startswith("/api/admin/")
+        ):
+            self._maybe_record_admin_login_attempt(auth_header, token_param, cookie_header)
+            if self._reject_if_admin_ip_locked(want_json=req_path.startswith("/api/admin/")):
+                return
+
         if req_path in {"/admin", "/admin/"} and should_issue_admin_session_cookie(token_param):
             set_cookie = build_admin_session_set_cookie(self.headers.get("X-Forwarded-Proto"))
             if set_cookie:
+                self._note_admin_auth_success()
                 self.send_response(302)
                 self.send_header("Location", "/admin")
                 self.send_header("Set-Cookie", set_cookie)
@@ -102,11 +181,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if req_path in {"/admin", "/admin/"} and os.environ.get("ADMIN_TOKEN", "").strip():
             if not admin_authorized(auth_header, token_param, cookie_header):
+                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
                 self._send_admin_unauthorized_page()
                 return
 
         if req_path.startswith("/api/admin/"):
             if not admin_authorized(auth_header, token_param, cookie_header):
+                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
                 body = json.dumps({"error": "Forbidden"}).encode("utf-8")
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -115,6 +196,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+
+            self._note_admin_auth_success()
 
             if req_path.rstrip("/").endswith("/stats"):
                 payload = system_stats_payload()
@@ -292,6 +375,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path in {"/admin", "/admin/"}:
+            self._note_admin_auth_success()
             q = parsed.query
             self.path = "/admin.html" + (f"?{q}" if q else "")
 
@@ -308,7 +392,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         cookie_header = self.headers.get("Cookie")
 
         if parsed.path.startswith("/api/admin/"):
+            if admin_security_enabled():
+                self._maybe_record_admin_login_attempt(auth_header, token_param, cookie_header)
+                if self._reject_if_admin_ip_locked(want_json=True):
+                    return
             if not admin_authorized(auth_header, token_param, cookie_header):
+                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
                 body = json.dumps({"error": "Forbidden"}).encode("utf-8")
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -317,6 +406,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+
+            self._note_admin_auth_success()
 
             if parsed.path == "/api/admin/clear-data":
                 payload = clear_market_data(
@@ -381,6 +472,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/config":
+            if admin_security_enabled():
+                self._maybe_record_admin_login_attempt(auth_header, token_param, cookie_header)
+                if self._reject_if_admin_ip_locked(want_json=True):
+                    return
+                if not admin_authorized(auth_header, token_param, cookie_header):
+                    self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
+                    body = json.dumps({"error": "Forbidden"}).encode("utf-8")
+                    self.send_response(403)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self._note_admin_auth_success()
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length)
             try:

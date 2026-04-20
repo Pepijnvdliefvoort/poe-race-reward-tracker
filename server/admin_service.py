@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import math
 import json
 import os
 import subprocess
@@ -23,8 +24,17 @@ POLLER_LOG_PATH = LOG_DIR / "poller.log"
 POLLER_STDIO_LOG_PATH = LOG_DIR / "poller-stdio.log"
 VISITORS_PATH = LOG_DIR / "visitors.jsonl"
 IP_GEO_CACHE_PATH = LOG_DIR / "ip_geo_cache.json"
+ADMIN_AUTH_LOCKOUT_PATH = LOG_DIR / "admin_auth_lockout.json"
+ADMIN_LOGIN_IPS_PATH = LOG_DIR / "admin_login_ips.json"
 
 _visit_lock = threading.Lock()
+_admin_auth_lockout_lock = threading.Lock()
+_admin_login_ips_lock = threading.Lock()
+
+# Failed attempts are counted only when invalid credentials are presented (not anonymous visits).
+_AUTH_FAIL_WINDOW_S = 15 * 60
+_AUTH_FAIL_THRESHOLD = 8
+_AUTH_LOCKOUT_S = 30 * 60
 _geo_lock = threading.Lock()
 _geo_cache: dict[str, dict[str, Any]] | None = None
 _poller_log_lock = threading.Lock()
@@ -616,6 +626,60 @@ def _fetch_geo_ip(ip: str) -> dict[str, Any] | None:
         return None
 
 
+def _read_admin_login_ips_locked() -> dict[str, str]:
+    """Return ip -> last attempt UTC ISO8601. Caller must hold _admin_login_ips_lock."""
+    if not ADMIN_LOGIN_IPS_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(ADMIN_LOGIN_IPS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    ips = data.get("ips")
+    if not isinstance(ips, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in ips.items():
+        ip = str(k or "").strip()
+        if not ip:
+            continue
+        ts = str(v or "").strip()
+        if ts:
+            out[ip] = ts
+    return out
+
+
+def _write_admin_login_ips_locked(ips: dict[str, str]) -> None:
+    """Persist ip -> last attempt timestamp. Caller must hold _admin_login_ips_lock."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"ips": dict(sorted(ips.items()))}
+    tmp = ADMIN_LOGIN_IPS_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=0, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(ADMIN_LOGIN_IPS_PATH)
+
+
+def maybe_record_admin_login_attempt(
+    client_ip: str,
+    auth_header: str | None,
+    query_token: str | None,
+    cookie_header: str | None,
+) -> None:
+    """
+    Remember that this IP presented admin credentials (token, Bearer, or admin_session cookie).
+    Only runs when ADMIN_TOKEN is set. Anonymous /admin visits are not recorded.
+    """
+    if not admin_security_enabled() or not client_ip:
+        return
+    if not admin_credential_material_present(auth_header, query_token, cookie_header):
+        return
+    ts = datetime.now(timezone.utc).isoformat()
+    with _admin_login_ips_lock:
+        ips = _read_admin_login_ips_locked()
+        ips[client_ip] = ts
+        _write_admin_login_ips_locked(ips)
+
+
 def visitor_map_payload() -> dict[str, Any]:
     ip_counts: dict[str, int] = {}
     ip_last: dict[str, str] = {}
@@ -640,6 +704,9 @@ def visitor_map_payload() -> dict[str, Any]:
         except OSError:
             pass
 
+    with _admin_login_ips_lock:
+        admin_login_by_ip = dict(_read_admin_login_ips_locked())
+
     with _geo_lock:
         cache = _load_geo_cache_unlocked()
         points: list[dict[str, Any]] = []
@@ -661,6 +728,7 @@ def visitor_map_payload() -> dict[str, Any]:
                 continue
             lat = float(entry["lat"])
             lon = float(entry["lon"])
+            login_ts = admin_login_by_ip.get(ip)
             points.append(
                 {
                     "lat": lat,
@@ -669,6 +737,8 @@ def visitor_map_payload() -> dict[str, Any]:
                     "ip": ip,
                     "visits": count,
                     "lastSeen": ip_last.get(ip),
+                    "adminLoginAttempt": bool(login_ts),
+                    "adminLoginLastAt": login_ts,
                 }
             )
 
@@ -680,6 +750,8 @@ def visitor_map_payload() -> dict[str, Any]:
             "visits": ip_counts[ip],
             "lastSeen": ip_last.get(ip),
             "onMap": ip in cache,
+            "adminLoginAttempt": ip in admin_login_by_ip,
+            "adminLoginLastAt": admin_login_by_ip.get(ip),
         }
         for ip in sorted(ip_counts.keys(), key=lambda x: (-ip_counts[x], x))
     ]
@@ -798,3 +870,127 @@ def admin_authorized(
         if got and hmac.compare_digest(got, expected_cookie):
             return True
     return False
+
+
+def admin_security_enabled() -> bool:
+    return bool(os.environ.get("ADMIN_TOKEN", "").strip())
+
+
+def admin_credential_material_present(
+    auth_header: str | None,
+    query_token: str | None,
+    cookie_header: str | None,
+) -> bool:
+    """True if the client sent any admin credential material (valid or not)."""
+    if query_token and query_token.strip():
+        return True
+    if auth_header:
+        h = auth_header.strip()
+        if h.lower().startswith("bearer ") and h[7:].strip():
+            return True
+    got = _cookie_value_for_name(cookie_header, "admin_session")
+    return bool(got and got.strip())
+
+
+def _load_lockout_raw() -> dict[str, Any]:
+    if not ADMIN_AUTH_LOCKOUT_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(ADMIN_AUTH_LOCKOUT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _write_lockout_raw(data: dict[str, Any]) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = ADMIN_AUTH_LOCKOUT_PATH.with_suffix(".json.tmp")
+    text = json.dumps(data, indent=0, ensure_ascii=False, sort_keys=True)
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(ADMIN_AUTH_LOCKOUT_PATH)
+
+
+def _prune_lockout_entries(raw: dict[str, Any]) -> dict[str, Any]:
+    """Drop expired lockouts, old failure timestamps, and invalid rows."""
+    now = time.time()
+    out: dict[str, Any] = {}
+    for ip, entry in raw.items():
+        if not isinstance(ip, str) or not isinstance(entry, dict):
+            continue
+        locked_until = float(entry.get("locked_until") or 0.0)
+        fail_ts = entry.get("fail_ts")
+        if not isinstance(fail_ts, list):
+            fail_ts = []
+        clean_fails: list[float] = []
+        for t in fail_ts:
+            try:
+                tf = float(t)
+            except (TypeError, ValueError):
+                continue
+            if tf > now - _AUTH_FAIL_WINDOW_S:
+                clean_fails.append(tf)
+        if locked_until > now:
+            out[ip] = {"locked_until": locked_until, "fail_ts": clean_fails}
+        elif clean_fails:
+            out[ip] = {"locked_until": 0.0, "fail_ts": clean_fails}
+    return out
+
+
+def admin_lockout_retry_after_seconds(client_ip: str) -> int:
+    """If this client IP is locked out, return remaining seconds (> 0). Otherwise 0."""
+    if not admin_security_enabled() or not client_ip:
+        return 0
+    now = time.time()
+    with _admin_auth_lockout_lock:
+        raw = _load_lockout_raw()
+        entry = raw.get(client_ip)
+        if not isinstance(entry, dict):
+            return 0
+        locked_until = float(entry.get("locked_until") or 0.0)
+        if locked_until > now:
+            return max(1, int(math.ceil(locked_until - now)))
+    return 0
+
+
+def admin_note_auth_failure(client_ip: str) -> None:
+    if not admin_security_enabled() or not client_ip:
+        return
+    now = time.time()
+    with _admin_auth_lockout_lock:
+        raw = _prune_lockout_entries(_load_lockout_raw())
+        entry = raw.get(client_ip)
+        if not isinstance(entry, dict):
+            entry = {}
+        locked_until = float(entry.get("locked_until") or 0.0)
+        if locked_until > now:
+            return
+        fail_ts = entry.get("fail_ts")
+        if not isinstance(fail_ts, list):
+            fail_ts = []
+        clean = []
+        for t in fail_ts:
+            try:
+                tf = float(t)
+            except (TypeError, ValueError):
+                continue
+            if tf > now - _AUTH_FAIL_WINDOW_S:
+                clean.append(tf)
+        clean.append(now)
+        new_locked = 0.0
+        if len(clean) >= _AUTH_FAIL_THRESHOLD:
+            new_locked = now + _AUTH_LOCKOUT_S
+            clean = []
+        raw[client_ip] = {"locked_until": new_locked, "fail_ts": clean}
+        _write_lockout_raw(raw)
+
+
+def admin_note_auth_success(client_ip: str) -> None:
+    if not client_ip:
+        return
+    with _admin_auth_lockout_lock:
+        raw = _load_lockout_raw()
+        if client_ip in raw:
+            del raw[client_ip]
+            _write_lockout_raw(raw)
