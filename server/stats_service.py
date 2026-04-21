@@ -149,6 +149,10 @@ def system_stats_payload() -> dict[str, Any]:
         "ok": True,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "generatedAtMs": _epoch_ms(),
+        "app": {
+            # "Deploy" is treated as "this server process started".
+            "deployTimeMs": int(proc_create_time_s * 1000) if proc_create_time_s is not None else None,
+        },
         "host": {
             "hostname": socket.gethostname(),
             "platform": platform.system(),

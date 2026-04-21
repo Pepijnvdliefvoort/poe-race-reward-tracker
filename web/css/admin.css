@@ -586,6 +586,24 @@ body {
 
 .admin-stats-grid--panel {
   margin-top: 0;
+  gap: 0.6rem;
+}
+
+.admin-stats-grid--panel .admin-stats-card {
+  padding: 0.65rem 0.75rem;
+}
+
+.admin-stats-grid--panel .admin-stats-v {
+  font-size: 0.98rem;
+}
+
+.admin-stats-grid--panel .admin-stats-card--sinceDeploy,
+.admin-stats-grid--panel .admin-stats-card--swap {
+  grid-column: span 6;
+}
+
+.admin-stats-grid--panel .admin-stats-card--ram {
+  grid-column: 1 / -1;
 }
 
 .log-line {
@@ -692,6 +710,10 @@ body {
 
 .admin-stats-card--uptime {
   grid-column: span 6;
+}
+
+.admin-stats-card--sinceDeploy {
+  grid-column: 1 / -1;
 }
 
 .admin-stats-card--swap {
@@ -809,10 +831,67 @@ body {
   .admin-console-split .admin-console-wrap {
     width: 100%;
     flex: 0 0 auto !important;
+    height: calc(var(--admin-log-console-body-h) + var(--admin-log-console-chrome-h));
+    min-height: calc(var(--admin-log-console-body-h) + var(--admin-log-console-chrome-h));
+    max-height: calc(var(--admin-log-console-body-h) + var(--admin-log-console-chrome-h));
   }
 
   .admin-stats-grid {
     grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  /* Compact stats panel so it fits the fixed mobile pane height. */
+  .admin-stats-grid--panel {
+    gap: 0.5rem;
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+  }
+
+  .admin-panel-body {
+    padding: 0.65rem 0.7rem;
+  }
+
+  .admin-stats-grid--panel .admin-stats-card {
+    padding: 0.55rem 0.65rem;
+  }
+
+  .admin-stats-grid--panel .admin-stats-k {
+    font-size: 0.7rem;
+  }
+
+  .admin-stats-grid--panel .admin-stats-v {
+    margin-top: 0.25rem;
+    font-size: 0.92rem;
+  }
+
+  /* Use the available width better on mobile: sinceDeploy + swap share a row. */
+  .admin-stats-grid--panel .admin-stats-card--cpu,
+  .admin-stats-grid--panel .admin-stats-card--uptime {
+    grid-column: span 5;
+  }
+
+  .admin-stats-grid--panel .admin-stats-card--sinceDeploy {
+    grid-column: span 3;
+  }
+
+  .admin-stats-grid--panel .admin-stats-card--swap {
+    grid-column: span 7;
+  }
+
+  .admin-stats-grid--panel .admin-stats-card--ram,
+  .admin-stats-grid--panel .admin-stats-card--net {
+    grid-column: span 10;
+  }
+
+  /* Keep toolbar a fixed-height row; scroll horizontally instead of wrapping. */
+  .admin-console-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-console-toolbar > * {
+    flex: 0 0 auto;
   }
 
   .admin-stats-card--cpu,
@@ -834,7 +913,7 @@ body {
 
 @media (max-width: 640px) {
   :root {
-    --admin-log-console-body-h: 280px;
+    --admin-log-console-body-h: 320px;
   }
 
   .admin-section {

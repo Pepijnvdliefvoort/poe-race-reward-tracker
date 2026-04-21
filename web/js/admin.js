@@ -243,8 +243,25 @@ function setupLogConsoleWindowControls() {
   const taskbarEl = document.getElementById("adminLogTaskbar");
   if (!splitEl || !serverPane || !pollerPane || !statsPane || !handleA || !handleB || !emptyEl || !taskbarEl) return;
 
-  const prefersReducedMotion = () => !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const prefersReducedMotion = () => {
+    const reduced = !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const isMobile = !!window.matchMedia?.("(max-width: 768px)")?.matches;
+    // On mobile, avoid animated show/hide because it causes visible layout jumping.
+    return reduced || isMobile;
+  };
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+  const forceScrollLogsToBottom = (consoleKey) => {
+    const viewer = consoleKey === "server" ? serverLogViewer : (consoleKey === "poller" ? pollerLogViewer : null);
+    const preEl = viewer?.preEl || (consoleKey === "server"
+      ? document.getElementById("serverConsole")
+      : (consoleKey === "poller" ? document.getElementById("pollerConsole") : null));
+    if (!preEl) return;
+    // Force after layout so clientHeight is correct.
+    requestAnimationFrame(() => {
+      preEl.scrollTop = preEl.scrollHeight;
+    });
+  };
 
   const animatePaneVisibility = async (el, shouldShow, opts) => {
     if (!el) return;
@@ -457,6 +474,17 @@ function setupLogConsoleWindowControls() {
 
   const setMode = (consoleKey, mode) => {
     state[consoleKey].mode = mode;
+
+    // Mobile UX: only one pane visible at a time.
+    // Opening a pane replaces the currently-open one (others become minimized).
+    const isMobile = () => !!window.matchMedia?.("(max-width: 768px)")?.matches;
+    if (mode === "open" && isMobile()) {
+      ["server", "poller", "stats"].forEach((k) => {
+        if (k === consoleKey) return;
+        if (state[k]?.mode === "open") state[k].mode = "minimized";
+      });
+    }
+
     saveState();
     if (consoleKey === "stats") {
       if (mode === "closed") stopStatsPolling();
@@ -475,9 +503,11 @@ function setupLogConsoleWindowControls() {
       state.stats.mode = consoleKey === "stats" ? "open" : "closed";
       saveState();
       render();
+      if (consoleKey === "server" || consoleKey === "poller") forceScrollLogsToBottom(consoleKey);
       return;
     }
     setMode(consoleKey, "open");
+    if (consoleKey === "server" || consoleKey === "poller") forceScrollLogsToBottom(consoleKey);
   };
 
   const toggleFromDock = (consoleKey) => {
@@ -513,6 +543,7 @@ function setupLogConsoleWindowControls() {
     });
     saveState();
     render();
+    if (consoleKey === "server" || consoleKey === "poller") forceScrollLogsToBottom(consoleKey);
   };
 
   const renderTaskbar = async () => {
@@ -674,6 +705,15 @@ function setupLogConsoleWindowControls() {
     }
     else if (action === "minimize") minimizeConsole(consoleKey);
     else if (action === "maximize") maximizeConsole(consoleKey);
+  });
+
+  // Clicking inside a log pane should jump to the latest logs.
+  splitEl.addEventListener("click", (ev) => {
+    const pane = ev.target?.closest?.(".admin-console-wrap");
+    if (!pane) return;
+    const id = pane.getAttribute("id") || "";
+    if (id === "serverConsolePane") forceScrollLogsToBottom("server");
+    else if (id === "pollerConsolePane") forceScrollLogsToBottom("poller");
   });
 
   render();
@@ -1267,6 +1307,8 @@ async function refreshLogs() {
       hint.textContent = adminEndpointErrorMessage(e, "Logs");
     }
   }
+
+  window.__adminEqualizePanes?.schedule?.();
 }
 
 async function refreshVisitors() {
@@ -1309,11 +1351,134 @@ function formatUptimeFromBootMs(bootTimeMs) {
   return `${m}m`;
 }
 
+function formatDurationFromMs(durationMs) {
+  if (!Number.isFinite(durationMs)) return "—";
+  if (durationMs < 0) return "—";
+  const s = Math.floor(durationMs / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function formatSinceDeployFromDeployTimeMs(deployTimeMs) {
+  if (!Number.isFinite(deployTimeMs)) return "—";
+  return formatDurationFromMs(Date.now() - deployTimeMs);
+}
+
 function setStatsHint(text, isWarn = false) {
   const hint = document.getElementById("adminStatsHint");
   if (!hint) return;
   hint.textContent = text || "";
   hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+}
+
+// When panes get narrow, toolbars can wrap and change the pane height.
+// Keep all visible panes the same height by matching the tallest.
+function setupEqualHeightConsolePanes() {
+  // On mobile we force fixed pane heights in CSS; this desktop-only logic can cause flicker.
+  if (window.matchMedia?.("(max-width: 768px)")?.matches) return;
+
+  const splitEl = document.getElementById("adminLogSplit");
+  if (!splitEl) return;
+
+  const isVisible = (el) => {
+    if (!el) return false;
+    try {
+      return window.getComputedStyle(el).display !== "none";
+    } catch {
+      return true;
+    }
+  };
+
+  let syncing = false;
+  let queued = false;
+
+  const sync = () => {
+    if (syncing) return;
+    syncing = true;
+    queued = false;
+
+    const panes = Array.from(splitEl.querySelectorAll(".admin-console-wrap"));
+
+    // Reset any previous equalization so measurements are natural.
+    panes.forEach((pane) => {
+      pane.style.height = "";
+      const consoleEl = pane.querySelector(".admin-console");
+      if (consoleEl) {
+        consoleEl.style.height = "";
+        consoleEl.style.minHeight = "";
+        consoleEl.style.maxHeight = "";
+      }
+      const panelBody = pane.querySelector(".admin-panel-body");
+      if (panelBody) {
+        panelBody.style.height = "";
+      }
+    });
+
+    // Measure tallest visible pane.
+    let maxH = 0;
+    const visiblePanes = panes.filter(isVisible);
+    visiblePanes.forEach((pane) => {
+      const h = pane.getBoundingClientRect()?.height ?? 0;
+      if (Number.isFinite(h) && h > maxH) maxH = h;
+    });
+    if (!maxH || !Number.isFinite(maxH)) {
+      syncing = false;
+      return;
+    }
+
+    // Apply: set pane height, then expand the body (console/panel body) to fill extra space.
+    visiblePanes.forEach((pane) => {
+      pane.style.height = `${Math.ceil(maxH)}px`;
+
+      const consoleEl = pane.querySelector(".admin-console");
+      if (consoleEl) {
+        // pane height includes titlebar + toolbar + console body.
+        const chromeH = pane.getBoundingClientRect().height - consoleEl.getBoundingClientRect().height;
+        const bodyH = Math.max(120, Math.floor(maxH - chromeH));
+        consoleEl.style.height = `${bodyH}px`;
+        consoleEl.style.minHeight = `${bodyH}px`;
+        consoleEl.style.maxHeight = `${bodyH}px`;
+      }
+
+      const panelBody = pane.querySelector(".admin-panel-body");
+      if (panelBody) {
+        const chromeH = pane.getBoundingClientRect().height - panelBody.getBoundingClientRect().height;
+        const bodyH = Math.max(120, Math.floor(maxH - chromeH));
+        panelBody.style.height = `${bodyH}px`;
+      }
+    });
+
+    syncing = false;
+  };
+
+  const schedule = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      // Let layout settle, then measure.
+      requestAnimationFrame(sync);
+    });
+  };
+
+  schedule();
+  window.addEventListener("resize", schedule);
+
+  // Observe size changes caused by toolbar wrapping, fonts, etc.
+  if (typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver(() => {
+      if (syncing) return;
+      schedule();
+    });
+    ro.observe(splitEl);
+    Array.from(splitEl.querySelectorAll(".admin-console-wrap")).forEach((pane) => ro.observe(pane));
+  }
+
+  // Expose a tiny hook so open/close/minimize/maximize can re-sync after animations.
+  window.__adminEqualizePanes = { schedule };
 }
 
 function renderStatsCards(payload) {
@@ -1328,8 +1493,9 @@ function renderStatsCards(payload) {
   const cards = [
     { key: "cpu", k: "CPU", v: `${formatPercent(cpu.percent)}` },
     { key: "uptime", k: "Uptime", v: formatUptimeFromBootMs(payload?.system?.bootTimeMs) },
-    { key: "ram", k: "RAM", v: `${formatPercent(mem.usedPercent)} · ${formatBytesMb(mem.usedMb)} / ${formatBytesMb(mem.totalMb)}` },
+    { key: "sinceDeploy", k: "Since deploy", v: formatSinceDeployFromDeployTimeMs(payload?.app?.deployTimeMs) },
     { key: "swap", k: "Swap", v: `${formatPercent(swap.usedPercent)} · ${formatBytesMb(swap.usedMb)} / ${formatBytesMb(swap.totalMb)}` },
+    { key: "ram", k: "RAM", v: `${formatPercent(mem.usedPercent)} · ${formatBytesMb(mem.usedMb)} / ${formatBytesMb(mem.totalMb)}` },
     { key: "net", k: "Network I/O", v: `${formatBytesMb(net.rxMb)} ↓ / ${formatBytesMb(net.txMb)} ↑` },
   ];
 
@@ -1342,6 +1508,8 @@ function renderStatsCards(payload) {
     </div>`,
     )
     .join("");
+
+  window.__adminEqualizePanes?.schedule?.();
 }
 
 async function refreshStats() {
@@ -1487,6 +1655,7 @@ function main() {
   setupMapResize();
   setupLogConsoleWindowControls();
   setupLogSplitView();
+  setupEqualHeightConsolePanes();
   refreshLogs();
   if (shouldPollStatsFromStorage()) startStatsPolling();
   else stopStatsPolling();
