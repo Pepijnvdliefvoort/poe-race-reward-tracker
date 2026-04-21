@@ -10,7 +10,7 @@ It has 2 parts:
 
 ## Project Layout
 
-- `poll_item_prices.py`: polling loop and CSV writer
+- `poller/`: trade API polling package — run as `python -m poller` from the repo root (`poll_item_prices.py`, `sale_inference_engine.py`)
 - `items.txt`: tracked items (one per line, with optional mode)
 - `price_poll.csv`: generated historical output
 - `server/`: dashboard HTTP server (`server.py` entrypoint), `http_handler.py`, and `data_service.py` (CSV/API payload)
@@ -45,16 +45,16 @@ python -m venv .venv
 pip install requests
 ```
 
-2. Run the poller (writes to `price_poll.csv`):
+2. Run the poller (writes to `price_poll.csv`; working directory must be the repo root):
 
 ```powershell
-python poll_item_prices.py
+python -m poller
 ```
 
 Optional custom interval (seconds):
 
 ```powershell
-python poll_item_prices.py --poll-interval 1800
+python -m poller --poll-interval 1800
 ```
 
 3. In another terminal, run the dashboard server:
@@ -95,6 +95,7 @@ Headhunter|any
 - query id
 - total/used listings
 - mirror and divine low/median/high summaries
+- sale inference counts from `poller/sale_inference_engine.py` (see `sale_inference_state.json` beside the CSV): `inference_confirmed_transfer`, `inference_likely_instant_sale`, `inference_relist_same_seller`, `inference_non_instant_removed`, `inference_reprice_same_seller`, `inference_multi_seller_same_fingerprint`, `inference_new_listing_rows` (inference uses all listing IDs returned by trade search, up to `INFERENCE_LISTINGS_FETCH_CAP` in `poller/poll_item_prices.py`; pricing and the listing hover preview stay on the top `TOP_IDS_LIMIT` fetches)
 
 If the CSV header does not match the current schema, the poller creates a backup and writes a fresh file with the expected header.
 
@@ -132,8 +133,9 @@ Set it through an environment secret:
 
 ## Notes
 
+- Run the poller with `python -m poller` from the **repository root** so `items.txt`, `config.json`, and `web/listings_cache.json` resolve as before. The dashboard’s in-process poller and the VPS systemd unit use the same form.
 - Poll timing is aligned to a fixed start-time grid, not just "sleep N seconds after completion".
-- The script includes adaptive rate-limit pacing using response headers.
+- The poller includes adaptive rate-limit pacing using response headers.
 - Stop either process with `Ctrl+C`.
 
 ## Deploy On A VPS
@@ -141,7 +143,7 @@ Set it through an environment secret:
 This project runs well on a small VPS with two always-on services:
 
 - `server/server.py` (dashboard + API)
-- `poll_item_prices.py` (CSV poller)
+- `python -m poller` (CSV poller; systemd unit uses this form)
 
 Use the full step-by-step deployment guide here:
 
@@ -161,7 +163,7 @@ sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
 
-Re-copying the unit files keeps systemd aligned with the repo (for example the dashboard entrypoint `server/server.py`).
+Re-copying the unit files keeps systemd aligned with the repo (for example the dashboard entrypoint `server/server.py` and the poller’s `python -m poller` `ExecStart`).
 
 Automatic deploy is also supported via GitHub Actions. See:
 

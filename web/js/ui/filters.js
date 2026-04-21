@@ -78,7 +78,7 @@ export function reorderFavoritesFirst(items) {
  * Check if any manual sort is currently applied.
  */
 export function isManualSortActive() {
-    return Boolean(state.filters.priceSort || state.filters.trendSort);
+    return Boolean(state.filters.priceSort || state.filters.trendSort || state.filters.soldSort);
 }
 
 /**
@@ -89,6 +89,7 @@ export function hasActiveFilters() {
         state.filters.search ||
         state.filters.priceSort ||
         state.filters.trendSort ||
+        state.filters.soldSort ||
         state.filters.favoritesOnly ||
         isPriceRangeActive()
     );

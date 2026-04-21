@@ -123,7 +123,7 @@ sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
 
-The `cp` lines keep `/etc/systemd/system` in sync when `ExecStart` or other unit fields change (for example after moving the dashboard from `web/server.py` to `server/server.py`).
+The `cp` lines keep `/etc/systemd/system` in sync when `ExecStart` or other unit fields change (for example after moving the dashboard from `web/server.py` to `server/server.py`, or after changing the poller entry from `poll_item_prices.py` to `python -m poller`).
 
 ## 10. Automatic Deploy On Every Push (Recommended)
 

@@ -2,9 +2,8 @@
 
 ## Code Quality & DevOps
 - [ ] Test coverage: Add unit/integration tests for the poller and API
-- [ ] Monitoring/alerting: Add uptime checks and automatic restart on crash
 
 ## Data related
-- [ ] Get more listings for cheaper items that may be in divines instead of mirrors
-- [ ] Volume sold in timespan (3 months)
-- [ ] Make timespan configurable
+- [x] Sale inference rules engine (`poller/sale_inference_engine.py`, CSV columns + `sale_inference_state.json`)
+- [ ] Volume sold in timespan (optional: aggregate inference_* columns over windows)
+- [ ] AI companion

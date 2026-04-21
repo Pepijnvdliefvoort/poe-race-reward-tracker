@@ -14,6 +14,13 @@ from typing import Any
 
 import requests
 
+from .sale_inference_engine import (
+    listing_signals_from_fetch,
+    load_inference_state,
+    run_inference_for_item,
+    save_inference_state,
+)
+
 BASE_URL = "https://www.pathofexile.com/api/trade"
 DEFAULT_LEAGUE = "Standard"
 DEFAULT_ITEMS_FILE = "items.txt"
@@ -22,6 +29,10 @@ DEFAULT_CONFIG_FILE = "config.json"
 DEFAULT_LISTINGS_CACHE_FILE = Path("web") / "listings_cache.json"
 LISTINGS_CACHE_MAX_ENTRIES = 1000
 TOP_IDS_LIMIT = 25
+# Trade search returns a bounded `result` id list (GGG caps the page; 100 matches common use).
+# Tracked items here stay under that depth, so this fetches every ID returned for inference.
+# Pricing/listing preview stay on TOP_IDS_LIMIT above.
+INFERENCE_LISTINGS_FETCH_CAP = 100
 DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
@@ -48,6 +59,14 @@ CSV_HEADER = [
     "lowest_divine",
     "median_divine",
     "highest_divine",
+    # Sale inference rules engine (see poller/sale_inference_engine.py)
+    "inference_confirmed_transfer",
+    "inference_likely_instant_sale",
+    "inference_relist_same_seller",
+    "inference_non_instant_removed",
+    "inference_reprice_same_seller",
+    "inference_multi_seller_same_fingerprint",
+    "inference_new_listing_rows",
 ]
 
 # Proactive safety margin over the natural allowed request pace.
@@ -238,9 +257,10 @@ class ItemSpec:
 
 def parse_args() -> Config:
     parser = argparse.ArgumentParser(
+        prog="python -m poller",
         description=(
             "Continuously poll PoE trade prices for unique items listed in items.txt and append summaries to CSV."
-        )
+        ),
     )
     parser.add_argument(
         "--poll-interval",
@@ -609,24 +629,21 @@ def find_first_priced_listing(listings: list[dict[str, Any]]) -> tuple[str, floa
     return None
 
 
-def fetch_top_listings(
+def _fetch_listing_entries_batched(
     session: requests.Session,
     rate_limiter: AdaptiveRateLimiter,
     query_id: str,
-    result_ids: list[str],
+    ids: list[str],
 ) -> list[dict[str, Any]]:
-    # The trade fetch endpoint has a practical per-request ID limit.
-    # We fetch up to TOP_IDS_LIMIT in small batches to keep summaries robust
-    # (median/high) while still showing only a small preview in the UI.
-    top_ids = [x for x in result_ids[:TOP_IDS_LIMIT] if isinstance(x, str)]
-    if not top_ids:
+    """GET /fetch in batches of 10 (API limit per request)."""
+    if not ids:
         return []
 
     all_results: list[dict[str, Any]] = []
     url_base = f"{BASE_URL}/fetch/"
     batch_size = 10
-    for i in range(0, len(top_ids), batch_size):
-        batch = top_ids[i : i + batch_size]
+    for i in range(0, len(ids), batch_size):
+        batch = ids[i : i + batch_size]
         ids_joined = ",".join(batch)
         url = f"{url_base}{ids_joined}"
         rate_limiter.wait_before_request()
@@ -641,6 +658,30 @@ def fetch_top_listings(
         all_results.extend(result)
 
     return all_results
+
+
+def fetch_top_listings(
+    session: requests.Session,
+    rate_limiter: AdaptiveRateLimiter,
+    query_id: str,
+    result_ids: list[str],
+) -> list[dict[str, Any]]:
+    # The trade fetch endpoint has a practical per-request ID limit.
+    # We fetch up to TOP_IDS_LIMIT in small batches to keep summaries robust
+    # (median/high) while still showing only a small preview in the UI.
+    top_ids = [x for x in result_ids[:TOP_IDS_LIMIT] if isinstance(x, str)]
+    return _fetch_listing_entries_batched(session, rate_limiter, query_id, top_ids)
+
+
+def fetch_listings_for_inference(
+    session: requests.Session,
+    rate_limiter: AdaptiveRateLimiter,
+    query_id: str,
+    result_ids: list[str],
+) -> list[dict[str, Any]]:
+    """All listing payloads returned by search (same order), up to INFERENCE_LISTINGS_FETCH_CAP."""
+    ids = [x for x in result_ids if isinstance(x, str)][:INFERENCE_LISTINGS_FETCH_CAP]
+    return _fetch_listing_entries_batched(session, rate_limiter, query_id, ids)
 
 
 def _median_absolute_deviation(values: list[float], median_value: float) -> float:
@@ -1208,6 +1249,13 @@ def append_summary_row(
     lowest_divine: float | None,
     median_divine: float | None,
     highest_divine: float | None,
+    inference_confirmed_transfer: int,
+    inference_likely_instant_sale: int,
+    inference_relist_same_seller: int,
+    inference_non_instant_removed: int,
+    inference_reprice_same_seller: int,
+    inference_multi_seller_same_fingerprint: int,
+    inference_new_listing_rows: int,
 ) -> None:
     with path.open("a", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -1229,6 +1277,13 @@ def append_summary_row(
                 "" if lowest_divine is None else f"{lowest_divine:.4f}",
                 "" if median_divine is None else f"{median_divine:.4f}",
                 "" if highest_divine is None else f"{highest_divine:.4f}",
+                str(inference_confirmed_transfer),
+                str(inference_likely_instant_sale),
+                str(inference_relist_same_seller),
+                str(inference_non_instant_removed),
+                str(inference_reprice_same_seller),
+                str(inference_multi_seller_same_fingerprint),
+                str(inference_new_listing_rows),
             ]
         )
 
@@ -1247,6 +1302,8 @@ def run_cycle(
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
     listings_by_query_id = load_listings_cache(listings_cache_file)
+    inference_state_path = output_csv.with_name("sale_inference_state.json")
+    inference_root = load_inference_state(inference_state_path)
 
     # Fetch Mirror of Kalandra price first so the live ratio is ready before item processing.
     new_mirror_ratio = fetch_mirror_divine_median(session, rate_limiter)
@@ -1261,9 +1318,31 @@ def run_cycle(
         request_timestamp_utc = datetime.now(timezone.utc).isoformat()
         query_id, result_ids, total_results = search_item(session, rate_limiter, item)
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
+        listings_inference = fetch_listings_for_inference(session, rate_limiter, query_id, result_ids)
         cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
         top_listing_summary = build_top_listing_summary(listings, divines_per_mirror)
         listing_preview_rows = build_listing_preview_entries(listings)
+        inference_signals = listing_signals_from_fetch(listings_inference, divines_per_mirror)
+        for idx, row in enumerate(listing_preview_rows):
+            if idx < len(inference_signals):
+                row["fingerprint"] = inference_signals[idx]["fingerprint"]
+
+        item_key = f"{item.name}::{item_mode_token(item)}"
+        inf = run_inference_for_item(
+            root=inference_root,
+            item_key=item_key,
+            cycle=cycle,
+            curr_signals=inference_signals,
+        )
+        (
+            xfer,
+            instant,
+            relist,
+            nib,
+            repr_seller,
+            multi_fp,
+            new_rows,
+        ) = inf.to_csv_tuple()
 
         listings_by_query_id[query_id] = {
             "queryId": query_id,
@@ -1271,6 +1350,17 @@ def run_cycle(
             "totalResults": total_results,
             "listings": listing_preview_rows,
             "updatedAt": request_timestamp_utc,
+            "inference": {
+                "confirmedTransfer": inf.confirmed_transfer,
+                "likelyInstantSale": inf.likely_instant_sale,
+                "relistSameSeller": inf.relist_same_seller,
+                "nonInstantRemoved": inf.non_instant_removed,
+                "repriceSameSeller": inf.reprice_same_seller,
+                "multiSellerSameFingerprint": inf.multi_seller_same_fingerprint,
+                "newListingRows": inf.new_listing_rows,
+                "fetchedForInference": len(listings_inference),
+                "events": inf.events[:12],
+            },
         }
 
         raw_mirror_prices, divine_prices, unsupported_count = extract_listing_prices(listings)
@@ -1320,6 +1410,13 @@ def run_cycle(
             lowest_divine=low_divine,
             median_divine=median_divine,
             highest_divine=high_divine,
+            inference_confirmed_transfer=xfer,
+            inference_likely_instant_sale=instant,
+            inference_relist_same_seller=relist,
+            inference_non_instant_removed=nib,
+            inference_reprice_same_seller=repr_seller,
+            inference_multi_seller_same_fingerprint=multi_fp,
+            inference_new_listing_rows=new_rows,
         )
 
         listings_by_query_id = prune_listings_cache(listings_by_query_id)
@@ -1333,7 +1430,6 @@ def run_cycle(
         elif not alert_config.enabled:
             pass  # Skip alert processing if disabled
         else:
-            item_key = f"{item.name}::{item_mode_token(item)}"
             history = price_history.setdefault(item_key, [])
 
             if median_mirror is not None and low_mirror is not None and len(history) >= alert_config.history_cycles:
@@ -1401,9 +1497,15 @@ def run_cycle(
             f"[{index_label}] [{display_time}] {name_field} {mode_field} "
             f"{total_field}   cheapest={cheapest_text}"
         )
+        if xfer or instant or relist or nib or repr_seller or multi_fp or new_rows:
+            print(
+                f"         inference: xfer={xfer} instant_sale={instant} relist={relist} "
+                f"non_instant_offline?={nib} reprice={repr_seller} multi_seller_fp={multi_fp} new_rows={new_rows}"
+            )
 
     listings_by_query_id = prune_listings_cache(listings_by_query_id)
     write_listings_cache(listings_cache_file, listings_by_query_id)
+    save_inference_state(inference_state_path, inference_root)
 
     return divines_per_mirror
 
@@ -1418,7 +1520,7 @@ def seconds_until_next_tick(start_monotonic: float, delay_seconds: int, now_mono
 def _install_poller_log_tee() -> None:
     import sys
 
-    server_dir = Path(__file__).resolve().parent / "server"
+    server_dir = Path(__file__).resolve().parent.parent / "server"
     sd = str(server_dir)
     if sd not in sys.path:
         sys.path.insert(0, sd)
@@ -1507,8 +1609,3 @@ def main() -> None:
         time.sleep(sleep_seconds)
 
 
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nStopped by user.")

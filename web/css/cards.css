@@ -119,6 +119,7 @@
   font-weight: 500;
   padding: 4px 6px;
   border-radius: 4px;
+  white-space: pre-line;
 }
 
 .chart-wrap {
@@ -127,6 +128,20 @@
   background: rgba(9, 12, 18, 0.92);
   border-radius: 3px;
   padding: 3px;
+}
+
+.card-sales-summary {
+  margin-top: 4px;
+  padding: 3px 4px 2px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: rgba(200, 220, 245, 0.88);
+  text-align: center;
+  border-radius: 3px;
+  background: rgba(12, 16, 24, 0.55);
+  border: 1px solid rgba(100, 140, 190, 0.22);
 }
 
 .trend {
@@ -437,6 +452,12 @@
 :root.light-theme .chart-wrap {
   background: rgba(250, 252, 255, 0.95);
   border-color: rgba(255, 140, 0, 0.4);
+}
+
+:root.light-theme .card-sales-summary {
+  color: rgba(70, 95, 130, 0.95);
+  background: rgba(248, 250, 255, 0.9);
+  border-color: rgba(100, 130, 170, 0.2);
 }
 
 :root.light-theme .trend {

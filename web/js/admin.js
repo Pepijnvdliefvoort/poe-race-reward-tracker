@@ -1548,7 +1548,7 @@ function setupClearData() {
 
   btn.addEventListener("click", async () => {
     const ok = window.confirm(
-      "This will clear:\n\n- web/listings_cache.json (deleted)\n- price_poll.csv (keeps the header row)\n\nContinue?",
+      "This will clear:\n\n- web/listings_cache.json (deleted)\n- price_poll.csv (keeps the header row)\n- sale_inference_state.json (deleted)\n\nContinue?",
     );
     if (!ok) return;
 
@@ -1559,7 +1559,8 @@ function setupClearData() {
       const cleared = payload?.cleared || {};
       const csv = cleared.pricePollCsv ? "price_poll.csv" : null;
       const cache = cleared.listingsCache ? "listings_cache.json" : null;
-      const names = [csv, cache].filter(Boolean).join(", ");
+      const inf = cleared.saleInferenceState ? "sale_inference_state.json" : null;
+      const names = [csv, cache, inf].filter(Boolean).join(", ");
       setHint(names ? `Cleared: ${names}` : "Cleared.");
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Clear data"), true);

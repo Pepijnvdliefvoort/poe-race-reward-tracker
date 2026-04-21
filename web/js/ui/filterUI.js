@@ -69,6 +69,9 @@ export function syncFilterControlsFromState() {
     dom.searchInput.value = state.filters.search;
     dom.priceSortSelect.value = state.filters.priceSort;
     dom.trendSortSelect.value = state.filters.trendSort;
+    if (dom.soldSortSelect) {
+        dom.soldSortSelect.value = state.filters.soldSort;
+    }
     dom.favoritesOnlyInput.checked = state.filters.favoritesOnly;
     syncPriceRangeFromState();
 
@@ -130,6 +133,13 @@ export function registerFilterEventListeners() {
     // Trend sort
     dom.trendSortSelect.addEventListener("change", (e) => {
         state.filters.trendSort = e.target.value;
+        saveFilters();
+        applyFiltersAndRender();
+    });
+
+    // Est. sold (chart window)
+    dom.soldSortSelect?.addEventListener("change", (e) => {
+        state.filters.soldSort = e.target.value;
         saveFilters();
         applyFiltersAndRender();
     });
@@ -207,6 +217,7 @@ export function registerFilterEventListeners() {
         state.filters.search = "";
         state.filters.priceSort = "";
         state.filters.trendSort = "";
+        state.filters.soldSort = "";
         state.filters.favoritesOnly = false;
         state.filters.priceMin = 0;
         state.filters.priceMax = 100;

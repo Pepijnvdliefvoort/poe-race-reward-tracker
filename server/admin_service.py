@@ -111,7 +111,7 @@ def _kill_external_pollers() -> dict[str, Any]:
     """
     Kill pollers not owned by this server process.
 
-    This is primarily for local dev: if you start `poll_item_prices.py` manually in a
+    This is primarily for local dev: if you start ``python -m poller`` manually in a
     PowerShell window, hitting "restart" should not create a second poller.
     """
     killed: list[int] = []
@@ -121,13 +121,14 @@ def _kill_external_pollers() -> dict[str, Any]:
         # Use PowerShell to find and kill *any* poller processes.
         #
         # Local dev often starts the poller as:
-        #   python.exe poll_item_prices.py
-        # which does not include the full repo path in the command line, so we
-        # match on the script name only. This keeps "Restart poller" from ever
-        # spawning a second concurrent poller.
+        #   python.exe -m poller
+        # Match module style and legacy script path for migration.
         script = r"""
 $procs = Get-CimInstance Win32_Process | Where-Object {
-  $_.CommandLine -and ($_.CommandLine -match "poll_item_prices\.py")
+  $_.CommandLine -and (
+    ($_.CommandLine -match "poll_item_prices\.py") -or
+    ($_.CommandLine -match "-m\s+poller\b")
+  )
 }
 foreach ($p in $procs) {
   try {
@@ -165,7 +166,7 @@ foreach ($p in $procs) {
         # On Linux, systemd is the preferred mode. This is fallback-only.
         try:
             p = subprocess.run(
-                ["pgrep", "-f", "poll_item_prices.py"],
+                ["pgrep", "-f", "poll_item_prices.py|-m poller"],
                 capture_output=True,
                 text=True,
                 timeout=6.0,
@@ -203,9 +204,7 @@ class PollerManager:
         self._last_start_ts: float | None = None
 
     def _default_cmd(self) -> list[str]:
-        repo_root = Path(__file__).resolve().parent.parent
-        script = repo_root / "poll_item_prices.py"
-        return [sys.executable, str(script)]
+        return [sys.executable, "-m", "poller"]
 
     def _build_cmd(self) -> list[str]:
         raw = (os.environ.get("POE_POLLER_CMD") or "").strip()
@@ -350,7 +349,11 @@ def poller_autostart_enabled() -> bool:
 _DEFAULT_PRICE_POLL_HEADER = (
     "timestamp_utc,cycle,item_name,item_mode,query_id,total_results,used_results,"
     "unsupported_price_count,mirror_count,lowest_mirror,median_mirror,highest_mirror,"
-    "divine_count,lowest_divine,median_divine,highest_divine\n"
+    "divine_count,lowest_divine,median_divine,highest_divine,"
+    "inference_confirmed_transfer,inference_likely_instant_sale,"
+    "inference_relist_same_seller,inference_non_instant_removed,"
+    "inference_reprice_same_seller,inference_multi_seller_same_fingerprint,"
+    "inference_new_listing_rows\n"
 )
 
 
@@ -711,9 +714,11 @@ def clear_market_data(*, listings_cache_path: Path, csv_path: Path) -> dict[str,
 
     - listings_cache.json: delete if present (dashboard will treat as cache-miss)
     - price_poll.csv: truncate to header only (preserves column names for downstream readers)
+    - sale_inference_state.json: delete if present (resets sale inference rules engine state)
     """
     cleared_cache = False
     cleared_csv = False
+    cleared_inference = False
 
     try:
         if listings_cache_path.exists():
@@ -721,6 +726,14 @@ def clear_market_data(*, listings_cache_path: Path, csv_path: Path) -> dict[str,
         cleared_cache = True
     except OSError:
         cleared_cache = False
+
+    inference_path = csv_path.with_name("sale_inference_state.json")
+    try:
+        if inference_path.exists():
+            inference_path.unlink()
+        cleared_inference = True
+    except OSError:
+        cleared_inference = False
 
     header = _DEFAULT_PRICE_POLL_HEADER
     if csv_path.exists():
@@ -743,6 +756,7 @@ def clear_market_data(*, listings_cache_path: Path, csv_path: Path) -> dict[str,
         "cleared": {
             "listingsCache": cleared_cache,
             "pricePollCsv": cleared_csv,
+            "saleInferenceState": cleared_inference,
         }
     }
 

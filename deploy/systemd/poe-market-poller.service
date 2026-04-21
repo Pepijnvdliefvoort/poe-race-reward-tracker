@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/opt/poe-market-flips
-ExecStart=/opt/poe-market-flips/.venv/bin/python poll_item_prices.py --poll-interval 3600
+ExecStart=/opt/poe-market-flips/.venv/bin/python -m poller --poll-interval 3600
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1

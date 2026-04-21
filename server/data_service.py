@@ -48,6 +48,32 @@ def save_config(data: dict) -> None:
         json.dump(merged, fh, indent=2)
 
 
+def _parse_nonneg_int(value: str | None) -> int:
+    if value is None:
+        return 0
+    v = str(value).strip()
+    if not v:
+        return 0
+    try:
+        n = int(float(v))
+    except ValueError:
+        return 0
+    return max(0, n)
+
+
+def _parse_signed_int(value: str | None) -> int:
+    """Like int() parse for CSV fields; negatives allowed (e.g. inference relist undo)."""
+    if value is None:
+        return 0
+    v = str(value).strip()
+    if not v:
+        return 0
+    try:
+        return int(float(v))
+    except ValueError:
+        return 0
+
+
 def _parse_float(value: str) -> float | None:
     if value is None:
         return None
@@ -487,6 +513,15 @@ def load_price_data() -> dict[str, Any]:
                 "highestDivine": _parse_float(row.get("highest_divine") or ""),
                 "totalResults": int(row.get("total_results") or 0),
                 "usedResults": int(row.get("used_results") or 0),
+                "inferenceConfirmedTransfer": _parse_nonneg_int(row.get("inference_confirmed_transfer")),
+                "inferenceLikelyInstantSale": _parse_signed_int(row.get("inference_likely_instant_sale")),
+                "inferenceRelistSameSeller": _parse_nonneg_int(row.get("inference_relist_same_seller")),
+                "inferenceNonInstantRemoved": _parse_nonneg_int(row.get("inference_non_instant_removed")),
+                "inferenceRepriceSameSeller": _parse_nonneg_int(row.get("inference_reprice_same_seller")),
+                "inferenceMultiSellerSameFingerprint": _parse_nonneg_int(
+                    row.get("inference_multi_seller_same_fingerprint")
+                ),
+                "inferenceNewListingRows": _parse_nonneg_int(row.get("inference_new_listing_rows")),
             }
             series["points"].append(point)
             # Only update 'latest' if this point has a valid price (lowestMirror not None/NaN)

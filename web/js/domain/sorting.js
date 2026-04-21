@@ -1,3 +1,5 @@
+import { getChartTimespanMs } from "../core/state.js";
+import { aggregateInferenceSignalsOverWindow, estimatedSoldCount } from "./inferenceStats.js";
 import { getAvailableLowestPrice } from "./pricing.js";
 import { getTrendDirection, getTrendPercentage } from "./trends.js";
 
@@ -48,6 +50,20 @@ function compareTrendLowest(a, b) {
   return getTrendPercentage(a) - getTrendPercentage(b);
 }
 
+function estimatedSoldForChartWindow(item) {
+  const spanMs = getChartTimespanMs();
+  const agg = aggregateInferenceSignalsOverWindow(item?.points, spanMs);
+  return estimatedSoldCount(agg);
+}
+
+function compareSoldHigh(a, b) {
+  return estimatedSoldForChartWindow(b) - estimatedSoldForChartWindow(a);
+}
+
+function compareSoldLow(a, b) {
+  return estimatedSoldForChartWindow(a) - estimatedSoldForChartWindow(b);
+}
+
 export function applySorting(filtered, filters) {
   if (filters.priceSort === "asc") {
     filtered.sort((a, b) => compareByPriceWithMissingLast(a, b, "asc"));
@@ -59,6 +75,12 @@ export function applySorting(filtered, filters) {
     filtered.sort((a, b) => compareTrendHighest(a, b));
   } else if (filters.trendSort === "lowest") {
     filtered.sort((a, b) => compareTrendLowest(a, b));
+  }
+
+  if (filters.soldSort === "high") {
+    filtered.sort((a, b) => compareSoldHigh(a, b));
+  } else if (filters.soldSort === "low") {
+    filtered.sort((a, b) => compareSoldLow(a, b));
   }
 
   return filtered;

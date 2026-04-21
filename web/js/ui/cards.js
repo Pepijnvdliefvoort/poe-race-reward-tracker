@@ -8,6 +8,7 @@ import {
     saveFavorites,
     state,
 } from "../core/state.js";
+import { aggregateInferenceSignalsOverWindow, formatEstimatedSoldLine } from "../domain/inferenceStats.js";
 import { getAvailableLowestPrice } from "../domain/pricing.js";
 import { formatNumber, formatTime, getChartSeriesWithPrediction } from "../core/utils.js";
 import { stopListingsPopover, wireListingsPopover } from "../cards/listingsPopover.js";
@@ -120,6 +121,11 @@ export function ensureCard(item, onFavoriteToggle) {
   const canvas = document.createElement("canvas");
   chartWrap.appendChild(canvas);
 
+  const salesSummary = document.createElement("div");
+  salesSummary.className = "card-sales-summary";
+  salesSummary.setAttribute("aria-label", "Estimated number of sales over chart filter window");
+  salesSummary.hidden = true;
+
   const trend = document.createElement("div");
   trend.className = "trend";
   const trendLabel = document.createElement("span");
@@ -158,7 +164,7 @@ export function ensureCard(item, onFavoriteToggle) {
   trend.append(trendLabel, trendIndicator, listingsHoverArea);
 
   artFrame.prepend(favoriteBtn);
-  card.append(title, artFrame, priceBox, chartWrap, trend);
+  card.append(title, artFrame, priceBox, chartWrap, salesSummary, trend);
   dom.cardsEl.appendChild(card);
 
   ensureTooltipOffsetPositioner();
@@ -269,6 +275,7 @@ export function ensureCard(item, onFavoriteToggle) {
     img,
     artFrame,
     priceBox,
+    salesSummary,
     trend,
     trendIndicator,
     trendListings,
@@ -304,6 +311,7 @@ export function updateCard(item, onFavoriteToggle) {
     img,
     artFrame,
     priceBox,
+    salesSummary,
     trend,
     trendIndicator,
     trendListings,
@@ -383,6 +391,17 @@ export function updateCard(item, onFavoriteToggle) {
         ? `Price: ${formatNumber(low)} mirror`
         : "Price: n/a";
   priceBox.textContent = priceText;
+
+  const spanMs = getChartTimespanMs();
+  const agg = aggregateInferenceSignalsOverWindow(item.points, spanMs);
+  const soldLine = formatEstimatedSoldLine(agg);
+  if (soldLine) {
+    salesSummary.textContent = soldLine;
+    salesSummary.hidden = false;
+  } else {
+    salesSummary.textContent = "";
+    salesSummary.hidden = true;
+  }
 
   let trendSymbol = "-";
   let trendClass = "flat";

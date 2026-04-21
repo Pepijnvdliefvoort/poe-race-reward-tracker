@@ -2,7 +2,7 @@
 # Deploy script run on the VPS (see .github/workflows/deploy-vps.yml).
 # Expects repo at APP_DIR with:
 #   - Dashboard: server/server.py (WorkingDirectory=APP_DIR; static files from web/)
-#   - Poller:    poll_item_prices.py
+#   - Poller:    python -m poller (package under poller/)
 set -euo pipefail
 
 APP_DIR="/opt/poe-market-flips"

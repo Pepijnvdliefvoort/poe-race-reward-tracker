@@ -35,5 +35,6 @@ Thumbs.db
 
 # Local runtime/output files
 price_poll.csv
+sale_inference_state.json
 listings_cache.json
 logs/

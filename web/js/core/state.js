@@ -21,6 +21,7 @@ const DEFAULT_FILTERS = {
   search: "",
   priceSort: "",
   trendSort: "",
+  soldSort: "",
   favoritesOnly: false,
   priceMin: 0,
   priceMax: 100,
@@ -44,6 +45,7 @@ export const dom = {
   searchClearBtn: document.getElementById("searchClearBtn"),
   priceSortSelect: document.getElementById("priceSort"),
   trendSortSelect: document.getElementById("trendSort"),
+  soldSortSelect: document.getElementById("soldSort"),
   favoritesOnlyInput: document.getElementById("favoritesOnly"),
   priceRangeMinInput: document.getElementById("priceRangeMin"),
   priceRangeMaxInput: document.getElementById("priceRangeMax"),
@@ -69,7 +71,7 @@ export const state = {
 };
 
 /**
- * Milliseconds of history to include in line charts (and trend sort), from filter state.
+ * Milliseconds of history to include in line charts, trend sort, and est. sold sort, from filter state.
  * Returns `Infinity` for the "all time" preset (no lower time bound).
  */
 export function getChartTimespanMs() {
@@ -144,6 +146,7 @@ export function loadFilters() {
       priceSort: parsed.priceSort === "asc" || parsed.priceSort === "desc" ? parsed.priceSort : "",
       trendSort:
         parsed.trendSort === "highest" || parsed.trendSort === "lowest" ? parsed.trendSort : "",
+      soldSort: parsed.soldSort === "high" || parsed.soldSort === "low" ? parsed.soldSort : "",
       favoritesOnly: Boolean(parsed.favoritesOnly),
       priceMin: normalizedMin,
       priceMax: normalizedMax,
@@ -163,6 +166,7 @@ export function saveFilters() {
       search: state.filters.search,
       priceSort: state.filters.priceSort,
       trendSort: state.filters.trendSort,
+      soldSort: state.filters.soldSort,
       favoritesOnly: state.filters.favoritesOnly,
       priceMin: state.filters.priceMin,
       priceMax: state.filters.priceMax,
