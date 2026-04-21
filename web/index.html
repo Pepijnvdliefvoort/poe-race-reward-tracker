@@ -121,6 +121,33 @@
               </div>
             </div>
           </div>
+          <div class="filter-group filter-group-timespan">
+            <label for="chartTimespanPreset">Chart period</label>
+            <select id="chartTimespanPreset">
+              <option value="1w">1 week</option>
+              <option value="1m">1 month</option>
+              <option value="3m" selected>3 months</option>
+              <option value="6m">6 months</option>
+              <option value="all">All time</option>
+              <option value="custom">Custom</option>
+            </select>
+            <div id="chartTimespanCustomWrap" class="chart-timespan-custom-wrap" hidden>
+              <input
+                type="number"
+                id="chartTimespanAmount"
+                class="chart-timespan-amount"
+                min="1"
+                step="1"
+                value="3"
+                aria-label="Custom chart period amount"
+              />
+              <select id="chartTimespanUnit" aria-label="Custom chart period unit">
+                <option value="day">day(s)</option>
+                <option value="week">week(s)</option>
+                <option value="month" selected>month(s)</option>
+              </select>
+            </div>
+          </div>
           <button id="resetFiltersBtn" class="reset-filters-btn" title="Clear all filters">Reset Filters</button>
           <button id="applyFiltersBtn" class="apply-filters-btn" title="Apply filters">Apply</button>
         </div>

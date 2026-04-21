@@ -8,9 +8,47 @@ import {
 import { dom, saveFilters, state } from "../core/state.js";
 import { applyFiltersAndRender } from "./renderer.js";
 
+const CUSTOM_AMOUNT_MAX = { day: 730, week: 104, month: 24 };
+
 /**
  * Manages filter UI controls and event listeners.
  */
+
+function syncChartTimespanCustomVisibility() {
+    const wrap = dom.chartTimespanCustomWrap;
+    const preset = state.filters.chartTimespanPreset;
+    if (!wrap) {
+        return;
+    }
+    if (preset === "custom") {
+        wrap.removeAttribute("hidden");
+    } else {
+        wrap.setAttribute("hidden", "");
+    }
+}
+
+function clampChartCustomAmount(rawAmount, unit) {
+    const u = unit === "day" || unit === "week" || unit === "month" ? unit : "month";
+    const max = CUSTOM_AMOUNT_MAX[u];
+    const n = Math.round(Number(rawAmount));
+    if (!Number.isFinite(n)) {
+        return 3;
+    }
+    return Math.min(max, Math.max(1, n));
+}
+
+function applyChartCustomFromInputs() {
+    const unit = dom.chartTimespanUnitSelect?.value || state.filters.chartTimespanCustomUnit;
+    const validUnit = unit === "day" || unit === "week" || unit === "month" ? unit : "month";
+    state.filters.chartTimespanCustomUnit = validUnit;
+    state.filters.chartTimespanCustomAmount = clampChartCustomAmount(dom.chartTimespanAmountInput?.value, validUnit);
+    if (dom.chartTimespanAmountInput) {
+        dom.chartTimespanAmountInput.value = String(state.filters.chartTimespanCustomAmount);
+    }
+    if (dom.chartTimespanUnitSelect) {
+        dom.chartTimespanUnitSelect.value = state.filters.chartTimespanCustomUnit;
+    }
+}
 
 /**
  * Update the search clear button visibility based on input value.
@@ -33,6 +71,17 @@ export function syncFilterControlsFromState() {
     dom.trendSortSelect.value = state.filters.trendSort;
     dom.favoritesOnlyInput.checked = state.filters.favoritesOnly;
     syncPriceRangeFromState();
+
+    if (dom.chartTimespanPresetSelect) {
+        dom.chartTimespanPresetSelect.value = state.filters.chartTimespanPreset;
+    }
+    if (dom.chartTimespanAmountInput) {
+        dom.chartTimespanAmountInput.value = String(state.filters.chartTimespanCustomAmount);
+    }
+    if (dom.chartTimespanUnitSelect) {
+        dom.chartTimespanUnitSelect.value = state.filters.chartTimespanCustomUnit;
+    }
+    syncChartTimespanCustomVisibility();
 }
 
 /**
@@ -114,6 +163,45 @@ export function registerFilterEventListeners() {
         applyFiltersAndRender();
     });
 
+    if (dom.chartTimespanPresetSelect) {
+        dom.chartTimespanPresetSelect.addEventListener("change", (e) => {
+            state.filters.chartTimespanPreset = e.target.value;
+            applyChartCustomFromInputs();
+            saveFilters();
+            syncChartTimespanCustomVisibility();
+            applyFiltersAndRender();
+        });
+    }
+
+    const commitCustomIfActive = () => {
+        applyChartCustomFromInputs();
+        saveFilters();
+        if (state.filters.chartTimespanPreset === "custom") {
+            applyFiltersAndRender();
+        }
+    };
+
+    if (dom.chartTimespanAmountInput) {
+        dom.chartTimespanAmountInput.addEventListener("change", commitCustomIfActive);
+        dom.chartTimespanAmountInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                commitCustomIfActive();
+                dom.chartTimespanAmountInput.blur();
+            }
+        });
+    }
+
+    if (dom.chartTimespanUnitSelect) {
+        dom.chartTimespanUnitSelect.addEventListener("change", () => {
+            applyChartCustomFromInputs();
+            saveFilters();
+            if (state.filters.chartTimespanPreset === "custom") {
+                applyFiltersAndRender();
+            }
+        });
+    }
+
     // Reset filters button
     dom.resetFiltersBtn.addEventListener("click", () => {
         state.filters.search = "";
@@ -122,6 +210,9 @@ export function registerFilterEventListeners() {
         state.filters.favoritesOnly = false;
         state.filters.priceMin = 0;
         state.filters.priceMax = 100;
+        state.filters.chartTimespanPreset = "3m";
+        state.filters.chartTimespanCustomAmount = 3;
+        state.filters.chartTimespanCustomUnit = "month";
 
         syncFilterControlsFromState();
         syncSearchClearButton();

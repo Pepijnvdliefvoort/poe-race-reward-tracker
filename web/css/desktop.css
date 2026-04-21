@@ -101,7 +101,8 @@
 
   .filters-drawer .filter-group,
   .filters-drawer .filter-group-checkbox,
-  .filters-drawer .filter-group-range {
+  .filters-drawer .filter-group-range,
+  .filters-drawer .filter-group-timespan {
     width: auto;
     min-width: 0;
   }

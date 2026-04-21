@@ -1,8 +1,8 @@
-import { MAX_ACTUAL_POINTS, THREE_MONTHS_MS } from "../core/state.js";
+import { getChartTimespanMs, MAX_ACTUAL_POINTS } from "../core/state.js";
 import { getCondensedChartPoints } from "../core/utils.js";
 
 export function getTrendValue(item) {
-  const cutoff = Date.now() - THREE_MONTHS_MS;
+  const cutoff = Date.now() - getChartTimespanMs();
   const rawPoints = (item?.points || []).filter((p) => p.time >= cutoff);
   const chartPoints = getCondensedChartPoints(rawPoints, MAX_ACTUAL_POINTS);
   const valid = chartPoints.map((p) => p.y).filter((v) => v != null && !Number.isNaN(v));
@@ -16,7 +16,7 @@ export function getTrendValue(item) {
 }
 
 export function getTrendPercentage(item) {
-  const cutoff = Date.now() - THREE_MONTHS_MS;
+  const cutoff = Date.now() - getChartTimespanMs();
   const rawPoints = (item?.points || []).filter((p) => p.time >= cutoff);
   const chartPoints = getCondensedChartPoints(rawPoints, MAX_ACTUAL_POINTS);
   const valid = chartPoints.map((p) => p.y).filter((v) => v != null && !Number.isNaN(v));

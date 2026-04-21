@@ -1,4 +1,13 @@
-import { chartMap, dom, MAX_ACTUAL_POINTS, PREDICTION_POINTS, THREE_MONTHS_MS, saveFavorites, state } from "../core/state.js";
+import {
+    chartMap,
+    dom,
+    getChartTimespanMs,
+    MAX_ACTUAL_POINTS,
+    PREDICTION_POINTS,
+    THREE_MONTHS_MS,
+    saveFavorites,
+    state,
+} from "../core/state.js";
 import { getAvailableLowestPrice } from "../domain/pricing.js";
 import { formatNumber, formatTime, getChartSeriesWithPrediction } from "../core/utils.js";
 import { stopListingsPopover, wireListingsPopover } from "../cards/listingsPopover.js";
@@ -305,7 +314,7 @@ export function updateCard(item, onFavoriteToggle) {
     listingsPopoverSubline,
     chart,
   } = ensureCard(item, onFavoriteToggle);
-  const cutoff = Date.now() - THREE_MONTHS_MS;
+  const cutoff = Date.now() - getChartTimespanMs();
   const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
   const { actual, predicted } = getChartSeriesWithPrediction(rawPoints, MAX_ACTUAL_POINTS, PREDICTION_POINTS);
   const chartPoints = [...actual, ...predicted];
