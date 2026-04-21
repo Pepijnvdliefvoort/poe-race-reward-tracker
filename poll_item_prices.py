@@ -23,6 +23,7 @@ DEFAULT_LISTINGS_CACHE_FILE = Path("web") / "listings_cache.json"
 LISTINGS_CACHE_MAX_ENTRIES = 1000
 TOP_IDS_LIMIT = 25
 DIVINES_PER_MIRROR = 1650.0
+EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
 RESALE_PRICE_STEPS: tuple[tuple[float | None, float], ...] = (
     (None, 1.0),
@@ -684,6 +685,8 @@ def normalize_price_currency(price: dict[str, Any]) -> tuple[str, float] | None:
         return "mirror", float(amount)
     if normalized_currency in {"divine", "divines", "div", "divine orb", "divine orbs"}:
         return "divine", float(amount)
+    if normalized_currency in {"exalted", "exalt", "exa", "exalted orb", "exalted orbs"}:
+        return "exalted", float(amount)
 
     return None
 
@@ -691,6 +694,7 @@ def normalize_price_currency(price: dict[str, Any]) -> tuple[str, float] | None:
 def extract_listing_prices(listings: list[dict[str, Any]]) -> tuple[list[float], list[float], int]:
     mirror_prices: list[float] = []
     divine_prices: list[float] = []
+    exalted_prices: list[float] = []
     unsupported_count = 0
 
     for entry in listings:
@@ -710,8 +714,12 @@ def extract_listing_prices(listings: list[dict[str, Any]]) -> tuple[list[float],
             mirror_prices.append(amount)
         elif currency == "divine":
             divine_prices.append(amount)
+        elif currency == "exalted":
+            exalted_prices.append(amount)
 
-    return mirror_prices, divine_prices, unsupported_count
+    # Treat exalts as supported by converting them into divines using a fixed ratio.
+    divine_from_exalts = [p / EXALTS_PER_DIVINE for p in exalted_prices]
+    return mirror_prices, divine_prices + divine_from_exalts, unsupported_count
 
 
 def format_listing_summary_price(currency: str, amount: float, divines_per_mirror: float) -> str:
@@ -720,8 +728,18 @@ def format_listing_summary_price(currency: str, amount: float, divines_per_mirro
         unit = "mirror" if amount == 1 else "mirrors"
         return f"{formatted_amount} {unit}"
 
+    if currency == "divine":
+        mirror_equivalent = to_mirror_equivalent(amount, currency, divines_per_mirror)
+        return f"{formatted_amount} divines (~{format_amount(mirror_equivalent)} mirrors)"
+
+    if currency == "exalted":
+        div_amount = amount / EXALTS_PER_DIVINE
+        mirror_equivalent = to_mirror_equivalent(div_amount, "divine", divines_per_mirror)
+        return f"{formatted_amount} exalts (~{format_amount(mirror_equivalent)} mirrors)"
+
+    # Safe fallback (shouldn't happen if normalize_price_currency is used consistently).
     mirror_equivalent = to_mirror_equivalent(amount, currency, divines_per_mirror)
-    return f"{formatted_amount} divines (~{format_amount(mirror_equivalent)} mirrors)"
+    return f"{formatted_amount} {currency} (~{format_amount(mirror_equivalent)} mirrors)"
 
 
 def extract_listing_seller_name(entry: dict[str, Any]) -> str:
@@ -1054,6 +1072,8 @@ def to_mirror_equivalent(amount: float, currency: str, divines_per_mirror: float
         return amount
     if currency == "divine":
         return amount / divines_per_mirror
+    if currency == "exalted":
+        return (amount / EXALTS_PER_DIVINE) / divines_per_mirror
     raise ValueError(f"Unsupported currency: {currency}")
 
 
