@@ -524,7 +524,7 @@ def load_item_specs(items_file: Path) -> list[ItemSpec]:
     return specs
 
 
-def build_search_payload(item: ItemSpec) -> dict[str, Any]:
+def build_search_payload(item: ItemSpec, price_currency: str | None = None) -> dict[str, Any]:
     name_option: dict[str, Any] = {"option": item.name}
     # name_option["discriminator"] = "legacy"
 
@@ -548,6 +548,18 @@ def build_search_payload(item: ItemSpec) -> dict[str, Any]:
         },
     }
 
+    if price_currency is not None:
+        normalized = price_currency.strip().lower()
+        if normalized not in {"divine"}:
+            raise ValueError(f"Unsupported price currency filter: {price_currency}")
+        # Trade site quirk: "price" filter restricts the listed currency (e.g. divines only).
+        # This is used as a fallback when the sorted ladder starts with "1 mirror" listings.
+        query["filters"]["trade_filters"] = {
+            "filters": {
+                "price": {"option": normalized},
+            }
+        }
+
     return {
         "query": query,
         "sort": {"price": "asc"},
@@ -558,9 +570,10 @@ def search_item(
     session: requests.Session,
     rate_limiter: AdaptiveRateLimiter,
     item: ItemSpec,
+    price_currency: str | None = None,
 ) -> tuple[str, list[str], int]:
     url = f"{BASE_URL}/search/{DEFAULT_LEAGUE}"
-    payload = build_search_payload(item)
+    payload = build_search_payload(item, price_currency=price_currency)
 
     rate_limiter.wait_before_request()
     response = session.post(url, data=json.dumps(payload), timeout=30.0)
@@ -580,6 +593,19 @@ def search_item(
         total = len(result_ids)
 
     return query_id, result_ids, total
+
+
+def find_first_priced_listing(listings: list[dict[str, Any]]) -> tuple[str, float] | None:
+    """Return (currency, amount) for the first listing with a supported price."""
+    for entry in listings:
+        listing = entry.get("listing") if isinstance(entry, dict) else None
+        price = listing.get("price") if isinstance(listing, dict) else None
+        if not isinstance(price, dict):
+            continue
+        normalized = normalize_price_currency(price)
+        if normalized is not None:
+            return normalized
+    return None
 
 
 def fetch_top_listings(
@@ -1229,13 +1255,33 @@ def run_cycle(
 
         raw_mirror_prices, divine_prices, unsupported_count = extract_listing_prices(listings)
 
-        # Convert all divine-priced listings to their mirror equivalent and merge.
+        # Convert all divine-priced listings (from the regular ladder) to mirror equivalents.
         converted = [p / divines_per_mirror for p in divine_prices]
-        mirror_prices = raw_mirror_prices + converted
+
+        # Fallback: If the trade ladder begins with a "1 mirror" listing, it may be hiding cheaper
+        # divine-priced listings due to the site's internal conversion rate. In that case, run an
+        # additional search restricted to divines-only, then convert those prices into mirrors.
+        divine_only_converted: list[float] = []
+        first_price = find_first_priced_listing(listings)
+        if first_price is not None:
+            first_currency, first_amount = first_price
+            if first_currency == "mirror" and abs(first_amount - 1.0) <= 1e-9:
+                divine_query_id, divine_only_ids, _ = search_item(
+                    session, rate_limiter, item, price_currency="divine"
+                )
+                divine_only_listings = fetch_top_listings(
+                    session, rate_limiter, divine_query_id, divine_only_ids
+                )
+                _, divine_only_prices_raw, _ = extract_listing_prices(divine_only_listings)
+                divine_only_converted = [p / divines_per_mirror for p in divine_only_prices_raw]
+
+        mirror_prices = raw_mirror_prices + converted + divine_only_converted
 
         low_mirror, high_mirror, median_mirror = summarize_prices(mirror_prices)
         resale_opportunity = find_resale_opportunity(mirror_prices)
         used_results = len(mirror_prices)
+
+        low_divine, high_divine, median_divine = summarize_prices(divine_only_converted)
 
         append_summary_row(
             path=output_csv,
@@ -1250,10 +1296,10 @@ def run_cycle(
             lowest_mirror=low_mirror,
             median_mirror=median_mirror,
             highest_mirror=high_mirror,
-            divine_count=0,
-            lowest_divine=None,
-            median_divine=None,
-            highest_divine=None,
+            divine_count=len(divine_only_converted),
+            lowest_divine=low_divine,
+            median_divine=median_divine,
+            highest_divine=high_divine,
         )
 
         listings_by_query_id = prune_listings_cache(listings_by_query_id)

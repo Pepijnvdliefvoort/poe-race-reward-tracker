@@ -697,7 +697,7 @@ function setupLogSplitView() {
   const tripleKey = "admin.logSplit.triple.v1";
   const doubleKey = "admin.logSplit.double.v1";
   const pollerStatsKey = "admin.logSplit.double.pollerStats.v1";
-  const minServer = 0.195; // server pane at least 19.5%
+  const minServer = 0.21; // server pane at least 21%
   const minStats = 0.2; // stats pane at least 20%
   const min = 0.18; // other panes at least 18%
   const step = 0.02;
