@@ -1493,9 +1493,9 @@ function renderStatsCards(payload) {
   const cards = [
     { key: "cpu", k: "CPU", v: `${formatPercent(cpu.percent)}` },
     { key: "uptime", k: "Uptime", v: formatUptimeFromBootMs(payload?.system?.bootTimeMs) },
+    { key: "ram", k: "RAM", v: `${formatPercent(mem.usedPercent)} · ${formatBytesMb(mem.usedMb)} / ${formatBytesMb(mem.totalMb)}` },
     { key: "sinceDeploy", k: "Since deploy", v: formatSinceDeployFromDeployTimeMs(payload?.app?.deployTimeMs) },
     { key: "swap", k: "Swap", v: `${formatPercent(swap.usedPercent)} · ${formatBytesMb(swap.usedMb)} / ${formatBytesMb(swap.totalMb)}` },
-    { key: "ram", k: "RAM", v: `${formatPercent(mem.usedPercent)} · ${formatBytesMb(mem.usedMb)} / ${formatBytesMb(mem.totalMb)}` },
     { key: "net", k: "Network I/O", v: `${formatBytesMb(net.rxMb)} ↓ / ${formatBytesMb(net.txMb)} ↑` },
   ];
 

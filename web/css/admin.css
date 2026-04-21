@@ -584,9 +584,10 @@ body {
   margin: 0 0 0.5rem;
 }
 
-.admin-stats-grid--panel {
+.admin-stats-grid.admin-stats-grid--panel {
   margin-top: 0;
   gap: 0.6rem;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
 }
 
 .admin-stats-grid--panel .admin-stats-card {
@@ -597,13 +598,22 @@ body {
   font-size: 0.98rem;
 }
 
-.admin-stats-grid--panel .admin-stats-card--sinceDeploy,
-.admin-stats-grid--panel .admin-stats-card--swap {
-  grid-column: span 6;
+.admin-stats-grid--panel .admin-stats-card--cpu,
+.admin-stats-grid--panel .admin-stats-card--uptime {
+  grid-column: span 5;
 }
 
-.admin-stats-grid--panel .admin-stats-card--ram {
-  grid-column: 1 / -1;
+.admin-stats-grid--panel .admin-stats-card--sinceDeploy {
+  grid-column: span 3;
+}
+
+.admin-stats-grid--panel .admin-stats-card--swap {
+  grid-column: span 7;
+}
+
+.admin-stats-grid--panel .admin-stats-card--ram,
+.admin-stats-grid--panel .admin-stats-card--net {
+  grid-column: span 10;
 }
 
 .log-line {
@@ -841,7 +851,7 @@ body {
   }
 
   /* Compact stats panel so it fits the fixed mobile pane height. */
-  .admin-stats-grid--panel {
+  .admin-stats-grid.admin-stats-grid--panel {
     gap: 0.5rem;
     grid-template-columns: repeat(10, minmax(0, 1fr));
   }
