@@ -1628,6 +1628,25 @@ function setupCsvDownload() {
   });
 }
 
+function setupDbDownload() {
+  const btn = document.getElementById("downloadDbBtn");
+  const hint = document.getElementById("adminDataHint");
+  if (!btn) return;
+
+  const setHint = (text, isWarn = false) => {
+    if (!hint) return;
+    hint.textContent = text || "";
+    hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  btn.addEventListener("click", () => {
+    setHint("Preparing download…");
+    // Navigation-based download so cookies/auth work and the browser handles the save dialog.
+    window.location.assign("/api/admin/download/market.db");
+    window.setTimeout(() => setHint(""), 2000);
+  });
+}
+
 function setupClearData() {
   const btn = document.getElementById("clearDataBtn");
   const hint = document.getElementById("adminDataHint");
@@ -2084,6 +2103,7 @@ function setupMapResize() {
 
 function main() {
   setupCsvDownload();
+  setupDbDownload();
   setupClearData();
   setupMarketConfigEditor();
   setupStopPoller();

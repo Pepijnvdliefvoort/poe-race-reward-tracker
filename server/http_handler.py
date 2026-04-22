@@ -423,6 +423,40 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            if req_path == "/api/admin/download/market.db":
+                db_path = ServerStorage(ROOT_DIR).db_path
+                if not db_path.is_file():
+                    body = json.dumps({"error": "DB file not found"}).encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                try:
+                    size = db_path.stat().st_size
+                except OSError:
+                    size = 0
+
+                # Use a stable filename so users can overwrite local copies easily.
+                filename = "market.db"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-sqlite3")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Cache-Control", "no-store")
+                if size:
+                    self.send_header("Content-Length", str(size))
+                self.end_headers()
+                with db_path.open("rb") as fh:
+                    while True:
+                        chunk = fh.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                return
+
             body = json.dumps({"error": "Unknown admin endpoint"}).encode("utf-8")
             self.send_response(404)
             self.send_header("Content-Type", "application/json; charset=utf-8")
