@@ -161,3 +161,36 @@ h1 {
   width: 100%;
 }
 
+/* Dashboard utility: Back to top */
+.back-to-top {
+  position: fixed;
+  right: clamp(12px, 2vw, 18px);
+  bottom: clamp(12px, 2vw, 18px);
+  z-index: 900;
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(10px);
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, opacity 140ms ease;
+  opacity: 0.92;
+}
+
+.back-to-top:hover,
+.back-to-top:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+  border-color: rgba(255, 203, 72, 0.55);
+  opacity: 1;
+}
+
+body.filters-open .back-to-top {
+  display: none;
+}
+

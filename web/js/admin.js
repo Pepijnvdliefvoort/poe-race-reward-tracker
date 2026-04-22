@@ -680,7 +680,8 @@ function setupLogConsoleWindowControls() {
     ]);
 
     // Show handles only when both adjacent panes are visible.
-    handleA.style.display = serverVisible && pollerVisible ? "" : "none";
+    // Special case: if poller is closed but server+stats are open, handleA becomes the divider.
+    handleA.style.display = (serverVisible && pollerVisible) || (serverVisible && statsVisible && !pollerVisible) ? "" : "none";
     handleB.style.display = pollerVisible && statsVisible ? "" : "none";
 
     // Re-apply split ratios when visibility changes (e.g. stats closed).
@@ -768,6 +769,7 @@ function setupLogSplitView() {
 
   const tripleKey = "admin.logSplit.triple.v1";
   const doubleKey = "admin.logSplit.double.v1";
+  const serverStatsKey = "admin.logSplit.double.serverStats.v1";
   const pollerStatsKey = "admin.logSplit.double.pollerStats.v1";
   const minServer = 0.21; // server pane at least 21%
   const minStats = 0.2; // stats pane at least 20%
@@ -798,7 +800,8 @@ function setupLogSplitView() {
   const ratiosForVisibility = (vis) => {
     const totalW = _width(splitEl);
     // Handles have horizontal margins; include them so pane min% matches the visible %.
-    const wA = vis?.server && vis?.poller ? _outerWidth(handleA) : 0;
+    const wA =
+      vis?.server && (vis?.poller || (vis?.stats && !vis?.poller)) ? _outerWidth(handleA) : 0;
     const wB = vis?.poller && vis?.stats ? _outerWidth(handleB) : 0;
     const paneW = Math.max(1, totalW - wA - wB);
 
@@ -825,6 +828,11 @@ function setupLogSplitView() {
     // b splits poller vs stats; enforce poller>=minOther and stats>=minStats.
     b = clamp(b, a + minOtherRatio, 1 - minStatsRatio);
     return [a, b];
+  };
+
+  const clampServerStats = (ratio, vis) => {
+    const { minServerRatio, minStatsRatio } = ratiosForVisibility(vis);
+    return clamp(Number(ratio) || 0.5, minServerRatio, 1 - minStatsRatio);
   };
 
   const clampPollerStats = (ratio, vis) => {
@@ -858,6 +866,18 @@ function setupLogSplitView() {
     handleB.setAttribute("aria-valuenow", String(Math.round(b * 100)));
     handleB.setAttribute("aria-valuemin", String(Math.round((min * 2) * 100)));
     handleB.setAttribute("aria-valuemax", String(Math.round((1 - min) * 100)));
+  };
+
+  const applyServerStats = (ratio) => {
+    const vis = window.__adminLogWindowState?.getVisiblePair?.();
+    if (vis && (!vis.server || !vis.stats || vis.poller)) return;
+    const r = clampServerStats(ratio, vis);
+    serverPane.style.flex = `${r} 1 0`;
+    pollerPane.style.flex = "";
+    statsPane.style.flex = `${1 - r} 1 0`;
+    handleA.setAttribute("aria-valuenow", String(Math.round(r * 100)));
+    handleA.setAttribute("aria-valuemin", String(Math.round(minServer * 1000) / 10));
+    handleA.setAttribute("aria-valuemax", String(Math.round((1 - minStats) * 1000) / 10));
   };
 
   const readTriple = () => {
@@ -902,6 +922,29 @@ function setupLogSplitView() {
     }
   };
 
+  const readServerStats = () => {
+    try {
+      const raw = window.localStorage.getItem(serverStatsKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const r = clampServerStats(parsed?.ratio, window.__adminLogWindowState?.getVisiblePair?.());
+      return Number.isFinite(r) ? r : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const saveServerStats = (ratio) => {
+    try {
+      window.localStorage.setItem(
+        serverStatsKey,
+        JSON.stringify({ ratio: clampServerStats(ratio, window.__adminLogWindowState?.getVisiblePair?.()) }),
+      );
+    } catch {
+      // ignore storage failures
+    }
+  };
+
   const readPollerStats = () => {
     try {
       const raw = window.localStorage.getItem(pollerStatsKey);
@@ -927,6 +970,7 @@ function setupLogSplitView() {
 
   let [x1, x2] = readTriple();
   let ratio2 = readDouble();
+  let ratioSS = readServerStats();
   let ratioPS = readPollerStats();
 
   const applyFromVisibility = () => {
@@ -950,11 +994,14 @@ function setupLogSplitView() {
       statsPane.style.flex = "1 1 0";
       return;
     }
-    // If poller is closed but the other two are open, split remaining width evenly.
+    // If poller is closed but server + stats are open, allow a dedicated 2-pane split.
     if (vis && vis.server && !vis.poller && vis.stats) {
-      serverPane.style.flex = "1 1 0";
-      pollerPane.style.flex = "";
-      statsPane.style.flex = "1 1 0";
+      const fallbackFromTriple = (() => {
+        const [a] = clampSplit(x1, x2, vis);
+        return clampServerStats(a, vis);
+      })();
+      const r = ratioSS == null ? fallbackFromTriple : clampServerStats(ratioSS, vis);
+      applyServerStats(r);
       return;
     }
     // If server is minimized/closed but poller + stats are open, allow a dedicated 2-pane split.
@@ -990,7 +1037,7 @@ function setupLogSplitView() {
     if (window.matchMedia?.("(max-width: 768px)")?.matches) return;
     const vis = window.__adminLogWindowState?.getVisiblePair?.();
     if (which === "a") {
-      if (vis && (!vis.server || !vis.poller)) return;
+      if (vis && (!vis.server || (!vis.poller && !vis.stats))) return;
     } else {
       if (vis && (!vis.poller || !vis.stats)) return;
     }
@@ -1002,6 +1049,13 @@ function setupLogSplitView() {
     const onMove = (moveEv) => {
       const r = ratioFromClientX(moveEv.clientX);
       if (which === "a") {
+        // If poller is not visible, handleA becomes a server↔stats splitter.
+        if (vis && vis.server && !vis.poller && vis.stats) {
+          ratioSS = clampServerStats(r, vis);
+          applyServerStats(ratioSS);
+          saveServerStats(ratioSS);
+          return;
+        }
         // If stats is not visible, handleA becomes a simple 2-pane splitter.
         if (vis && vis.server && vis.poller && !vis.stats) {
           ratio2 = clampDouble(r, vis);
@@ -1047,13 +1101,18 @@ function setupLogSplitView() {
   const onKey = (which, ev) => {
     const vis = window.__adminLogWindowState?.getVisiblePair?.();
     if (which === "a") {
-      if (vis && (!vis.server || !vis.poller)) return;
+      if (vis && (!vis.server || (!vis.poller && !vis.stats))) return;
     } else {
       if (vis && (!vis.poller || !vis.stats)) return;
     }
     if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
     const delta = ev.key === "ArrowLeft" ? -step : step;
     if (which === "a") {
+      if (vis && vis.server && !vis.poller && vis.stats) {
+        ratioSS = clampServerStats((ratioSS == null ? 0.5 : ratioSS) + delta, vis);
+        applyServerStats(ratioSS);
+        saveServerStats(ratioSS);
+      } else
       if (vis && vis.server && vis.poller && !vis.stats) {
         ratio2 = clampDouble(ratio2 + delta, vis);
         applyDouble(ratio2);

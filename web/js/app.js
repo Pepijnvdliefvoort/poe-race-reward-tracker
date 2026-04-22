@@ -23,6 +23,7 @@ registerFilterEventListeners();
 registerKeyboardShortcuts();
 
 initFiltersDrawer();
+initBackToTopButton();
 
 // Start data refresh cycle
 refresh();
@@ -96,4 +97,28 @@ function initFiltersDrawer() {
       closeDrawer();
     }
   });
+}
+
+function initBackToTopButton() {
+  const btn = document.getElementById("backToTopBtn");
+  if (!btn) return;
+
+  const showAfterPx = 520;
+
+  const sync = () => {
+    const shouldShow = (window.scrollY || 0) > showAfterPx;
+    btn.hidden = !shouldShow;
+  };
+
+  btn.addEventListener("click", () => {
+    try {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch {
+      window.scrollTo(0, 0);
+    }
+  });
+
+  window.addEventListener("scroll", sync, { passive: true });
+  window.addEventListener("resize", sync, { passive: true });
+  sync();
 }

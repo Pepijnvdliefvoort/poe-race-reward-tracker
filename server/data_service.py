@@ -464,12 +464,9 @@ def load_price_data() -> dict[str, Any]:
                 "inferenceNewListingRows": _parse_nonneg_int(row.get("inference_new_listing_rows")),
             }
             series["points"].append(point)
-            # Only update 'latest' if this point has a valid price (lowestMirror not None/NaN)
-            if (
-                point["lowestMirror"] is not None
-                and not (isinstance(point["lowestMirror"], float) and math.isnan(point["lowestMirror"]))
-            ):
-                series["latest"] = point
+            # Always advance `latest` to the most recent poll point so the UI can
+            # correctly infer poll order even when price fields are missing.
+            series["latest"] = point
 
     item_list = list(items.values())
 
