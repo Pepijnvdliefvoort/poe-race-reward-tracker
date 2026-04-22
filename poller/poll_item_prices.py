@@ -98,9 +98,19 @@ def load_discord_webhook_url_from_env() -> str:
     return ""
 
 
-def load_discord_sales_webhook_url_from_env() -> str:
-    """Webhook for estimated-sale signal notifications (separate channel from price alerts)."""
-    return os.getenv("DISCORD_WEBHOOK_URL_SALES", "").strip()
+def load_discord_sales_webhook_url_from_env() -> tuple[str, bool]:
+    """
+    Webhook URL for estimated-sale signal notifications, and whether a dedicated
+    sales URL was configured.
+
+    If ``DISCORD_WEBHOOK_URL_SALES`` is unset, falls back to the same URL as
+    price-drop alerts (``DISCORD_WEBHOOK_URL`` / ``POE_DISCORD_WEBHOOK_URL``)
+    so est.-sales alerts still fire without a second secret.
+    """
+    sales = os.getenv("DISCORD_WEBHOOK_URL_SALES", "").strip()
+    if sales:
+        return sales, True
+    return load_discord_webhook_url_from_env(), False
 
 
 def load_sales_discord_window_days(storage: StorageService) -> int:
@@ -259,6 +269,14 @@ def send_discord_alert(
     }
     if item_image_url:
         embed["thumbnail"] = {"url": item_image_url}
+    log_line(
+        "alert",
+        (
+            f"Price alert fired: {item.name} — {pct_drop:.1f}% below baseline "
+            f"(low {format_amount(current_lowest)} vs {format_amount(baseline)} mirrors); "
+            "sending Discord webhook"
+        ),
+    )
     try:
         resp = alert_session.post(
             webhook_url,
@@ -266,7 +284,6 @@ def send_discord_alert(
             timeout=10.0,
         )
         resp.raise_for_status()
-        log_line("alert", f"Discord alert sent for {item.name} ({pct_drop:.1f}% below baseline)")
     except Exception as exc:  # noqa: BLE001
         log_line("warn", f"Failed to send Discord alert for {item.name}: {exc}")
 
@@ -1512,6 +1529,14 @@ def run_cycle(
                 try:
                     since = (datetime.now(timezone.utc) - timedelta(days=int(sales_window_days))).isoformat()
                     total_est = storage.sum_estimated_sales_since(variant_id=variant_id, since_utc_iso=since)
+                    log_line(
+                        "sales_discord",
+                        (
+                            f"Est. sales alert fired: {item.name} delta={cycle_est} "
+                            f"(xfer={inf.confirmed_transfer} instant={inf.likely_instant_sale}) "
+                            f"total~={total_est} ({sales_window_days}d); sending Discord webhook"
+                        ),
+                    )
                     send_estimated_sales_change_notification(
                         session,
                         webhook_url=sales_webhook_url,
@@ -1520,10 +1545,8 @@ def run_cycle(
                         cycle_delta=cycle_est,
                         total_in_window=total_est,
                         window_days=int(sales_window_days),
-                    )
-                    log_line(
-                        "sales_discord",
-                        f"Est. sales webhook: delta={cycle_est} total~={total_est} ({sales_window_days}d) {item.name}",
+                        confirmed_transfer=int(inf.confirmed_transfer),
+                        likely_instant_sale=int(inf.likely_instant_sale),
                     )
                 except Exception as exc:  # noqa: BLE001
                     log_line("warn", f"Failed sales Discord webhook for {item.name}: {exc}")
@@ -1710,10 +1733,15 @@ def main() -> None:
 
         # Reload alert config each cycle so UI changes take effect without restart.
         alert_config = load_alert_config()
-        sales_webhook_url = load_discord_sales_webhook_url_from_env()
+        sales_webhook_url, sales_webhook_dedicated = load_discord_sales_webhook_url_from_env()
         sales_window_days = load_sales_discord_window_days(storage)
         if sales_webhook_url and not logged_sales_webhook_cfg:
-            log_line("cycle", f"Sales Discord webhook active; est.-sold window={sales_window_days}d")
+            msg = f"Sales Discord webhook active; est.-sold window={sales_window_days}d"
+            if not sales_webhook_dedicated:
+                msg += (
+                    "; using main alert webhook (set DISCORD_WEBHOOK_URL_SALES for a separate channel)"
+                )
+            log_line("cycle", msg)
             logged_sales_webhook_cfg = True
 
         try:
