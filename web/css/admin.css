@@ -385,6 +385,513 @@ body {
   white-space: nowrap;
 }
 
+/* --- DB Explorer --- */
+.admin-db-layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 980px) {
+  .admin-db-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-db-sidebar {
+  position: sticky;
+  top: 14px;
+}
+
+@media (max-width: 980px) {
+  .admin-db-sidebar {
+    position: static;
+  }
+}
+
+.admin-db-main {
+  min-width: 0;
+}
+
+.admin-db-card {
+  background: rgba(2, 6, 23, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(10px);
+}
+
+.admin-db-path {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-db-list {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-db-attach-row {
+  appearance: none;
+  width: 100%;
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.28);
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-db-attach-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.admin-db-attach-row:focus-visible {
+  outline: 2px solid rgba(42, 183, 191, 0.65);
+  outline-offset: 2px;
+}
+
+.admin-db-attach-name,
+.admin-db-attach-file {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-db-attach-arrow {
+  opacity: 0.9;
+}
+
+.admin-db-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+}
+
+button.admin-db-list-item {
+  cursor: pointer;
+}
+
+.admin-db-list-item--active {
+  border-color: rgba(42, 183, 191, 0.7);
+  box-shadow: 0 0 0 2px rgba(42, 183, 191, 0.18) inset;
+}
+
+.admin-db-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.admin-db-panel {
+  min-height: 240px;
+}
+
+.admin-db-er {
+  margin-top: 12px;
+}
+
+.admin-db-er-diagram {
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(2, 6, 23, 0.35);
+  padding: 12px;
+  overflow: auto;
+}
+
+.admin-db-er-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.admin-db-sqlbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.admin-db-sqlwrap {
+  position: relative;
+}
+
+.admin-db-sql {
+  width: 100%;
+  min-height: 200px;
+  resize: vertical;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.4);
+  color: var(--ink);
+  padding: 12px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+}
+
+.admin-db-sql:focus {
+  border-color: rgba(42, 183, 191, 0.6);
+  box-shadow: 0 0 0 3px rgba(42, 183, 191, 0.12);
+}
+
+.admin-db-suggest {
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  background: rgba(2, 6, 23, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  padding: 6px;
+  z-index: 50;
+  max-height: 260px;
+  overflow: auto;
+  min-width: 220px;
+  max-width: min(520px, calc(100% - 24px));
+}
+
+.admin-db-suggest-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.admin-db-suggest-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.admin-db-suggest-item--active {
+  background: rgba(42, 183, 191, 0.10);
+  border-color: rgba(42, 183, 191, 0.35);
+}
+
+.admin-db-suggest-k {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 12.5px;
+  color: rgba(226, 232, 240, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-db-suggest-tag {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.9);
+  white-space: nowrap;
+}
+
+.admin-db-limit {
+  width: 92px;
+  margin-left: 6px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.4);
+  color: var(--ink);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+}
+
+/* --- App config editor --- */
+.admin-appconfig-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+@media (max-width: 980px) {
+  .admin-appconfig-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-appconfig-card {
+  background: rgba(2, 6, 23, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(10px);
+  min-width: 0;
+}
+
+.admin-appconfig-card--full {
+  grid-column: 1 / -1;
+}
+
+.admin-appconfig-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+@media (max-width: 520px) {
+  .admin-appconfig-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-appconfig-select,
+.admin-appconfig-input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--ink);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+}
+
+.admin-appconfig-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.admin-appconfig-field {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.admin-appconfig-field:last-child {
+  border-bottom: 0;
+}
+
+.admin-appconfig-k {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 12.5px;
+  color: rgba(226, 232, 240, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-appconfig-num {
+  max-width: 220px;
+}
+
+/* --- Market config editor (modern) --- */
+.admin-marketcfg {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+@media (max-width: 980px) {
+  .admin-marketcfg {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-marketcfg-card {
+  background: rgba(2, 6, 23, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+  min-width: 0;
+}
+
+.admin-marketcfg-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 980px) {
+  .admin-marketcfg-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-marketcfg-field {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.22);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.admin-marketcfg-field:last-child {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.admin-marketcfg-label {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-marketcfg-label strong {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.admin-marketcfg-help {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.admin-marketcfg-control {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-marketcfg-control .admin-appconfig-input,
+.admin-marketcfg-control .admin-db-sql {
+  width: 100%;
+}
+
+.admin-marketcfg-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.35);
+  width: 100%;
+  justify-content: flex-start;
+  user-select: none;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.admin-marketcfg-toggle input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.admin-marketcfg-toggle span {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.admin-marketcfg-summary {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  padding: 10px 0;
+}
+
+.admin-marketcfg-advanced-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* JSON syntax highlight overlay (textarea stays editable) */
+.admin-json-editor {
+  position: relative;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.4);
+  overflow: hidden;
+}
+
+.admin-json-pretty {
+  margin: 0;
+  padding: 12px;
+  min-height: 240px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+}
+
+.admin-json-textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: transparent; /* hide raw text, show highlighted pre below */
+  caret-color: var(--ink);
+  padding: 12px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow: auto;
+}
+
+.admin-json-textarea::selection {
+  background: rgba(42, 183, 191, 0.22);
+}
+
+.admin-json-k {
+  color: #7dd3fc; /* keys */
+}
+.admin-json-s {
+  color: #fda4af; /* strings */
+}
+.admin-json-n {
+  color: #fdba74; /* numbers */
+}
+.admin-json-b {
+  color: #a7f3d0; /* booleans */
+}
+.admin-json-null {
+  color: #cbd5e1; /* null */
+  opacity: 0.85;
+}
+.admin-json-p {
+  color: rgba(148, 163, 184, 0.9); /* punctuation */
+}
+
 .admin-console-dock-actions {
   margin-left: 0.5rem;
   display: inline-flex;

@@ -1601,6 +1601,350 @@ function setupClearData() {
   });
 }
 
+function setupMarketConfigEditor() {
+  const KEY = "market";
+  const jsonEl = document.getElementById("marketCfgJson");
+  const prettyEl = document.getElementById("marketCfgJsonPretty");
+  const fieldsEl = document.getElementById("marketCfgFields");
+  const saveBtn = document.getElementById("marketCfgSaveBtn");
+  const fmtBtn = document.getElementById("marketCfgFormatBtn");
+  const reloadBtn = document.getElementById("marketCfgReloadBtn");
+  const hintEl = document.getElementById("marketCfgHint");
+  if (!jsonEl || !prettyEl || !fieldsEl || !saveBtn || !fmtBtn || !reloadBtn || !hintEl) return;
+
+  const setHint = (text, isWarn = false) => {
+    hintEl.textContent = text || "";
+    hintEl.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  let currentParsed = null; // object|array|primitive|null
+
+  const escapeHtml = (s) =>
+    String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const highlightJson = (raw) => {
+    const text = String(raw ?? "");
+    // Tokenizer: strings, numbers, true/false/null, punctuation
+    const re =
+      /("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b|([{}\[\]:,])/g;
+    let out = "";
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      out += escapeHtml(text.slice(last, m.index));
+      if (m[1]) {
+        // string: detect key by looking ahead for colon
+        const str = m[1];
+        const isKey = (() => {
+          const after = text.slice(m.index + str.length);
+          return /^\s*:/.test(after);
+        })();
+        out += `<span class="${isKey ? "admin-json-k" : "admin-json-s"}">${escapeHtml(str)}</span>`;
+      } else if (m[2]) {
+        out += `<span class="admin-json-n">${escapeHtml(m[2])}</span>`;
+      } else if (m[3]) {
+        const cls = m[3] === "null" ? "admin-json-null" : "admin-json-b";
+        out += `<span class="${cls}">${escapeHtml(m[3])}</span>`;
+      } else if (m[4]) {
+        out += `<span class="admin-json-p">${escapeHtml(m[4])}</span>`;
+      }
+      last = m.index + m[0].length;
+    }
+    out += escapeHtml(text.slice(last));
+    // keep final line height stable
+    if (out.endsWith("\n") || text.endsWith("\n")) out += "<br/>";
+    return out;
+  };
+
+  let hlTimer = null;
+  const syncHighlight = () => {
+    if (hlTimer) window.clearTimeout(hlTimer);
+    hlTimer = window.setTimeout(() => {
+      prettyEl.innerHTML = highlightJson(jsonEl.value || "");
+      // sync scroll
+      prettyEl.scrollTop = jsonEl.scrollTop;
+      prettyEl.scrollLeft = jsonEl.scrollLeft;
+    }, 20);
+  };
+
+  const syncScroll = () => {
+    prettyEl.scrollTop = jsonEl.scrollTop;
+    prettyEl.scrollLeft = jsonEl.scrollLeft;
+  };
+
+  const META = {
+    alert_enabled: { label: "Enable alerts", help: "Turns alerting on/off globally." },
+    alert_threshold_pct: { label: "Threshold (%)", help: "Minimum percent drop required to trigger an alert." },
+    alert_history_cycles: { label: "History cycles", help: "How many past cycles to compare against." },
+    alert_min_total_results: { label: "Min results", help: "Ignore items with fewer total results than this." },
+    alert_min_floor_listings: { label: "Min floor listings", help: "Minimum listings required to treat the floor as reliable." },
+    alert_floor_band_pct: { label: "Floor band (%)", help: "Treat listings within this percent of the floor as the floor band." },
+    alert_low_liquidity_extra_drop_pct: { label: "Low-liquidity extra drop (%)", help: "Extra drop required when liquidity is low." },
+    alert_cooldown_cycles: { label: "Cooldown cycles", help: "Minimum cycles between alerts for the same item." },
+  };
+
+  const renderFields = (value) => {
+    fieldsEl.innerHTML = "";
+    currentParsed = value;
+
+    // Only render a nice editor for plain objects (the expected app_config shape).
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      const note = document.createElement("p");
+      note.className = "admin-muted";
+      note.textContent = "This value is not a JSON object. Use Advanced JSON.";
+      fieldsEl.appendChild(note);
+      return;
+    }
+
+    const keys = Object.keys(value).sort((a, b) => {
+      const aHas = Object.prototype.hasOwnProperty.call(META, a);
+      const bHas = Object.prototype.hasOwnProperty.call(META, b);
+      if (aHas && !bHas) return -1;
+      if (!aHas && bHas) return 1;
+      return a.localeCompare(b);
+    });
+    if (!keys.length) {
+      const note = document.createElement("p");
+      note.className = "admin-muted";
+      note.textContent = "Empty object. Edit in Advanced JSON.";
+      fieldsEl.appendChild(note);
+      return;
+    }
+
+    for (const k of keys) {
+      const row = document.createElement("div");
+      row.className = "admin-marketcfg-field";
+
+      const labelWrap = document.createElement("div");
+      labelWrap.className = "admin-marketcfg-label";
+      const meta = META[k] || null;
+      const title = document.createElement("strong");
+      title.textContent = meta?.label || k;
+      const help = document.createElement("div");
+      help.className = "admin-marketcfg-help";
+      help.textContent = meta?.help || `Key: ${k}`;
+      labelWrap.appendChild(title);
+      labelWrap.appendChild(help);
+
+      const wrap = document.createElement("div");
+      wrap.className = "admin-marketcfg-control";
+
+      const v = value[k];
+      const inputId = `appcfg_${k}`;
+
+      if (typeof v === "boolean") {
+        const label = document.createElement("label");
+        label.className = "admin-marketcfg-toggle";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.id = inputId;
+        cb.checked = v;
+        cb.setAttribute("data-key", k);
+        cb.setAttribute("data-kind", "bool");
+        label.appendChild(cb);
+        const txt = document.createElement("span");
+        txt.textContent = v ? "Enabled" : "Disabled";
+        cb.addEventListener("change", () => {
+          txt.textContent = cb.checked ? "Enabled" : "Disabled";
+        });
+        label.appendChild(txt);
+        wrap.appendChild(label);
+      } else if (typeof v === "number") {
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.className = "admin-appconfig-input admin-appconfig-num";
+        inp.id = inputId;
+        inp.value = String(v);
+        inp.setAttribute("data-key", k);
+        inp.setAttribute("data-kind", "number");
+        // allow decimals
+        inp.step = "any";
+        wrap.appendChild(inp);
+      } else if (typeof v === "string") {
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.className = "admin-appconfig-input";
+        inp.id = inputId;
+        inp.value = v;
+        inp.setAttribute("data-key", k);
+        inp.setAttribute("data-kind", "string");
+        wrap.appendChild(inp);
+      } else {
+        // fallback: show JSON for nested values, still editable.
+        const inp = document.createElement("textarea");
+        inp.className = "admin-db-sql";
+        inp.style.minHeight = "80px";
+        inp.value = JSON.stringify(v, null, 2);
+        inp.setAttribute("data-key", k);
+        inp.setAttribute("data-kind", "json");
+        wrap.appendChild(inp);
+      }
+
+      row.appendChild(labelWrap);
+      row.appendChild(wrap);
+      fieldsEl.appendChild(row);
+    }
+  };
+
+  const readFieldsToObject = () => {
+    // If not a plain object, just rely on raw JSON editor.
+    if (!currentParsed || typeof currentParsed !== "object" || Array.isArray(currentParsed)) return null;
+    const out = { ...currentParsed };
+    const inputs = fieldsEl.querySelectorAll("[data-key][data-kind]");
+    for (const el of inputs) {
+      const key = el.getAttribute("data-key");
+      const kind = el.getAttribute("data-kind");
+      if (!key || !kind) continue;
+      if (kind === "bool") {
+        out[key] = !!el.checked;
+      } else if (kind === "number") {
+        const n = Number(el.value);
+        if (!Number.isFinite(n)) throw new Error(`Invalid number for "${key}"`);
+        out[key] = n;
+      } else if (kind === "string") {
+        out[key] = String(el.value ?? "");
+      } else if (kind === "json") {
+        const raw = String(el.value || "").trim();
+        out[key] = raw ? JSON.parse(raw) : null;
+      }
+    }
+    return out;
+  };
+
+  const loadMarket = async () => {
+    setHint("Loading…");
+    reloadBtn.disabled = true;
+    try {
+      const payload = await fetchJson(`/api/admin/app-config/get?key=${encodeURIComponent(KEY)}`);
+      if (!payload?.ok) {
+        setHint(payload?.error || "Not found.", true);
+        return;
+      }
+      jsonEl.value = payload?.value_json || "";
+      syncHighlight();
+      try {
+        const parsed = JSON.parse(jsonEl.value || "null");
+        renderFields(parsed);
+      } catch {
+        renderFields(null);
+      }
+      setHint(payload?.updated_at_utc ? `Loaded · updated ${payload.updated_at_utc}` : "Loaded.");
+    } catch (e) {
+      setHint(adminEndpointErrorMessage(e, "Load market config"), true);
+    } finally {
+      reloadBtn.disabled = false;
+    }
+  };
+
+  const formatJson = () => {
+    const raw = (jsonEl.value || "").trim();
+    if (!raw) {
+      setHint("Nothing to format.", true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      jsonEl.value = JSON.stringify(parsed, null, 2);
+      syncHighlight();
+      renderFields(parsed);
+      setHint("Formatted.");
+    } catch (e) {
+      setHint(`Invalid JSON: ${e?.message || e}`, true);
+    }
+  };
+
+  const saveKey = async () => {
+    // Prefer the form editor (fields) when possible.
+    let raw = "";
+    try {
+      const fromFields = readFieldsToObject();
+      if (fromFields) {
+        raw = JSON.stringify(fromFields, null, 2);
+        jsonEl.value = raw; // keep advanced view in sync
+        syncHighlight();
+      } else {
+        raw = (jsonEl.value || "").trim();
+      }
+    } catch (e) {
+      setHint(e?.message ? String(e.message) : `Invalid value: ${e}`, true);
+      return;
+    }
+    if (!raw) {
+      setHint("Value is empty.", true);
+      return;
+    }
+    // Validate client-side before sending.
+    try {
+      JSON.parse(raw);
+    } catch (e) {
+      setHint(`Invalid JSON: ${e?.message || e}`, true);
+      return;
+    }
+    setHint("Saving…");
+    saveBtn.disabled = true;
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/app-config/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: KEY, value_json: raw }),
+      });
+      if (!payload?.ok) {
+        setHint(payload?.error || "Save failed.", true);
+        return;
+      }
+      // Server returns normalized JSON.
+      if (typeof payload.value_json === "string") {
+        jsonEl.value = payload.value_json;
+        syncHighlight();
+        try {
+          renderFields(JSON.parse(payload.value_json));
+        } catch {
+          // ignore
+        }
+      }
+      setHint(payload?.updated_at_utc ? `Saved · updated ${payload.updated_at_utc}` : "Saved.");
+    } catch (e) {
+      setHint(adminEndpointErrorMessage(e, "Save market config"), true);
+    } finally {
+      saveBtn.disabled = false;
+    }
+  };
+
+  saveBtn.addEventListener("click", () => void saveKey());
+  fmtBtn.addEventListener("click", () => formatJson());
+  reloadBtn.addEventListener("click", () => void loadMarket());
+
+  jsonEl.addEventListener("input", () => {
+    syncHighlight();
+    // Keep fields in sync if user edits raw JSON.
+    try {
+      const parsed = JSON.parse(jsonEl.value || "null");
+      renderFields(parsed);
+      setHint("");
+    } catch {
+      // don't spam warnings while typing
+    }
+  });
+
+  jsonEl.addEventListener("scroll", syncScroll);
+
+  // Keyboard helpers.
+  jsonEl.addEventListener("keydown", (ev) => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") {
+      ev.preventDefault();
+      void saveKey();
+    }
+  });
+
+  // Initial paint
+  syncHighlight();
+  void loadMarket();
+}
+
 function setupRestartPoller() {
   const btn = document.getElementById("restartPollerBtn");
   const hint = document.getElementById("adminPollerHint");
@@ -1682,6 +2026,7 @@ function setupMapResize() {
 function main() {
   setupCsvDownload();
   setupClearData();
+  setupMarketConfigEditor();
   setupStopPoller();
   setupRestartPoller();
   setupMapResize();

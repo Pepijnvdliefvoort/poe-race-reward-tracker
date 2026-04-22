@@ -28,6 +28,7 @@
         <h1>Admin panel</h1>
       </div>
       <div class="admin-header-actions">
+        <a href="/admin/db" class="admin-btn admin-btn-ghost">DB explorer</a>
         <a href="/" class="admin-btn admin-btn-ghost">← Dashboard</a>
       </div>
     </header>
@@ -166,15 +167,46 @@
     <section class="admin-section">
       <div class="admin-section-head admin-section-head-row">
         <div>
-          <h2>Data</h2>
-          <p class="admin-muted">Clear market data from SQLite, or restart the poller process.</p>
+          <h2>Alerting config</h2>
+          <p class="admin-muted">
+            This edits <code>app_config.market</code> (SQLite). Changes affect alerting behavior.
+          </p>
         </div>
         <div class="admin-header-actions">
-          <button id="clearDataBtn" class="admin-btn admin-btn-danger" type="button">Clear data</button>
+          <button id="marketCfgSaveBtn" class="admin-btn" type="button">Save</button>
         </div>
       </div>
-      <p id="adminDataHint" class="admin-muted" aria-live="polite"></p>
-      <p id="adminPollerHint" class="admin-muted" aria-live="polite"></p>
+
+      <div class="admin-marketcfg" aria-label="Market config editor">
+        <div class="admin-marketcfg-card">
+          <div id="marketCfgFields" class="admin-marketcfg-fields"></div>
+          <p id="marketCfgHint" class="admin-muted" aria-live="polite" style="margin-top: 10px"></p>
+        </div>
+
+        <div class="admin-marketcfg-card">
+          <details class="admin-marketcfg-advanced" open>
+            <summary class="admin-marketcfg-summary">Advanced JSON</summary>
+            <div class="admin-json-editor" aria-label="JSON editor">
+              <pre id="marketCfgJsonPretty" class="admin-json-pretty" aria-hidden="true"></pre>
+              <textarea
+                id="marketCfgJson"
+                class="admin-json-textarea"
+                spellcheck="false"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+              ></textarea>
+            </div>
+            <div class="admin-marketcfg-advanced-actions">
+              <button id="marketCfgFormatBtn" class="admin-btn admin-btn-ghost" type="button">Format</button>
+              <button id="marketCfgReloadBtn" class="admin-btn admin-btn-ghost" type="button">Reload</button>
+            </div>
+            <p class="admin-muted" style="margin-top: 10px">
+              Tip: press <code>Ctrl+S</code> / <code>Cmd+S</code> in this box to save.
+            </p>
+          </details>
+        </div>
+      </div>
     </section>
 
     <section class="admin-section">
@@ -195,6 +227,20 @@
           <tbody id="visitorTableBody"></tbody>
         </table>
       </div>
+    </section>
+
+    <section class="admin-section">
+      <div class="admin-section-head admin-section-head-row">
+        <div>
+          <h2>Data</h2>
+          <p class="admin-muted">Clear market data from SQLite, or restart the poller process.</p>
+        </div>
+        <div class="admin-header-actions">
+          <button id="clearDataBtn" class="admin-btn admin-btn-danger" type="button">Clear data</button>
+        </div>
+      </div>
+      <p id="adminDataHint" class="admin-muted" aria-live="polite"></p>
+      <p id="adminPollerHint" class="admin-muted" aria-live="polite"></p>
     </section>
 
     <footer class="admin-footer">

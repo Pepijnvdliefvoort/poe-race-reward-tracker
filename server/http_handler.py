@@ -5,6 +5,8 @@ import os
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from pathlib import Path
+from datetime import datetime, timezone
 
 from .admin_service import (
     POLLER_LOG_PATH,
@@ -28,12 +30,13 @@ from .admin_service import (
     visitor_map_payload,
 )
 from .data_service import WEB_DIR, fetch_listing_preview, load_config, load_price_data, save_config
-from pathlib import Path
+from .db_admin_service import db_overview, er_schema, list_tables, preview_table, run_query, table_details
 
 from storage.db import Database
 
 from .data_service import ROOT_DIR
 from .stats_service import system_stats_payload
+from server.storage_service import ServerStorage
 
 _ADMIN_UNAUTHORIZED_HTML = WEB_DIR / "admin-unauthorized.html"
 
@@ -156,7 +159,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         cookie_header = self.headers.get("Cookie")
 
         if admin_security_enabled() and (
-            req_path in {"/admin", "/admin/"} or req_path.startswith("/api/admin/")
+            req_path in {"/admin", "/admin/", "/admin/db", "/admin/db/"} or req_path.startswith("/api/admin/")
         ):
             if self._reject_if_admin_ip_locked(want_json=req_path.startswith("/api/admin/")):
                 return
@@ -177,6 +180,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_admin_unauthorized_page()
                 return
 
+        if req_path in {"/admin/db", "/admin/db/"} and os.environ.get("ADMIN_TOKEN", "").strip():
+            if not admin_authorized(auth_header, token_param, cookie_header):
+                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
+                self._send_admin_unauthorized_page()
+                return
+
+        # Prevent direct access to the underlying admin HTML file.
+        # The canonical route is /admin/db (which is auth-protected).
+        if req_path in {"/db.html"} and os.environ.get("ADMIN_TOKEN", "").strip():
+            if not admin_authorized(auth_header, token_param, cookie_header):
+                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
+                self._send_admin_unauthorized_page()
+                return
+            q = parsed.query
+            loc = "/admin/db" + (f"?{q}" if q else "")
+            self.send_response(302)
+            self.send_header("Location", loc)
+            self.end_headers()
+            return
+
         if req_path.startswith("/api/admin/"):
             if not admin_authorized(auth_header, token_param, cookie_header):
                 self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
@@ -190,6 +213,132 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             self._note_admin_auth_success()
+
+            if req_path == "/api/admin/db/overview":
+                payload = db_overview(root_dir=ROOT_DIR)
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200 if payload.get("ok") else 500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if req_path == "/api/admin/db/tables":
+                payload = list_tables(root_dir=ROOT_DIR)
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200 if payload.get("ok") else 500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if req_path == "/api/admin/db/er":
+                payload = er_schema(root_dir=ROOT_DIR)
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200 if payload.get("ok") else 500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if req_path == "/api/admin/db/table":
+                name = (params.get("name", [""])[0] or "").strip()
+                payload = table_details(root_dir=ROOT_DIR, name=name)
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200 if payload.get("ok") else 404)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if req_path == "/api/admin/db/preview":
+                name = (params.get("name", [""])[0] or "").strip()
+                limit_raw = params.get("limit", ["100"])[0]
+                try:
+                    limit = int(limit_raw)
+                except ValueError:
+                    limit = 100
+                payload = preview_table(root_dir=ROOT_DIR, name=name, limit=limit)
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200 if payload.get("ok") else 400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if req_path == "/api/admin/app-config":
+                # List available app_config keys.
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    rows = con.execute("SELECT key, updated_at_utc FROM app_config ORDER BY key ASC").fetchall()
+                    items = [{"key": str(r["key"]), "updated_at_utc": str(r["updated_at_utc"] or "")} for r in rows]
+                finally:
+                    con.close()
+                body = json.dumps({"ok": True, "items": items}, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if req_path == "/api/admin/app-config/get":
+                key = (params.get("key", [""])[0] or "").strip()
+                if not key:
+                    body = json.dumps({"ok": False, "error": "Missing key"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    row = con.execute(
+                        "SELECT key, value_json, updated_at_utc FROM app_config WHERE key = ?",
+                        (key,),
+                    ).fetchone()
+                finally:
+                    con.close()
+                if not row:
+                    body = json.dumps({"ok": False, "error": "Not found"}).encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                raw = str(row["value_json"] or "")
+                # Pretty-print JSON when possible (so the editor has readable defaults).
+                try:
+                    parsed = json.loads(raw)
+                    raw = json.dumps(parsed, ensure_ascii=False, sort_keys=True, indent=2)
+                except Exception:
+                    pass
+                payload = {"ok": True, "key": str(row["key"]), "value_json": raw, "updated_at_utc": str(row["updated_at_utc"] or "")}
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
 
             if req_path.rstrip("/").endswith("/stats"):
                 payload = system_stats_payload()
@@ -368,6 +517,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             q = parsed.query
             self.path = "/admin.html" + (f"?{q}" if q else "")
 
+        if parsed.path in {"/admin/db", "/admin/db/"}:
+            self._note_admin_auth_success()
+            q = parsed.query
+            self.path = "/db.html" + (f"?{q}" if q else "")
+
         if parsed.path in {"/", ""}:
             self.path = "/index.html"
 
@@ -396,6 +550,97 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             self._note_admin_auth_success()
+
+            if parsed.path == "/api/admin/db/query":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    data = json.loads(raw or b"{}")
+                except Exception:
+                    data = {}
+                sql = (data.get("sql") if isinstance(data, dict) else "") or ""
+                limit_raw = (data.get("limit") if isinstance(data, dict) else None) or 200
+                try:
+                    limit = int(limit_raw)
+                except Exception:
+                    limit = 200
+                payload = run_query(root_dir=ROOT_DIR, sql=str(sql), limit=limit)
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200 if payload.get("ok") else 400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/app-config/set":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    data = json.loads(raw or b"{}")
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+                key = str(data.get("key") or "").strip()
+                value_raw = data.get("value_json")
+                value_raw = str(value_raw or "").strip()
+                if not key:
+                    body = json.dumps({"ok": False, "error": "Missing key"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if not value_raw:
+                    body = json.dumps({"ok": False, "error": "Missing value_json"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                try:
+                    parsed_json = json.loads(value_raw)
+                    normalized = json.dumps(parsed_json, ensure_ascii=False, sort_keys=True, indent=2)
+                except Exception as exc:  # noqa: BLE001
+                    body = json.dumps({"ok": False, "error": f"Invalid JSON: {exc}"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                updated_at = datetime.now(timezone.utc).isoformat()
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    con.execute(
+                        """
+                        INSERT INTO app_config(key, value_json, updated_at_utc)
+                        VALUES(?, ?, ?)
+                        ON CONFLICT(key) DO UPDATE SET
+                          value_json=excluded.value_json,
+                          updated_at_utc=excluded.updated_at_utc
+                        """,
+                        (key, normalized, updated_at),
+                    )
+                    con.commit()
+                finally:
+                    con.close()
+                body = json.dumps({"ok": True, "key": key, "value_json": normalized, "updated_at_utc": updated_at}, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
 
             if parsed.path == "/api/admin/clear-data":
                 # SQLite is authoritative. Clear it first.

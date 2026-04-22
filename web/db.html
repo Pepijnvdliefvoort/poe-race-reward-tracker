@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Admin — DB Explorer</title>
+    <meta name="robots" content="noindex,nofollow" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/variables.css" />
+    <link rel="stylesheet" href="/css/admin.css" />
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+      window.__mermaid = mermaid;
+    </script>
+    <script type="module" src="/js/db_explorer.js"></script>
+  </head>
+  <body>
+    <div class="admin-bg" aria-hidden="true"></div>
+    <header class="admin-header">
+      <div>
+        <p class="admin-eyebrow">Operations</p>
+        <h1>DB explorer</h1>
+      </div>
+      <div class="admin-header-actions">
+        <button id="dbRefreshBtn" class="admin-btn admin-btn-ghost" type="button">Refresh</button>
+        <a href="/admin" class="admin-btn admin-btn-ghost">← Admin</a>
+        <a href="/" class="admin-btn admin-btn-ghost">← Dashboard</a>
+      </div>
+    </header>
+
+    <p id="dbAuthHint" class="admin-hint"></p>
+
+    <section class="admin-section">
+      <div class="admin-section-head admin-section-head-row">
+        <div>
+          <h2>Database</h2>
+          <p class="admin-muted">Inspect SQLite schema and run ad-hoc SELECT queries.</p>
+        </div>
+      </div>
+
+      <div class="admin-db-layout" id="dbLayout">
+        <aside class="admin-db-sidebar" aria-label="Database objects">
+          <div class="admin-db-card">
+            <p class="admin-muted">File</p>
+            <p id="dbFilePath" class="admin-db-path" style="margin: 0"><code>—</code></p>
+            <p class="admin-muted" style="margin-top: 10px">Attached DBs</p>
+            <div id="dbDatabaseList" class="admin-db-list"></div>
+          </div>
+
+          <div class="admin-db-card" style="margin-top: 14px">
+            <p class="admin-muted">Tables</p>
+            <div id="dbTablesList" class="admin-db-list" role="list"></div>
+          </div>
+        </aside>
+
+        <main class="admin-db-main" aria-label="Database viewer">
+          <div class="admin-db-card">
+            <div class="admin-db-tabs" role="tablist" aria-label="DB explorer tabs">
+              <button class="admin-pill" id="tabStructure" type="button" role="tab" aria-selected="true">
+                Structure
+              </button>
+              <button class="admin-pill" id="tabData" type="button" role="tab" aria-selected="false">Data</button>
+              <button class="admin-pill" id="tabSql" type="button" role="tab" aria-selected="false">SQL</button>
+            </div>
+
+            <div id="panelStructure" class="admin-db-panel" role="tabpanel" aria-label="Table structure">
+              <p id="dbSelectedHint" class="admin-muted">Select a table on the left.</p>
+              <div id="dbErWrap" class="admin-db-er" aria-label="ER diagram">
+                <div id="dbErDiagram" class="admin-db-er-diagram"></div>
+              </div>
+              <div id="dbStructureWrap" hidden>
+                <h3 style="margin: 12px 0 6px 0">Columns</h3>
+                <div class="admin-table-wrap">
+                  <table class="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Not null</th>
+                        <th>Default</th>
+                        <th>PK</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dbColumnsBody"></tbody>
+                  </table>
+                </div>
+
+                <h3 style="margin: 18px 0 6px 0">Indexes</h3>
+                <div class="admin-table-wrap">
+                  <table class="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Unique</th>
+                        <th>Origin</th>
+                        <th>Partial</th>
+                        <th>Columns</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dbIndexesBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div id="panelData" class="admin-db-panel" role="tabpanel" aria-label="Table data" hidden>
+              <p class="admin-muted" style="margin-top: 0">
+                Showing up to <code>100</code> rows. Use the SQL tab for filtering/joining.
+              </p>
+              <div class="admin-table-wrap">
+                <table class="admin-table" id="dbDataTable">
+                  <thead id="dbDataHead"></thead>
+                  <tbody id="dbDataBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div id="panelSql" class="admin-db-panel" role="tabpanel" aria-label="SQL editor" hidden>
+              <div class="admin-db-sqlbar">
+                <button id="dbRunSqlBtn" class="admin-btn" type="button">Run</button>
+                <label class="admin-muted" style="margin-left: 10px">
+                  Row limit:
+                  <input id="dbRowLimit" class="admin-db-limit" type="number" min="1" max="5000" value="200" />
+                </label>
+              </div>
+              <div class="admin-db-sqlwrap">
+                <textarea
+                  id="dbSqlText"
+                  class="admin-db-sql"
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  placeholder="SELECT * FROM item_polls ORDER BY requested_at_utc DESC LIMIT 50;"
+                ></textarea>
+                <div id="dbSqlSuggest" class="admin-db-suggest" hidden role="listbox" aria-label="SQL suggestions"></div>
+              </div>
+              <p id="dbSqlHint" class="admin-muted" aria-live="polite"></p>
+              <div class="admin-table-wrap" id="dbSqlResultsWrap" hidden>
+                <table class="admin-table" id="dbSqlResultsTable">
+                  <thead id="dbSqlHead"></thead>
+                  <tbody id="dbSqlBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </section>
+  </body>
+</html>
+
