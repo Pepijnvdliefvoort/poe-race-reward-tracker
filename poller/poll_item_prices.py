@@ -1530,7 +1530,7 @@ def run_cycle(
                     since = (datetime.now(timezone.utc) - timedelta(days=int(sales_window_days))).isoformat()
                     total_est = storage.sum_estimated_sales_since(variant_id=variant_id, since_utc_iso=since)
                     log_line(
-                        "sales_discord",
+                        "alert",
                         (
                             f"Est. sales alert fired: {item.name} delta={cycle_est} "
                             f"(xfer={inf.confirmed_transfer} instant={inf.likely_instant_sale}) "

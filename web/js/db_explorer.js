@@ -656,7 +656,6 @@ function main() {
   setupTabs();
   setActiveTab("structure");
 
-  document.getElementById("dbRefreshBtn")?.addEventListener("click", () => void refreshAll());
   document.getElementById("dbRunSqlBtn")?.addEventListener("click", () => void runSql());
   const sqlTa = document.getElementById("dbSqlText");
   sqlTa?.addEventListener("input", () => void updateSqlSuggest());

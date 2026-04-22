@@ -76,6 +76,6 @@ def send_estimated_sales_change_notification(
         confirmed_transfer=confirmed_transfer,
         likely_instant_sale=likely_instant_sale,
     )
-    payload: dict[str, Any] = {"embeds": [embed]}
+    payload: dict[str, Any] = {"content": "@here", "embeds": [embed]}
     resp = session.post(webhook_url, json=payload, timeout=10.0)
     resp.raise_for_status()
