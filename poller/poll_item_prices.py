@@ -28,11 +28,11 @@ DEFAULT_OUTPUT_FILE = "price_poll.csv"
 DEFAULT_CONFIG_FILE = "config.json"
 DEFAULT_LISTINGS_CACHE_FILE = Path("web") / "listings_cache.json"
 LISTINGS_CACHE_MAX_ENTRIES = 1000
-TOP_IDS_LIMIT = 25
+TOP_IDS_LIMIT = 20
 # Trade search returns a bounded `result` id list (GGG caps the page; 100 matches common use).
 # Tracked items here stay under that depth, so this fetches every ID returned for inference.
 # Pricing/listing preview stay on TOP_IDS_LIMIT above.
-INFERENCE_LISTINGS_FETCH_CAP = 100
+DEFAULT_INFERENCE_LISTINGS_FETCH_CAP = 20
 DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
@@ -77,10 +77,21 @@ VERY_LOW_HEADROOM_THRESHOLD = 0.08
 RESERVE_RATIO = 0.20
 
 
+def log_line(source: str, message: str) -> None:
+    """Emit one structured log line.
+
+    The structured logging tee adds the timestamp prefix; we add a consistent `[source]` tag.
+    """
+    src = source.strip() or "poller"
+    msg = message.strip()
+    print(f"[{src}] {msg}")
+
+
 @dataclass
 class Config:
     poll_interval: int
     max_cycles: int | None
+    inference_fetch_cap: int
 
 
 @dataclass
@@ -143,7 +154,7 @@ def load_alert_config() -> AlertConfig:
             webhook_url=webhook_url,
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"Warning: Could not load alert config: {exc}")
+        log_line("warn", f"Could not load alert config: {exc}")
         return AlertConfig(
             enabled=False,
             threshold_pct=30.0,
@@ -180,7 +191,7 @@ def seed_price_history(output_csv: Path, history_cycles: int) -> dict[str, list[
         for key, values in list(history.items()):
             history[key] = values[-history_cycles:]
     except Exception as exc:  # noqa: BLE001
-        print(f"Warning: Could not seed price history from CSV: {exc}")
+        log_line("warn", f"Could not seed price history from CSV: {exc}")
     return history
 
 
@@ -244,9 +255,9 @@ def send_discord_alert(
             timeout=10.0,
         )
         resp.raise_for_status()
-        print(f"Discord alert sent for {item.name} ({pct_drop:.1f}% below baseline)")
+        log_line("alert", f"Discord alert sent for {item.name} ({pct_drop:.1f}% below baseline)")
     except Exception as exc:  # noqa: BLE001
-        print(f"Warning: Failed to send Discord alert for {item.name}: {exc}")
+        log_line("warn", f"Failed to send Discord alert for {item.name}: {exc}")
 
 
 @dataclass
@@ -274,6 +285,16 @@ def parse_args() -> Config:
         default=None,
         help="Stop after this many cycles (omit to run indefinitely)",
     )
+    parser.add_argument(
+        "--inference-cap",
+        type=int,
+        default=None,
+        help=(
+            "How many search result IDs to fetch for sale inference per item (0 disables). "
+            f"Default comes from {DEFAULT_CONFIG_FILE} key 'inference_listings_fetch_cap' "
+            f"or falls back to {DEFAULT_INFERENCE_LISTINGS_FETCH_CAP}."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -281,8 +302,34 @@ def parse_args() -> Config:
         raise SystemExit("--poll-interval must be > 0")
     if args.max_cycles is not None and args.max_cycles <= 0:
         raise SystemExit("--max-cycles must be > 0")
+    if args.inference_cap is not None and args.inference_cap < 0:
+        raise SystemExit("--inference-cap must be >= 0")
 
-    return Config(poll_interval=args.poll_interval, max_cycles=args.max_cycles)
+    inference_cap = load_inference_fetch_cap(args.inference_cap)
+    return Config(
+        poll_interval=args.poll_interval,
+        max_cycles=args.max_cycles,
+        inference_fetch_cap=inference_cap,
+    )
+
+
+def load_inference_fetch_cap(cli_override: int | None) -> int:
+    if cli_override is not None:
+        return int(cli_override)
+
+    path = Path(DEFAULT_CONFIG_FILE)
+    if not path.exists():
+        return DEFAULT_INFERENCE_LISTINGS_FETCH_CAP
+
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        raw = data.get("inference_listings_fetch_cap", DEFAULT_INFERENCE_LISTINGS_FETCH_CAP)
+        value = int(raw)
+        return max(0, value)
+    except Exception as exc:  # noqa: BLE001
+        log_line("warn", f"Could not load inference fetch cap from config: {exc}")
+        return DEFAULT_INFERENCE_LISTINGS_FETCH_CAP
 
 
 def build_session() -> requests.Session:
@@ -339,6 +386,7 @@ class AdaptiveRateLimiter:
         self,
         headers: requests.structures.CaseInsensitiveDict[str],
         status_code: int,
+        request_label: str = "",
     ) -> None:
         windows = self._parse_windows(headers)
         if not windows:
@@ -353,7 +401,7 @@ class AdaptiveRateLimiter:
         )
         self._next_allowed_at = max(self._next_allowed_at, observed_at + wait_seconds)
 
-        self._log_live_status(windows, wait_seconds, status_code)
+        self._log_live_status(windows, wait_seconds, status_code, request_label=request_label)
 
     def _parse_retry_after(self, raw: str | None) -> int | None:
         if raw is None:
@@ -480,7 +528,13 @@ class AdaptiveRateLimiter:
         reserve = max(1, math.ceil(max_requests * RESERVE_RATIO))
         return min(max_requests - 1, reserve)
 
-    def _log_live_status(self, windows: list[RateWindowState], next_wait: float, status_code: int) -> None:
+    def _log_live_status(
+        self,
+        windows: list[RateWindowState],
+        next_wait: float,
+        status_code: int,
+        request_label: str = "",
+    ) -> None:
         parts: list[str] = []
         for window in windows:
             remaining = max(0, window.max_requests - window.used_requests)
@@ -490,10 +544,9 @@ class AdaptiveRateLimiter:
             )
 
         summary = " | ".join(parts)
-        print(
-            f"Rate monitor: status={status_code} {summary}; "
-            f"next request in ~{next_wait:.2f}s"
-        )
+        label = request_label.strip()
+        source = label or "rate"
+        log_line(source, f"status={status_code} {summary}; next in ~{next_wait:.2f}s")
 
 
 def parse_item_spec_line(line: str) -> ItemSpec:
@@ -598,7 +651,8 @@ def search_item(
 
     rate_limiter.wait_before_request()
     response = session.post(url, data=json.dumps(payload), timeout=30.0)
-    rate_limiter.update_from_response(response.headers, response.status_code)
+    label = "trade.search" if price_currency is None else f"trade.search[{price_currency}]"
+    rate_limiter.update_from_response(response.headers, response.status_code, request_label=label)
     response.raise_for_status()
 
     data = response.json()
@@ -648,7 +702,7 @@ def _fetch_listing_entries_batched(
         url = f"{url_base}{ids_joined}"
         rate_limiter.wait_before_request()
         response = session.get(url, params={"query": query_id}, timeout=30.0)
-        rate_limiter.update_from_response(response.headers, response.status_code)
+        rate_limiter.update_from_response(response.headers, response.status_code, request_label="trade.fetch")
         response.raise_for_status()
 
         data = response.json()
@@ -678,9 +732,12 @@ def fetch_listings_for_inference(
     rate_limiter: AdaptiveRateLimiter,
     query_id: str,
     result_ids: list[str],
+    cap: int,
 ) -> list[dict[str, Any]]:
-    """All listing payloads returned by search (same order), up to INFERENCE_LISTINGS_FETCH_CAP."""
-    ids = [x for x in result_ids if isinstance(x, str)][:INFERENCE_LISTINGS_FETCH_CAP]
+    """All listing payloads returned by search (same order), up to `cap`."""
+    if cap <= 0:
+        return []
+    ids = [x for x in result_ids if isinstance(x, str)][:cap]
     return _fetch_listing_entries_batched(session, rate_limiter, query_id, ids)
 
 
@@ -1141,7 +1198,7 @@ def fetch_mirror_divine_median(
 
     rate_limiter.wait_before_request()
     response = session.post(url, data=json.dumps(payload), timeout=30.0)
-    rate_limiter.update_from_response(response.headers, response.status_code)
+    rate_limiter.update_from_response(response.headers, response.status_code, request_label="trade.exchange")
     response.raise_for_status()
 
     data = response.json()
@@ -1155,11 +1212,11 @@ def fetch_mirror_divine_median(
         all_ids = list(result.keys())[:TOP_IDS_LIMIT]
         entries = [result[k] for k in all_ids]
     else:
-        print("Mirror of Kalandra: unexpected result format from exchange endpoint.")
+        log_line("trade.exchange", "Mirror of Kalandra: unexpected result format from exchange endpoint.")
         return None
 
     if not entries:
-        print("Mirror of Kalandra: no exchange listings found.")
+        log_line("trade.exchange", "Mirror of Kalandra: no exchange listings found.")
         return None
 
     divine_prices: list[float] = []
@@ -1183,13 +1240,13 @@ def fetch_mirror_divine_median(
             divine_prices.append(float(ex_amount) / float(it_amount))
 
     if not divine_prices:
-        print("Mirror of Kalandra: no valid divine-priced exchange listings in top 5.")
+        log_line("trade.exchange", "Mirror of Kalandra: no valid divine-priced exchange listings in top listings.")
         return None
 
     median_price = statistics.median(divine_prices)
-    print(
-        f"Mirror of Kalandra: top-{len(divine_prices)} median = "
-        f"{format_amount(median_price)} divine  (ratio updated)"
+    log_line(
+        "trade.exchange",
+        f"Mirror of Kalandra: top-{len(divine_prices)} median = {format_amount(median_price)} divine (ratio updated)",
     )
     return median_price
 
@@ -1221,9 +1278,9 @@ def ensure_csv_header(path: Path) -> None:
 
         backup_path = path.with_name(f"{path.stem}.pre-mirror-schema-{int(time.time())}{path.suffix}")
         path.rename(backup_path)
-        print(
-            f"Existing CSV header did not match current format. "
-            f"Backed up old file to {backup_path}."
+        log_line(
+            "warn",
+            f"Existing CSV header did not match current format. Backed up old file to {backup_path}.",
         )
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1299,6 +1356,7 @@ def run_cycle(
     price_history: dict[str, list[float]] | None = None,
     alert_state: dict[str, tuple[int, float]] | None = None,
     alert_config: AlertConfig | None = None,
+    inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
     listings_by_query_id = load_listings_cache(listings_cache_file)
@@ -1318,7 +1376,13 @@ def run_cycle(
         request_timestamp_utc = datetime.now(timezone.utc).isoformat()
         query_id, result_ids, total_results = search_item(session, rate_limiter, item)
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
-        listings_inference = fetch_listings_for_inference(session, rate_limiter, query_id, result_ids)
+        listings_inference = fetch_listings_for_inference(
+            session,
+            rate_limiter,
+            query_id,
+            result_ids,
+            cap=inference_fetch_cap,
+        )
         cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
         top_listing_summary = build_top_listing_summary(listings, divines_per_mirror)
         listing_preview_rows = build_listing_preview_entries(listings)
@@ -1485,22 +1549,21 @@ def run_cycle(
                 history.append(median_mirror)
                 price_history[item_key] = history[-(alert_config.history_cycles * 3):]
 
-        # Console display: use local time for readability (not stored, console-only)
-        display_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         index_width = len(str(total_items))
         index_label = f"{index:>{index_width}}/{total_items}"
         mode_label = item_mode_label(item)
-        mode_field = f"[{mode_label}]".ljust(max_mode_label_len + 2)
-        name_field = f"{item.name:<{max_name_len}}"
+        mode_field = f"[{mode_label}]"
+        name_field = item.name
         total_field = f"total={total_results:>3}"
-        print(
-            f"[{index_label}] [{display_time}] {name_field} {mode_field} "
-            f"{total_field}   cheapest={cheapest_text}"
+        log_line(
+            "item",
+            f"[{index_label}] {name_field} {mode_field} {total_field}  cheapest={cheapest_text}",
         )
         if xfer or instant or relist or nib or repr_seller or multi_fp or new_rows:
-            print(
-                f"         inference: xfer={xfer} instant_sale={instant} relist={relist} "
-                f"non_instant_offline?={nib} reprice={repr_seller} multi_seller_fp={multi_fp} new_rows={new_rows}"
+            log_line(
+                "inference",
+                f"           inference: xfer={xfer} instant_sale={instant} relist={relist} "
+                f"non_instant_offline?={nib} reprice={repr_seller} multi_seller_fp={multi_fp} new_rows={new_rows}",
             )
 
     listings_by_query_id = prune_listings_cache(listings_by_query_id)
@@ -1542,10 +1605,8 @@ def main() -> None:
 
     item_specs = load_item_specs(items_file)
 
-    print(f"Loaded {len(item_specs)} item(s) from {items_file}. Writing to {output_csv}.")
-    print(
-        f"Polling every {cfg.poll_interval} seconds aligned to start-time grid. Press Ctrl+C to stop."
-    )
+    log_line("cycle", f"Loaded {len(item_specs)} item(s) from {items_file}. Writing to {output_csv}.")
+    log_line("cycle", f"Polling every {cfg.poll_interval} seconds aligned to start-time grid. Press Ctrl+C to stop.")
 
     start_monotonic = time.monotonic()
     cycle = 0
@@ -1555,27 +1616,31 @@ def main() -> None:
     alert_config = load_alert_config()
     price_history = seed_price_history(output_csv, alert_config.history_cycles)
     alert_state: dict[str, tuple[int, float]] = {}
-    print(
-        f"Alert config: enabled={alert_config.enabled}, "
+    log_line(
+        "cycle",
+        "Alert config: "
+        f"enabled={alert_config.enabled}, "
         f"threshold={alert_config.threshold_pct}%, "
         f"history_cycles={alert_config.history_cycles}, "
         f"min_total_results={alert_config.min_total_results}, "
         f"min_floor_listings={alert_config.min_floor_listings}, "
         f"floor_band_pct={alert_config.floor_band_pct}%, "
         f"low_liquidity_extra_drop_pct={alert_config.low_liquidity_extra_drop_pct}%, "
-        f"cooldown_cycles={alert_config.cooldown_cycles}"
+        f"cooldown_cycles={alert_config.cooldown_cycles}",
     )
     if alert_config.enabled and not alert_config.webhook_url:
-        print(
-            "Warning: Alerts are enabled but no Discord webhook secret is set. "
-            "Set DISCORD_WEBHOOK_URL (or POE_DISCORD_WEBHOOK_URL)."
+        log_line(
+            "warn",
+            "Alerts are enabled but no Discord webhook secret is set. "
+            "Set DISCORD_WEBHOOK_URL (or POE_DISCORD_WEBHOOK_URL).",
         )
 
     while cfg.max_cycles is None or cycle < cfg.max_cycles:
         cycle += 1
         # Console display: use local time for readability (not stored, console-only)
         cycle_start = datetime.now().strftime("%H:%M:%S")
-        print(f"\nCycle {cycle} start at {cycle_start}")
+        print("")
+        log_line("cycle", f"Cycle {cycle} start at {cycle_start}")
 
         # Reload alert config each cycle so UI changes take effect without restart.
         alert_config = load_alert_config()
@@ -1584,17 +1649,18 @@ def main() -> None:
             divines_per_mirror = run_cycle(
                 session, rate_limiter, output_csv, listings_cache_file, item_specs, cycle,
                 divines_per_mirror, price_history, alert_state, alert_config,
+                inference_fetch_cap=cfg.inference_fetch_cap,
             )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "?"
-            print(f"HTTP error during cycle {cycle}: status={status} error={exc}")
+            log_line("error", f"HTTP error during cycle {cycle}: status={status} error={exc}")
         except requests.RequestException as exc:
-            print(f"Request error during cycle {cycle}: {exc}")
+            log_line("error", f"Request error during cycle {cycle}: {exc}")
         except Exception as exc:  # noqa: BLE001
-            print(f"Unexpected error during cycle {cycle}: {exc}")
+            log_line("error", f"Unexpected error during cycle {cycle}: {exc}")
 
         if cfg.max_cycles is not None and cycle >= cfg.max_cycles:
-            print(f"Reached max-cycles ({cfg.max_cycles}). Stopping.")
+            log_line("cycle", f"Reached max-cycles ({cfg.max_cycles}). Stopping.")
             break
 
         sleep_seconds = seconds_until_next_tick(
@@ -1605,7 +1671,7 @@ def main() -> None:
         # Console display: use local time for readability (not stored, console-only)
         next_run = datetime.now().timestamp() + sleep_seconds
         next_run_text = datetime.fromtimestamp(next_run).strftime("%H:%M:%S")
-        print(f"Cycle {cycle} complete. Sleeping {int(sleep_seconds)}s until {next_run_text}")
+        log_line("cycle", f"Cycle {cycle} complete. Sleeping {int(sleep_seconds)}s until {next_run_text}")
         time.sleep(sleep_seconds)
 
 

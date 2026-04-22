@@ -243,6 +243,19 @@ function setupLogConsoleWindowControls() {
   const taskbarEl = document.getElementById("adminLogTaskbar");
   if (!splitEl || !serverPane || !pollerPane || !statsPane || !handleA || !handleB || !emptyEl || !taskbarEl) return;
 
+  const ensurePollerPaneControlsMount = () => {
+    const existing = pollerPane.querySelector?.("#adminPollerPaneControls");
+    if (existing) return existing;
+    const titlebar = pollerPane.querySelector?.(".admin-console-titlebar");
+    if (!titlebar) return null;
+    const mount = document.createElement("span");
+    mount.id = "adminPollerPaneControls";
+    mount.className = "admin-poller-pane-controls";
+    // Put at the far right: title has margin-left:auto.
+    titlebar.appendChild(mount);
+    return mount;
+  };
+
   const prefersReducedMotion = () => {
     const reduced = !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     const isMobile = !!window.matchMedia?.("(max-width: 768px)")?.matches;
@@ -571,61 +584,60 @@ function setupLogConsoleWindowControls() {
       text.textContent = labelFor(k);
       btn.appendChild(text);
 
-      if (k === "poller") {
-        const actions = document.createElement("span");
-        actions.className = "admin-console-dock-actions";
-
-        const stopBtn = document.createElement("button");
-        stopBtn.type = "button";
-        stopBtn.className = "admin-console-dock-action admin-console-dock-action--stop";
-        stopBtn.title = "Stop poller";
-        stopBtn.setAttribute("aria-label", "Stop poller");
-        stopBtn.textContent = "■";
-        stopBtn.disabled = state.poller.mode === "closed";
-        stopBtn.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          void (async () => {
-            try {
-              await stopPollerProcess();
-              // Keep the poller console open; just stop the process.
-              restoreConsole("poller");
-              await refreshLogs();
-            } catch {
-              // hint already set
-            }
-          })();
-        });
-
-        const restartBtn = document.createElement("button");
-        restartBtn.type = "button";
-        restartBtn.className = "admin-console-dock-action admin-console-dock-action--restart";
-        restartBtn.title = "Restart poller";
-        restartBtn.setAttribute("aria-label", "Restart poller");
-        restartBtn.textContent = "↻";
-        restartBtn.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          void (async () => {
-            try {
-              await restartPollerProcess();
-              resetLogViewerToSessionStart(pollerLogViewer);
-              await refreshLogs();
-              restoreConsole("poller");
-            } catch {
-              // hint already set
-            }
-          })();
-        });
-
-        actions.appendChild(stopBtn);
-        actions.appendChild(restartBtn);
-        btn.appendChild(actions);
-      }
-
       btn.addEventListener("click", () => toggleFromDock(k));
       taskbarEl.appendChild(btn);
     });
+
+    // Poller controls live in the poller window titlebar (not in the taskbar).
+    const pollerMount = ensurePollerPaneControlsMount();
+    if (pollerMount) {
+      pollerMount.innerHTML = "";
+      const stopBtn = document.createElement("button");
+      stopBtn.type = "button";
+      stopBtn.className = "admin-console-dock-action admin-console-dock-action--stop";
+      stopBtn.title = "Stop poller";
+      stopBtn.setAttribute("aria-label", "Stop poller");
+      stopBtn.textContent = "■";
+      stopBtn.disabled = state.poller.mode === "closed";
+      stopBtn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void (async () => {
+          try {
+            await stopPollerProcess();
+            // Keep the poller console open; just stop the process.
+            restoreConsole("poller");
+            await refreshLogs();
+          } catch {
+            // hint already set
+          }
+        })();
+      });
+
+      const restartBtn = document.createElement("button");
+      restartBtn.type = "button";
+      restartBtn.className = "admin-console-dock-action admin-console-dock-action--restart";
+      restartBtn.title = "Restart poller";
+      restartBtn.setAttribute("aria-label", "Restart poller");
+      restartBtn.textContent = "↻";
+      restartBtn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void (async () => {
+          try {
+            await restartPollerProcess();
+            resetLogViewerToSessionStart(pollerLogViewer);
+            await refreshLogs();
+            restoreConsole("poller");
+          } catch {
+            // hint already set
+          }
+        })();
+      });
+
+      pollerMount.appendChild(stopBtn);
+      pollerMount.appendChild(restartBtn);
+    }
 
     // Build per-console target map for animations.
     dockTargets = {

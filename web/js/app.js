@@ -38,7 +38,30 @@ function initFiltersDrawer() {
     return;
   }
 
+  let scrollYBeforeOpen = 0;
+  const lockBodyScroll = () => {
+    scrollYBeforeOpen = window.scrollY || 0;
+    document.body.classList.add("filters-open");
+    // iOS Safari: overflow:hidden alone doesn't reliably prevent scroll.
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollYBeforeOpen}px`;
+    document.body.style.left = "0";
+    document.body.style.right = "0";
+    document.body.style.width = "100%";
+  };
+
+  const unlockBodyScroll = () => {
+    document.body.classList.remove("filters-open");
+    document.body.style.position = "";
+    document.body.style.top = "";
+    document.body.style.left = "";
+    document.body.style.right = "";
+    document.body.style.width = "";
+    window.scrollTo(0, scrollYBeforeOpen);
+  };
+
   const openDrawer = () => {
+    lockBodyScroll();
     overlay.classList.add("open");
     overlay.setAttribute("aria-hidden", "false");
     menuBtn.setAttribute("aria-expanded", "true");
@@ -49,6 +72,7 @@ function initFiltersDrawer() {
     overlay.classList.remove("open");
     overlay.setAttribute("aria-hidden", "true");
     menuBtn.setAttribute("aria-expanded", "false");
+    unlockBodyScroll();
     menuBtn.focus();
   };
 

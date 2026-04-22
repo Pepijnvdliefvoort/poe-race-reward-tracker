@@ -392,6 +392,12 @@ body {
   gap: 0.35rem;
 }
 
+.admin-poller-pane-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .admin-console-dock-action {
   width: 28px;
   height: 28px;
@@ -822,10 +828,18 @@ body {
     align-items: stretch;
   }
 
+  .admin-section-head-row .admin-header-actions {
+    width: 100%;
+    align-items: stretch;
+  }
+
   .admin-section-head-row .admin-btn {
     width: 100%;
     min-height: 44px;
     box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .admin-console-split {
@@ -919,6 +933,36 @@ body {
   }
 
   /* (no subgrid on mobile; cards only) */
+
+  /* Mobile dock: ensure 3 items always fit. */
+  .admin-console-taskbar {
+    justify-content: stretch;
+    gap: 0.45rem;
+    padding: 0.55rem 0.6rem;
+  }
+
+  .admin-console-taskbar-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.42rem 0.5rem;
+    font-size: 0.7rem;
+  }
+
+  .admin-console-taskbar-btn > span:nth-child(2) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .admin-poller-pane-controls .admin-console-dock-action {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    font-size: 0.95rem;
+    line-height: 1;
+  }
 }
 
 @media (max-width: 640px) {

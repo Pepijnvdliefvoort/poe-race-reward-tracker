@@ -19,6 +19,12 @@
 }
 
 @media (max-width: 1024px) {
+  body.filters-open {
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
   .search-row {
     margin-left: 0;
     margin-right: 0;
@@ -44,6 +50,7 @@
     flex-direction: column;
     justify-content: flex-start;
     align-items: flex-start;
+    overscroll-behavior: contain;
   }
 
   .filters-overlay.open {
@@ -56,6 +63,7 @@
     top: 0;
     left: 0;
     height: 100vh;
+    height: 100dvh;
     width: min(340px, 90vw);
     max-width: 100vw;
     background: var(--surface-strong, #181e2c);

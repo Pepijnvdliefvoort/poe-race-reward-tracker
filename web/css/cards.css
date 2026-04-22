@@ -117,6 +117,9 @@
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.74rem;
   font-weight: 500;
+  line-height: 1.2;
+  /* Keep card layout stable: reserve space for 2 lines even when showing "Price: n/a". */
+  min-height: calc(2 * 1.2em + 8px);
   padding: 4px 6px;
   border-radius: 4px;
   white-space: pre-line;

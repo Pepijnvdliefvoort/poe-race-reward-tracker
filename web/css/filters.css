@@ -4,6 +4,23 @@
   gap: 12px;
   align-items: stretch;
   width: 100%;
+  min-height: 0;
+}
+
+/* When used inside the mobile drawer, allow internal scrolling. */
+@media (max-width: 1024px) {
+  .filters-drawer-header {
+    flex: 0 0 auto;
+  }
+
+  .filters-panel {
+    flex: 1 1 auto;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    padding-right: 2px; /* avoid clipping scrollbar overlay */
+  }
 }
 
 .filter-group {
