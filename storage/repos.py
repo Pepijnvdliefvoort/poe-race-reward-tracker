@@ -379,6 +379,10 @@ class PollsRepo:
 
     def clear_market_tables(self) -> None:
         # Order matters due to FKs.
+        # Also clear persisted inference working set (otherwise future cycles will be biased
+        # by signals/pending entries from the previous dataset).
+        self._con.execute("DELETE FROM inference_state_pending")
+        self._con.execute("DELETE FROM inference_state_signals")
         self._con.execute("DELETE FROM inference_events")
         self._con.execute("DELETE FROM listing_snapshots")
         self._con.execute("DELETE FROM item_polls")
