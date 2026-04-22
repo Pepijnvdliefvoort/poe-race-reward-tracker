@@ -33,6 +33,10 @@ TOP_IDS_LIMIT = 20
 # Tracked items here stay under that depth, so this fetches every ID returned for inference.
 # Pricing/listing preview stay on TOP_IDS_LIMIT above.
 DEFAULT_INFERENCE_LISTINGS_FETCH_CAP = 20
+# Sale inference compares listing snapshots across polls. If we only sample the first N results,
+# small ladder re-orderings can make still-live listings "disappear" from the sample and get
+# miscounted as sold. For low-total markets, fetch all returned IDs for inference to stabilize.
+INFERENCE_FETCH_ALL_THRESHOLD_TOTAL_RESULTS = 40
 DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
@@ -1376,12 +1380,19 @@ def run_cycle(
         request_timestamp_utc = datetime.now(timezone.utc).isoformat()
         query_id, result_ids, total_results = search_item(session, rate_limiter, item)
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
+
+        effective_inference_cap = inference_fetch_cap
+        if total_results <= INFERENCE_FETCH_ALL_THRESHOLD_TOTAL_RESULTS:
+            # Trade search returns at most the page depth in `result_ids`; for small ladders,
+            # this lets inference see every listing instead of a moving top-N slice.
+            effective_inference_cap = max(effective_inference_cap, len(result_ids))
+
         listings_inference = fetch_listings_for_inference(
             session,
             rate_limiter,
             query_id,
             result_ids,
-            cap=inference_fetch_cap,
+            cap=effective_inference_cap,
         )
         cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
         top_listing_summary = build_top_listing_summary(listings, divines_per_mirror)
