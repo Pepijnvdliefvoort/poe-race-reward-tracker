@@ -152,10 +152,29 @@ function renderVisitorMap(data) {
     visitorMarkersByIp[String(p.ip || "")] = m;
   });
 
-  // Default view: keep global map (do not auto-focus on visitors).
-  // Only zoom when the user clicks a visitor row.
+  // Default view: auto-fit all known points (unless user manually focused a visitor).
   if (!userFocusedVisitor) {
-    map.setView([20, 0], 2, { animate: false });
+    if (points.length >= 2) {
+      const bounds = markersLayer.getBounds?.();
+      if (bounds && bounds.isValid?.()) {
+        map.fitBounds(bounds, {
+          padding: [28, 28],
+          animate: false,
+          maxZoom: 6,
+        });
+      } else {
+        map.setView([20, 0], 2, { animate: false });
+      }
+    } else if (points.length === 1) {
+      const p = points[0];
+      if (p && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
+        map.setView([p.lat, p.lng], 6, { animate: false });
+      } else {
+        map.setView([20, 0], 2, { animate: false });
+      }
+    } else {
+      map.setView([20, 0], 2, { animate: false });
+    }
   }
 
   requestAnimationFrame(() => {
