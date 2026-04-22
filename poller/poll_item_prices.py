@@ -26,14 +26,12 @@ DEFAULT_ITEMS_FILE = "items.txt"
 DEFAULT_CONFIG_FILE = "config.json"
 LISTINGS_CACHE_MAX_ENTRIES = 1000
 TOP_IDS_LIMIT = 20
-# Trade search returns a bounded `result` id list (GGG caps the page; 100 matches common use).
-# Tracked items here stay under that depth, so this fetches every ID returned for inference.
-# Pricing/listing preview stay on TOP_IDS_LIMIT above.
-DEFAULT_INFERENCE_LISTINGS_FETCH_CAP = 20
-# Sale inference compares listing snapshots across polls. If we only sample the first N results,
-# small ladder re-orderings can make still-live listings "disappear" from the sample and get
-# miscounted as sold. For low-total markets, fetch all returned IDs for inference to stabilize.
-INFERENCE_FETCH_ALL_THRESHOLD_TOTAL_RESULTS = 40
+# PoE trade search returns at most this many listing IDs in one response `result` array.
+TRADE_SEARCH_RESULT_MAX = 100
+# Default: fetch every ID the search returns for inference, up to TRADE_SEARCH_RESULT_MAX (more
+# /fetch traffic for deep markets; reduces false "vanished" counts from a shallow top-N slice).
+# Pricing and listing hover preview still use TOP_IDS_LIMIT only.
+DEFAULT_INFERENCE_LISTINGS_FETCH_CAP = TRADE_SEARCH_RESULT_MAX
 DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
@@ -286,9 +284,8 @@ def parse_args() -> Config:
         type=int,
         default=None,
         help=(
-            "How many search result IDs to fetch for sale inference per item (0 disables). "
-            f"Default comes from {DEFAULT_CONFIG_FILE} key 'inference_listings_fetch_cap' "
-            f"or falls back to {DEFAULT_INFERENCE_LISTINGS_FETCH_CAP}."
+            f"Max search result IDs to fetch for sale inference per item (PoE caps at {TRADE_SEARCH_RESULT_MAX}; "
+            f"0 disables). Default: app_config key 'inference_listings_fetch_cap' or {DEFAULT_INFERENCE_LISTINGS_FETCH_CAP}."
         ),
     )
 
@@ -310,16 +307,21 @@ def parse_args() -> Config:
 
 
 def load_inference_fetch_cap(cli_override: int | None) -> int:
+    def _clamp(v: int) -> int:
+        v = max(0, int(v))
+        if v == 0:
+            return 0
+        return min(TRADE_SEARCH_RESULT_MAX, v)
+
     if cli_override is not None:
-        return int(cli_override)
+        return _clamp(cli_override)
 
     try:
         root_dir = Path(__file__).resolve().parents[1]
         storage = StorageService(root_dir=root_dir)
         cfg = storage.get_config(key="market") or {}
         raw = cfg.get("inference_listings_fetch_cap", DEFAULT_INFERENCE_LISTINGS_FETCH_CAP)
-        value = int(raw)
-        return max(0, value)
+        return _clamp(int(raw))
     except Exception:
         return DEFAULT_INFERENCE_LISTINGS_FETCH_CAP
 
@@ -1368,11 +1370,15 @@ def run_cycle(
         query_id, result_ids, total_results = search_item(session, rate_limiter, item)
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
 
-        effective_inference_cap = inference_fetch_cap
-        if total_results <= INFERENCE_FETCH_ALL_THRESHOLD_TOTAL_RESULTS:
-            # Trade search returns at most the page depth in `result_ids`; for small ladders,
-            # this lets inference see every listing instead of a moving top-N slice.
-            effective_inference_cap = max(effective_inference_cap, len(result_ids))
+        result_id_count = len([x for x in result_ids if isinstance(x, str)])
+        if inference_fetch_cap <= 0:
+            effective_inference_cap = 0
+        else:
+            effective_inference_cap = min(
+                TRADE_SEARCH_RESULT_MAX,
+                result_id_count,
+                inference_fetch_cap,
+            )
 
         listings_inference = fetch_listings_for_inference(
             session,

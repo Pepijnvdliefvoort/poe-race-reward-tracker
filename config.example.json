@@ -7,5 +7,5 @@
   "alert_floor_band_pct": 6,
   "alert_low_liquidity_extra_drop_pct": 22,
   "alert_cooldown_cycles": 2,
-  "inference_listings_fetch_cap": 20
+  "inference_listings_fetch_cap": 100
 }

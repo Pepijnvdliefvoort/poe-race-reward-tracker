@@ -95,7 +95,7 @@ Headhunter|any
 - query id
 - total/used listings
 - mirror and divine low/median/high summaries
-- sale inference counts from `poller/sale_inference_engine.py` (see `sale_inference_state.json` beside the CSV): `inference_confirmed_transfer`, `inference_likely_instant_sale`, `inference_relist_same_seller`, `inference_non_instant_removed`, `inference_reprice_same_seller`, `inference_multi_seller_same_fingerprint`, `inference_new_listing_rows` (inference uses all listing IDs returned by trade search, up to `INFERENCE_LISTINGS_FETCH_CAP` in `poller/poll_item_prices.py`; pricing and the listing hover preview stay on the top `TOP_IDS_LIMIT` fetches)
+- sale inference counts from `poller/sale_inference_engine.py` (see `sale_inference_state.json` beside the CSV): `inference_confirmed_transfer`, `inference_likely_instant_sale`, `inference_relist_same_seller`, `inference_non_instant_removed`, `inference_reprice_same_seller`, `inference_multi_seller_same_fingerprint`, `inference_new_listing_rows` (inference fetches listing payloads for every search `result` id up to PoE’s cap (`TRADE_SEARCH_RESULT_MAX` in `poller/poll_item_prices.py`, default 100), further limited by app config `inference_listings_fetch_cap` if set lower; pricing and the listing hover preview stay on the top `TOP_IDS_LIMIT` fetches)
 
 If the CSV header does not match the current schema, the poller creates a backup and writes a fresh file with the expected header.
 
