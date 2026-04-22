@@ -19,6 +19,12 @@
 }
 
 @media (max-width: 1024px) {
+  /* Lift “Back to top” off the home-indicator corner; still fixed, easier to tap. */
+  .back-to-top {
+    right: max(16px, calc(env(safe-area-inset-right, 0px) + 12px));
+    bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 22px));
+  }
+
   body.filters-open {
     overflow: hidden;
     overscroll-behavior: none;

@@ -25,16 +25,19 @@ echo "[2/6] Install/update Python dependencies"
 echo "[3/6] Sync runtime secrets"
 mkdir -p "$SECRETS_DIR"
 FINAL_DISCORD="${DISCORD_WEBHOOK_URL:-}"
+FINAL_DISCORD_SALES="${DISCORD_WEBHOOK_URL_SALES:-}"
 FINAL_ADMIN="${ADMIN_TOKEN:-}"
 if [ -f "$SECRETS_FILE" ]; then
   [ -z "$FINAL_DISCORD" ] && FINAL_DISCORD="$(grep '^DISCORD_WEBHOOK_URL=' "$SECRETS_FILE" 2>/dev/null | sed 's/^DISCORD_WEBHOOK_URL=//' | head -1)" || true
+  [ -z "$FINAL_DISCORD_SALES" ] && FINAL_DISCORD_SALES="$(grep '^DISCORD_WEBHOOK_URL_SALES=' "$SECRETS_FILE" 2>/dev/null | sed 's/^DISCORD_WEBHOOK_URL_SALES=//' | head -1)" || true
   [ -z "$FINAL_ADMIN" ] && FINAL_ADMIN="$(grep '^ADMIN_TOKEN=' "$SECRETS_FILE" 2>/dev/null | sed 's/^ADMIN_TOKEN=//' | head -1)" || true
 fi
-if [ -n "${DISCORD_WEBHOOK_URL:-}" ] || [ -n "${ADMIN_TOKEN:-}" ] || { [ -n "$FINAL_DISCORD" ] || [ -n "$FINAL_ADMIN" ]; }; then
+if [ -n "${DISCORD_WEBHOOK_URL:-}" ] || [ -n "${DISCORD_WEBHOOK_URL_SALES:-}" ] || [ -n "${ADMIN_TOKEN:-}" ] || { [ -n "$FINAL_DISCORD" ] || [ -n "$FINAL_DISCORD_SALES" ] || [ -n "$FINAL_ADMIN" ]; }; then
   umask 077
   MERGE_TMP="$(mktemp)"
   {
     [ -n "$FINAL_DISCORD" ] && printf '%s\n' "DISCORD_WEBHOOK_URL=$FINAL_DISCORD"
+    [ -n "$FINAL_DISCORD_SALES" ] && printf '%s\n' "DISCORD_WEBHOOK_URL_SALES=$FINAL_DISCORD_SALES"
     [ -n "$FINAL_ADMIN" ] && printf '%s\n' "ADMIN_TOKEN=$FINAL_ADMIN"
   } > "$MERGE_TMP"
   mv "$MERGE_TMP" "$SECRETS_FILE"

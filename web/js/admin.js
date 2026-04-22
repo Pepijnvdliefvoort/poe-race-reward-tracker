@@ -1782,6 +1782,10 @@ function setupMarketConfigEditor() {
     alert_floor_band_pct: { label: "Floor band (%)", help: "Treat listings within this percent of the floor as the floor band." },
     alert_low_liquidity_extra_drop_pct: { label: "Low-liquidity extra drop (%)", help: "Extra drop required when liquidity is low." },
     alert_cooldown_cycles: { label: "Cooldown cycles", help: "Minimum cycles between alerts for the same item." },
+    sales_discord_window_days: {
+      label: "Sales Discord window (days)",
+      help: 'Rolling window for "total est. sold" in Discord sale notifications (match your chart period, e.g. 90 ~ 3m preset).',
+    },
   };
 
   const renderFields = (value) => {

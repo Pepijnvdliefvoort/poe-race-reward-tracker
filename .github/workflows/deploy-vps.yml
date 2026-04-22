@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      DISCORD_WEBHOOK_URL_SALES: ${{ secrets.DISCORD_WEBHOOK_URL_SALES }}
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
     steps:
       - name: Run deploy script over SSH
@@ -25,7 +26,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          envs: DISCORD_WEBHOOK_URL,ADMIN_TOKEN
+          envs: DISCORD_WEBHOOK_URL,DISCORD_WEBHOOK_URL_SALES,ADMIN_TOKEN
           script_stop: true
           script: |
             set -euo pipefail

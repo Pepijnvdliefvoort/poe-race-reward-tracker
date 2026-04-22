@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
     "alert_floor_band_pct": 7.5,
     "alert_low_liquidity_extra_drop_pct": 20.0,
     "alert_cooldown_cycles": 6,
+    "sales_discord_window_days": 90,
 }
 
 

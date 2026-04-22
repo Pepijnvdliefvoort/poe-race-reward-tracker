@@ -133,6 +133,12 @@ Set it through an environment secret:
 - `DISCORD_WEBHOOK_URL` (preferred)
 - `POE_DISCORD_WEBHOOK_URL` (fallback alias)
 
+Optional separate webhook when inferred estimated sales change on a poll (confirmed transfer + likely instant, including relist undo negatives):
+
+- `DISCORD_WEBHOOK_URL_SALES`
+
+Optional `app_config.market` key `sales_discord_window_days` (default `90`) sets the rolling window for the total in that message (sum of per-poll signals, same idea as the chart est. sold line).
+
 ## Notes
 
 - Run the poller with `python -m poller` from the **repository root** so `items.txt`, `config.json`, and `web/listings_cache.json` resolve as before. The dashboard’s in-process poller and the VPS systemd unit use the same form.

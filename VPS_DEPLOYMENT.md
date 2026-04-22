@@ -49,10 +49,11 @@ If you previously installed a unit that used **`web/server.py`**, replace it by 
 sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 
-# Optional: set Discord webhook secret for alerts
+# Optional: set Discord webhook secrets for alerts / est. sales
 sudo mkdir -p /etc/poe-market-flips
 sudo sh -c 'cat > /etc/poe-market-flips/secrets.env << EOF
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REPLACE_ME
+DISCORD_WEBHOOK_URL_SALES=https://discord.com/api/webhooks/REPLACE_ME_SALES
 EOF'
 sudo chmod 600 /etc/poe-market-flips/secrets.env
 
@@ -143,6 +144,7 @@ This repo includes:
 	- `VPS_PORT` = `22`
 	- `VPS_SSH_KEY` = private SSH key content for that VPS user
 	- `DISCORD_WEBHOOK_URL` = your Discord webhook URL for price alerts
+	- `DISCORD_WEBHOOK_URL_SALES` (optional) = separate webhook for estimated-sale signal updates
 
 ### Generate an SSH key for deploy (if you do not already have one)
 
@@ -163,7 +165,7 @@ Paste the contents of `vps_deploy_key` (private key) into `VPS_SSH_KEY` in GitHu
 ### How it works
 
 - On every push to `main` or `master`, GitHub Actions connects to your VPS over SSH.
-- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` (if provided), restarts services, and reloads Caddy.
+- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL_SALES` (if provided), restarts services, and reloads Caddy.
 
 `config.json` is intentionally untracked. Keep a server-local copy at `/opt/poe-market-flips/config.json` (for example by copying `config.example.json` once and editing values).
 
@@ -179,8 +181,8 @@ cp /tmp/poe-config.json.backup config.json
 
 Webhook secret notes:
 
-- If `DISCORD_WEBHOOK_URL` is present in GitHub Secrets, it is synced on each deploy.
-- If it is missing, deploy keeps any existing `/etc/poe-market-flips/secrets.env` file unchanged.
+- If `DISCORD_WEBHOOK_URL` or `DISCORD_WEBHOOK_URL_SALES` is present in GitHub Secrets, it is synced on each deploy.
+- If a value is missing, deploy keeps any existing matching line in `/etc/poe-market-flips/secrets.env` unchanged.
 
 ### First test
 

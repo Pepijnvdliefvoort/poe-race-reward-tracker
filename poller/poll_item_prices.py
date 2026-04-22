@@ -7,7 +7,7 @@ import os
 import statistics
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,8 @@ from .sale_inference_engine import (
     evaluate_listing_transition,
     listing_signals_from_fetch,
 )
+
+from server.sales_discord_notify import send_estimated_sales_change_notification
 
 from storage.service import StorageService, VariantSpec
 
@@ -94,6 +96,21 @@ def load_discord_webhook_url_from_env() -> str:
         if value:
             return value
     return ""
+
+
+def load_discord_sales_webhook_url_from_env() -> str:
+    """Webhook for estimated-sale signal notifications (separate channel from price alerts)."""
+    return os.getenv("DISCORD_WEBHOOK_URL_SALES", "").strip()
+
+
+def load_sales_discord_window_days(storage: StorageService) -> int:
+    """Rolling window (days) for total est. sold in Discord; align with chart via app_config.market."""
+    try:
+        data = storage.get_config(key="market") or {}
+        d = int(float(data.get("sales_discord_window_days", 90)))
+    except Exception:
+        d = 90
+    return max(1, min(3650, d))
 
 
 def load_alert_config() -> AlertConfig:
@@ -1352,6 +1369,8 @@ def run_cycle(
     alert_state: dict[str, tuple[int, float]] | None = None,
     alert_config: AlertConfig | None = None,
     inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
+    sales_webhook_url: str = "",
+    sales_window_days: int = 90,
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
     # SQLite is the source of truth (no CSV or listings cache file).
@@ -1487,6 +1506,27 @@ def run_cycle(
                 inference_events=inf.events,
                 inference_state=(curr_signals, new_pending),
             )
+
+            cycle_est = int(inf.confirmed_transfer) + int(inf.likely_instant_sale)
+            if sales_webhook_url and cycle_est != 0:
+                try:
+                    since = (datetime.now(timezone.utc) - timedelta(days=int(sales_window_days))).isoformat()
+                    total_est = storage.sum_estimated_sales_since(variant_id=variant_id, since_utc_iso=since)
+                    send_estimated_sales_change_notification(
+                        session,
+                        webhook_url=sales_webhook_url,
+                        item_name=item.name,
+                        item_image_url=cheapest_icon_url,
+                        cycle_delta=cycle_est,
+                        total_in_window=total_est,
+                        window_days=int(sales_window_days),
+                    )
+                    log_line(
+                        "sales_discord",
+                        f"Est. sales webhook: delta={cycle_est} total~={total_est} ({sales_window_days}d) {item.name}",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log_line("warn", f"Failed sales Discord webhook for {item.name}: {exc}")
 
         cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
@@ -1639,6 +1679,7 @@ def main() -> None:
     alert_config = load_alert_config()
     price_history = seed_price_history_from_db(storage, alert_config.history_cycles)
     alert_state: dict[str, tuple[int, float]] = {}
+    logged_sales_webhook_cfg = False
     log_line(
         "cycle",
         "Alert config: "
@@ -1669,6 +1710,11 @@ def main() -> None:
 
         # Reload alert config each cycle so UI changes take effect without restart.
         alert_config = load_alert_config()
+        sales_webhook_url = load_discord_sales_webhook_url_from_env()
+        sales_window_days = load_sales_discord_window_days(storage)
+        if sales_webhook_url and not logged_sales_webhook_cfg:
+            log_line("cycle", f"Sales Discord webhook active; est.-sold window={sales_window_days}d")
+            logged_sales_webhook_cfg = True
 
         try:
             divines_per_mirror = run_cycle(
@@ -1676,6 +1722,8 @@ def main() -> None:
                 storage, variant_ids_by_key, run_started_at_utc,
                 divines_per_mirror, price_history, alert_state, alert_config,
                 inference_fetch_cap=cfg.inference_fetch_cap,
+                sales_webhook_url=sales_webhook_url,
+                sales_window_days=sales_window_days,
             )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "?"

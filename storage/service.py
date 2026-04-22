@@ -114,6 +114,35 @@ class StorageService:
         finally:
             con.close()
 
+    def sum_estimated_sales_since(self, *, variant_id: int, since_utc_iso: str) -> int:
+        """
+        Sum per-poll estimated sold signals (confirmed transfer + likely instant, incl. negatives)
+        for rows at or after since_utc_iso. Matches UI ``estimatedSoldCount`` aggregation.
+        """
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            row = con.execute(
+                """
+                SELECT COALESCE(
+                    SUM(
+                        COALESCE(ip.inf_confirmed_transfer, 0)
+                        + COALESCE(ip.inf_likely_instant_sale, 0)
+                    ),
+                    0
+                ) AS total
+                FROM item_polls ip
+                WHERE ip.item_variant_id = ?
+                  AND ip.requested_at_utc >= ?
+                """,
+                (int(variant_id), str(since_utc_iso)),
+            ).fetchone()
+            if not row or row["total"] is None:
+                return 0
+            return int(row["total"])
+        finally:
+            con.close()
+
     def write_poll_result(
         self,
         *,
