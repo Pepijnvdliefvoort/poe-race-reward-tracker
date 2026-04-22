@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from data_service import CSV_PATH
+from server.storage_service import ServerStorage
 
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 SERVER_LOG_PATH = LOG_DIR / "server.log"
@@ -419,18 +419,9 @@ def record_site_visit(ip: str, path: str) -> None:
         return
     if path not in {"/", "/index.html"}:
         return
-    line = json.dumps(
-        {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "ip": ip,
-            "path": path,
-        },
-        ensure_ascii=False,
-    )
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).isoformat()
     with _visit_lock:
-        with VISITORS_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        ServerStorage().record_visit(ts_utc=ts, ip=ip, path=path)
 
 
 def tail_log_file(path: Path, max_bytes: int = 262_144) -> str:
@@ -628,37 +619,24 @@ def _fetch_geo_ip(ip: str) -> dict[str, Any] | None:
 
 
 def visitor_map_payload() -> dict[str, Any]:
-    ip_counts: dict[str, int] = {}
-    ip_last: dict[str, str] = {}
-    if VISITORS_PATH.exists():
-        try:
-            with VISITORS_PATH.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        row = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    ip = str(row.get("ip") or "").strip()
-                    if not ip or skip_ip_in_visitor_stats(ip):
-                        continue
-                    ip_counts[ip] = ip_counts.get(ip, 0) + 1
-                    ts = str(row.get("ts") or "")
-                    if ts:
-                        ip_last[ip] = ts
-        except OSError:
-            pass
+    # Source of truth: SQLite
+    ip_counts, ip_last = ServerStorage().visitor_aggregate()
+    # Apply the same skip rules at render time (so toggling POE_VISITORS_INCLUDE_LOCAL affects output).
+    ip_counts = {ip: c for ip, c in ip_counts.items() if not skip_ip_in_visitor_stats(ip)}
+    ip_last = {ip: ts for ip, ts in ip_last.items() if ip in ip_counts}
+
+    # Only surface the top N visitors.
+    TOP_N = 10
+    sorted_ips = sorted(ip_counts.items(), key=lambda x: (-x[1], x[0]))[:TOP_N]
+    ip_counts = {ip: count for ip, count in sorted_ips}
+    ip_last = {ip: ip_last.get(ip, "") for ip, _ in sorted_ips if ip in ip_last}
 
     with _geo_lock:
-        cache = _load_geo_cache_unlocked()
         points: list[dict[str, Any]] = []
         max_new_lookups = 40
         lookups_done = 0
-        sorted_ips = sorted(ip_counts.items(), key=lambda x: (-x[1], x[0]))
         for ip, count in sorted_ips:
-            entry = cache.get(ip)
+            entry = ServerStorage().geo_get(ip=ip)
             if entry is None and lookups_done < max_new_lookups:
                 if lookups_done > 0:
                     time.sleep(1.35)
@@ -666,8 +644,12 @@ def visitor_map_payload() -> dict[str, Any]:
                 lookups_done += 1
                 if geo:
                     entry = {"lat": geo["lat"], "lon": geo["lon"]}
-                    cache[ip] = entry
-                    _save_geo_cache(cache)
+                    ServerStorage().geo_set(
+                        ip=ip,
+                        lat=float(entry["lat"]),
+                        lon=float(entry["lon"]),
+                        updated_at_utc=datetime.now(timezone.utc).isoformat(),
+                    )
             if not entry:
                 continue
             lat = float(entry["lat"])
@@ -676,23 +658,17 @@ def visitor_map_payload() -> dict[str, Any]:
                 {
                     "lat": lat,
                     "lng": lon,
-                    "weight": float(count),
+                    # Fixed weight so point size/intensity does not scale with visits.
+                    "weight": 1.0,
                     "ip": ip,
                     "visits": count,
                     "lastSeen": ip_last.get(ip),
                 }
             )
 
-        pending_geocodes = sum(1 for ip in ip_counts if ip not in cache)
+        pending_geocodes = sum(1 for ip, _ in sorted_ips if ServerStorage().geo_get(ip=ip) is None)
 
-    visitor_rows = [
-        {
-            "ip": ip,
-            "visits": ip_counts[ip],
-            "lastSeen": ip_last.get(ip),
-        }
-        for ip in sorted(ip_counts.keys(), key=lambda x: (-ip_counts[x], x))
-    ]
+    visitor_rows = [{"ip": ip, "visits": count, "lastSeen": ip_last.get(ip)} for ip, count in sorted_ips]
 
     return {
         "points": points,
@@ -704,8 +680,8 @@ def visitor_map_payload() -> dict[str, Any]:
 
 
 def csv_download_headers() -> tuple[str, Path]:
-    filename = CSV_PATH.name
-    return filename, CSV_PATH
+    # CSV export removed after full SQLite transition.
+    return "price_poll.csv", Path("price_poll.csv")
 
 
 def clear_market_data(*, listings_cache_path: Path, csv_path: Path) -> dict[str, Any]:
@@ -752,11 +728,19 @@ def clear_market_data(*, listings_cache_path: Path, csv_path: Path) -> dict[str,
     except OSError:
         cleared_csv = False
 
+    cleared_sqlite = False
+    try:
+        ServerStorage().clear_market_data()
+        cleared_sqlite = True
+    except Exception:
+        cleared_sqlite = False
+
     return {
         "cleared": {
             "listingsCache": cleared_cache,
             "pricePollCsv": cleared_csv,
             "saleInferenceState": cleared_inference,
+            "sqlite": cleared_sqlite,
         }
     }
 

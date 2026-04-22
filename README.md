@@ -12,8 +12,8 @@ It has 2 parts:
 
 - `poller/`: trade API polling package — run as `python -m poller` from the repo root (`poll_item_prices.py`, `sale_inference_engine.py`)
 - `items.txt`: tracked items (one per line, with optional mode)
-- `price_poll.csv`: generated historical output
-- `server/`: dashboard HTTP server (`server.py` entrypoint), `http_handler.py`, and `data_service.py` (CSV/API payload)
+- `price_poll.csv`: legacy output (no longer written; SQLite is the source of truth)
+- `server/`: dashboard HTTP server (`python -m server.server` entrypoint), `http_handler.py`, and `data_service.py`
 - `web/index.html`, `web/css/*.css`: dashboard shell and modular styling (layout, filters, cards, mobile/desktop breakpoints)
 - `web/js/app.js`: dashboard entrypoint (module graph under `web/js/`)
 - `web/js/core/`: shared state and utilities
@@ -60,7 +60,7 @@ python -m poller --poll-interval 1800
 3. In another terminal, run the dashboard server:
 
 ```powershell
-python server/server.py
+python -m server.server
 ```
 
 4. Open the dashboard:
@@ -115,6 +115,8 @@ Examples:
 - `5, 5, 8, 8, 8` does not alert because buying one `5` mirror listing still leaves another `5` mirror competitor, so there is no profitable undercut price
 - `11, 12, 12, 14, 16` does not alert because the best whole-mirror relist below `12` is `11`, which leaves no profit
 
+Copy `config.example.json` to `config.json` to override defaults on a given machine (bootstrap only; DB is the source of truth after first run).
+
 You can tune these `config.json` keys to reduce noise:
 
 - `alert_min_total_results` (default `10`): requires enough total market listings before alerts can fire.
@@ -142,7 +144,7 @@ Set it through an environment secret:
 
 This project runs well on a small VPS with two always-on services:
 
-- `server/server.py` (dashboard + API)
+- `python -m server.server` (dashboard + API)
 - `python -m poller` (CSV poller; systemd unit uses this form)
 
 Use the full step-by-step deployment guide here:
@@ -163,7 +165,7 @@ sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
 
-Re-copying the unit files keeps systemd aligned with the repo (for example the dashboard entrypoint `server/server.py` and the poller’s `python -m poller` `ExecStart`).
+Re-copying the unit files keeps systemd aligned with the repo (for example the dashboard entrypoint `python -m server.server` and the poller’s `python -m poller` `ExecStart`).
 
 Automatic deploy is also supported via GitHub Actions. See:
 

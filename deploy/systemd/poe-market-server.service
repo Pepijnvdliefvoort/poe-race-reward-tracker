@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/opt/poe-market-flips
-ExecStart=/opt/poe-market-flips/.venv/bin/python server/server.py
+ExecStart=/opt/poe-market-flips/.venv/bin/python -m server.server
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

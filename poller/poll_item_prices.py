@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import os
@@ -15,18 +14,16 @@ from typing import Any
 import requests
 
 from .sale_inference_engine import (
+    evaluate_listing_transition,
     listing_signals_from_fetch,
-    load_inference_state,
-    run_inference_for_item,
-    save_inference_state,
 )
+
+from storage.service import StorageService, VariantSpec
 
 BASE_URL = "https://www.pathofexile.com/api/trade"
 DEFAULT_LEAGUE = "Standard"
 DEFAULT_ITEMS_FILE = "items.txt"
-DEFAULT_OUTPUT_FILE = "price_poll.csv"
 DEFAULT_CONFIG_FILE = "config.json"
-DEFAULT_LISTINGS_CACHE_FILE = Path("web") / "listings_cache.json"
 LISTINGS_CACHE_MAX_ENTRIES = 1000
 TOP_IDS_LIMIT = 20
 # Trade search returns a bounded `result` id list (GGG caps the page; 100 matches common use).
@@ -44,34 +41,7 @@ RESALE_PRICE_STEPS: tuple[tuple[float | None, float], ...] = (
     (None, 1.0),
 )
 PRICE_EPSILON = 1e-6
-# All timestamps are stored in UTC (Coordinated Universal Time) in ISO 8601 format.
-# When displayed to users via the web dashboard, they are automatically converted to local time.
-CSV_HEADER = [
-    "timestamp_utc",  # ISO 8601 format, always UTC
-    "cycle",
-    "item_name",
-    "item_mode",
-    "query_id",
-    "total_results",
-    "used_results",
-    "unsupported_price_count",
-    "mirror_count",
-    "lowest_mirror",
-    "median_mirror",
-    "highest_mirror",
-    "divine_count",
-    "lowest_divine",
-    "median_divine",
-    "highest_divine",
-    # Sale inference rules engine (see poller/sale_inference_engine.py)
-    "inference_confirmed_transfer",
-    "inference_likely_instant_sale",
-    "inference_relist_same_seller",
-    "inference_non_instant_removed",
-    "inference_reprice_same_seller",
-    "inference_multi_seller_same_fingerprint",
-    "inference_new_listing_rows",
-]
+CSV_HEADER: list[str] = []  # legacy (no longer written)
 
 # Proactive safety margin over the natural allowed request pace.
 RATE_LIMIT_SAFETY = 1.1
@@ -130,72 +100,94 @@ def load_discord_webhook_url_from_env() -> str:
 
 def load_alert_config() -> AlertConfig:
     webhook_url = load_discord_webhook_url_from_env()
-    path = Path(DEFAULT_CONFIG_FILE)
-    if not path.exists():
-        return AlertConfig(
-            enabled=False,
-            threshold_pct=30.0,
-            history_cycles=10,
-            min_total_results=10,
-            min_floor_listings=2,
-            floor_band_pct=7.5,
-            low_liquidity_extra_drop_pct=20.0,
-            cooldown_cycles=6,
-            webhook_url=webhook_url,
-        )
+    defaults = AlertConfig(
+        enabled=False,
+        threshold_pct=30.0,
+        history_cycles=10,
+        min_total_results=10,
+        min_floor_listings=2,
+        floor_band_pct=7.5,
+        low_liquidity_extra_drop_pct=20.0,
+        cooldown_cycles=6,
+        webhook_url=webhook_url,
+    )
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        root_dir = Path(__file__).resolve().parents[1]
+        storage = StorageService(root_dir=root_dir)
+        data = storage.get_config(key="market")
+        if data is None:
+            # One-time bootstrap: allow a legacy config.json to seed DB config on first run.
+            # After this, SQLite is the source of truth.
+            config_path = root_dir / DEFAULT_CONFIG_FILE
+            if config_path.exists():
+                try:
+                    with config_path.open("r", encoding="utf-8") as fh:
+                        file_data = json.load(fh)
+                    merged = {
+                        "alert_enabled": bool(file_data.get("alert_enabled", defaults.enabled)),
+                        "alert_threshold_pct": float(file_data.get("alert_threshold_pct", defaults.threshold_pct)),
+                        "alert_history_cycles": max(1, int(file_data.get("alert_history_cycles", defaults.history_cycles))),
+                        "alert_min_total_results": max(1, int(file_data.get("alert_min_total_results", defaults.min_total_results))),
+                        "alert_min_floor_listings": max(1, int(file_data.get("alert_min_floor_listings", defaults.min_floor_listings))),
+                        "alert_floor_band_pct": max(0.0, float(file_data.get("alert_floor_band_pct", defaults.floor_band_pct))),
+                        "alert_low_liquidity_extra_drop_pct": max(
+                            0.0,
+                            float(
+                                file_data.get(
+                                    "alert_low_liquidity_extra_drop_pct",
+                                    defaults.low_liquidity_extra_drop_pct,
+                                )
+                            ),
+                        ),
+                        "alert_cooldown_cycles": max(0, int(file_data.get("alert_cooldown_cycles", defaults.cooldown_cycles))),
+                    }
+                    storage.set_config(key="market", value=merged)
+                    data = merged
+                except Exception:
+                    data = {}
+            else:
+                data = {}
+        else:
+            data = data or {}
         return AlertConfig(
             enabled=bool(data.get("alert_enabled", False)),
-            threshold_pct=float(data.get("alert_threshold_pct", 30.0)),
-            history_cycles=max(1, int(data.get("alert_history_cycles", 10))),
-            min_total_results=max(1, int(data.get("alert_min_total_results", 10))),
-            min_floor_listings=max(1, int(data.get("alert_min_floor_listings", 2))),
-            floor_band_pct=max(0.0, float(data.get("alert_floor_band_pct", 7.5))),
-            low_liquidity_extra_drop_pct=max(0.0, float(data.get("alert_low_liquidity_extra_drop_pct", 20.0))),
-            cooldown_cycles=max(0, int(data.get("alert_cooldown_cycles", 6))),
+            threshold_pct=float(data.get("alert_threshold_pct", defaults.threshold_pct)),
+            history_cycles=max(1, int(data.get("alert_history_cycles", defaults.history_cycles))),
+            min_total_results=max(1, int(data.get("alert_min_total_results", defaults.min_total_results))),
+            min_floor_listings=max(1, int(data.get("alert_min_floor_listings", defaults.min_floor_listings))),
+            floor_band_pct=max(0.0, float(data.get("alert_floor_band_pct", defaults.floor_band_pct))),
+            low_liquidity_extra_drop_pct=max(
+                0.0, float(data.get("alert_low_liquidity_extra_drop_pct", defaults.low_liquidity_extra_drop_pct))
+            ),
+            cooldown_cycles=max(0, int(data.get("alert_cooldown_cycles", defaults.cooldown_cycles))),
             webhook_url=webhook_url,
         )
-    except Exception as exc:  # noqa: BLE001
-        log_line("warn", f"Could not load alert config: {exc}")
-        return AlertConfig(
-            enabled=False,
-            threshold_pct=30.0,
-            history_cycles=10,
-            min_total_results=10,
-            min_floor_listings=2,
-            floor_band_pct=7.5,
-            low_liquidity_extra_drop_pct=20.0,
-            cooldown_cycles=6,
-            webhook_url=webhook_url,
-        )
+    except Exception:
+        return defaults
 
 
-def seed_price_history(output_csv: Path, history_cycles: int) -> dict[str, list[float]]:
-    """Prime in-memory price history from CSV row order (newest rows win naturally)."""
+def seed_price_history_from_db(storage: StorageService, history_cycles: int) -> dict[str, list[float]]:
+    """Prime in-memory price history from SQLite (median_mirror per variant)."""
     history: dict[str, list[float]] = {}
-    if not output_csv.exists():
-        return history
+    con = storage._db.connect()  # internal, OK for local polling
     try:
-        with output_csv.open("r", encoding="utf-8", newline="") as fh:
-            reader = csv.DictReader(fh)
-            for row in reader:
-                item_name = (row.get("item_name") or "").strip()
-                item_mode = (row.get("item_mode") or "").strip()
-                median_raw = (row.get("median_mirror") or "").strip()
-                if not item_name or not item_mode or not median_raw:
-                    continue
-                try:
-                    key = f"{item_name}::{item_mode}"
-                    history.setdefault(key, []).append(float(median_raw))
-                except ValueError:
-                    continue
-
-        for key, values in list(history.items()):
-            history[key] = values[-history_cycles:]
-    except Exception as exc:  # noqa: BLE001
-        log_line("warn", f"Could not seed price history from CSV: {exc}")
+        rows = con.execute(
+            """
+            SELECT i.name AS item_name, v.mode AS mode, ip.median_mirror AS median_mirror
+            FROM item_polls ip
+            JOIN item_variants v ON v.id = ip.item_variant_id
+            JOIN items i ON i.id = v.item_id
+            WHERE ip.median_mirror IS NOT NULL
+            ORDER BY ip.requested_at_utc ASC
+            """
+        ).fetchall()
+        for r in rows:
+            key = f"{str(r['item_name'])}::{str(r['mode'])}"
+            history.setdefault(key, []).append(float(r["median_mirror"]))
+        for k, v in list(history.items()):
+            history[k] = v[-history_cycles:]
+    finally:
+        con.close()
     return history
 
 
@@ -321,18 +313,14 @@ def load_inference_fetch_cap(cli_override: int | None) -> int:
     if cli_override is not None:
         return int(cli_override)
 
-    path = Path(DEFAULT_CONFIG_FILE)
-    if not path.exists():
-        return DEFAULT_INFERENCE_LISTINGS_FETCH_CAP
-
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        raw = data.get("inference_listings_fetch_cap", DEFAULT_INFERENCE_LISTINGS_FETCH_CAP)
+        root_dir = Path(__file__).resolve().parents[1]
+        storage = StorageService(root_dir=root_dir)
+        cfg = storage.get_config(key="market") or {}
+        raw = cfg.get("inference_listings_fetch_cap", DEFAULT_INFERENCE_LISTINGS_FETCH_CAP)
         value = int(raw)
         return max(0, value)
-    except Exception as exc:  # noqa: BLE001
-        log_line("warn", f"Could not load inference fetch cap from config: {exc}")
+    except Exception:
         return DEFAULT_INFERENCE_LISTINGS_FETCH_CAP
 
 
@@ -1352,10 +1340,11 @@ def append_summary_row(
 def run_cycle(
     session: requests.Session,
     rate_limiter: AdaptiveRateLimiter,
-    output_csv: Path,
-    listings_cache_file: Path,
     specs: list[ItemSpec],
     cycle: int,
+    storage: StorageService,
+    variant_ids_by_key: dict[str, int],
+    run_started_at_utc: str,
     divines_per_mirror: float = DIVINES_PER_MIRROR,
     price_history: dict[str, list[float]] | None = None,
     alert_state: dict[str, tuple[int, float]] | None = None,
@@ -1363,9 +1352,7 @@ def run_cycle(
     inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
-    listings_by_query_id = load_listings_cache(listings_cache_file)
-    inference_state_path = output_csv.with_name("sale_inference_state.json")
-    inference_root = load_inference_state(inference_state_path)
+    # SQLite is the source of truth (no CSV or listings cache file).
 
     # Fetch Mirror of Kalandra price first so the live ratio is ready before item processing.
     new_mirror_ratio = fetch_mirror_divine_median(session, rate_limiter)
@@ -1403,11 +1390,16 @@ def run_cycle(
                 row["fingerprint"] = inference_signals[idx]["fingerprint"]
 
         item_key = f"{item.name}::{item_mode_token(item)}"
-        inf = run_inference_for_item(
-            root=inference_root,
+        variant_id = int(variant_ids_by_key.get(item_key) or 0)
+        prev_signals, pending = ([], [])
+        if variant_id:
+            prev_signals, pending = storage.load_inference_state(variant_id=variant_id)
+        inf, new_pending, curr_signals = evaluate_listing_transition(
             item_key=item_key,
             cycle=cycle,
+            prev_signals=prev_signals,
             curr_signals=inference_signals,
+            pending_instant=pending,
         )
         (
             xfer,
@@ -1419,24 +1411,7 @@ def run_cycle(
             new_rows,
         ) = inf.to_csv_tuple()
 
-        listings_by_query_id[query_id] = {
-            "queryId": query_id,
-            "league": DEFAULT_LEAGUE,
-            "totalResults": total_results,
-            "listings": listing_preview_rows,
-            "updatedAt": request_timestamp_utc,
-            "inference": {
-                "confirmedTransfer": inf.confirmed_transfer,
-                "likelyInstantSale": inf.likely_instant_sale,
-                "relistSameSeller": inf.relist_same_seller,
-                "nonInstantRemoved": inf.non_instant_removed,
-                "repriceSameSeller": inf.reprice_same_seller,
-                "multiSellerSameFingerprint": inf.multi_seller_same_fingerprint,
-                "newListingRows": inf.new_listing_rows,
-                "fetchedForInference": len(listings_inference),
-                "events": inf.events[:12],
-            },
-        }
+        # Listing previews + inference events are persisted in SQLite (no JSON cache file).
 
         raw_mirror_prices, divine_prices, unsupported_count = extract_listing_prices(listings)
 
@@ -1468,34 +1443,44 @@ def run_cycle(
 
         low_divine, high_divine, median_divine = summarize_prices(divine_only_converted)
 
-        append_summary_row(
-            path=output_csv,
-            timestamp_utc=request_timestamp_utc,
-            cycle=cycle,
-            item=item,
-            query_id=query_id,
-            total_results=total_results,
-            used_results=used_results,
-            unsupported_price_count=unsupported_count,
-            mirror_count=len(mirror_prices),
-            lowest_mirror=low_mirror,
-            median_mirror=median_mirror,
-            highest_mirror=high_mirror,
-            divine_count=len(divine_only_converted),
-            lowest_divine=low_divine,
-            median_divine=median_divine,
-            highest_divine=high_divine,
-            inference_confirmed_transfer=xfer,
-            inference_likely_instant_sale=instant,
-            inference_relist_same_seller=relist,
-            inference_non_instant_removed=nib,
-            inference_reprice_same_seller=repr_seller,
-            inference_multi_seller_same_fingerprint=multi_fp,
-            inference_new_listing_rows=new_rows,
-        )
+        # Poll summary is persisted in SQLite (no CSV file).
 
-        listings_by_query_id = prune_listings_cache(listings_by_query_id)
-        write_listings_cache(listings_cache_file, listings_by_query_id)
+        if variant_id:
+            storage.write_poll_result(
+                cycle_number=cycle,
+                league=DEFAULT_LEAGUE,
+                run_started_at_utc=run_started_at_utc,
+                requested_at_utc=request_timestamp_utc,
+                divines_per_mirror=divines_per_mirror,
+                top_ids_limit=TOP_IDS_LIMIT,
+                inference_fetch_cap=effective_inference_cap,
+                variant_id=variant_id,
+                query_id=query_id,
+                total_results=total_results,
+                used_results=used_results,
+                unsupported_price_count=unsupported_count,
+                mirror_count=len(mirror_prices),
+                lowest_mirror=low_mirror,
+                median_mirror=median_mirror,
+                highest_mirror=high_mirror,
+                divine_count=len(divine_only_converted),
+                lowest_divine=low_divine,
+                median_divine=median_divine,
+                highest_divine=high_divine,
+                inference_counts={
+                    "confirmedTransfer": inf.confirmed_transfer,
+                    "likelyInstantSale": inf.likely_instant_sale,
+                    "relistSameSeller": inf.relist_same_seller,
+                    "nonInstantRemoved": inf.non_instant_removed,
+                    "repriceSameSeller": inf.reprice_same_seller,
+                    "multiSellerSameFingerprint": inf.multi_seller_same_fingerprint,
+                    "newListingRows": inf.new_listing_rows,
+                },
+                fetched_for_inference=len(listings_inference),
+                listing_preview_rows=listing_preview_rows,
+                inference_events=inf.events,
+                inference_state=(curr_signals, new_pending),
+            )
 
         cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
@@ -1577,10 +1562,6 @@ def run_cycle(
                 f"non_instant_offline?={nib} reprice={repr_seller} multi_seller_fp={multi_fp} new_rows={new_rows}",
             )
 
-    listings_by_query_id = prune_listings_cache(listings_by_query_id)
-    write_listings_cache(listings_cache_file, listings_by_query_id)
-    save_inference_state(inference_state_path, inference_root)
-
     return divines_per_mirror
 
 
@@ -1607,25 +1588,50 @@ def main() -> None:
     _install_poller_log_tee()
     cfg = parse_args()
     items_file = Path(DEFAULT_ITEMS_FILE)
-    output_csv = Path(DEFAULT_OUTPUT_FILE)
-    listings_cache_file = Path(DEFAULT_LISTINGS_CACHE_FILE)
-    ensure_csv_header(output_csv)
 
     session = build_session()
     rate_limiter = AdaptiveRateLimiter()
 
-    item_specs = load_item_specs(items_file)
+    root_dir = Path(__file__).resolve().parents[1]
+    storage = StorageService(root_dir=root_dir)
+    variants = storage.list_variants()
+    if not variants:
+        # Bootstrap from items.txt once.
+        item_specs = load_item_specs(items_file)
+        variant_specs: list[VariantSpec] = []
+        for idx, spec in enumerate(item_specs):
+            mode = item_mode_token(spec)
+            display = f"{spec.name} Normal" if mode == "normal" else spec.name
+            variant_specs.append(
+                VariantSpec(
+                    base_item_name=spec.name,
+                    mode=mode,
+                    display_name=display,
+                    sort_order=idx,
+                    icon_path=None,
+                )
+            )
+        storage.upsert_variants(variant_specs)
+        variants = storage.list_variants()
 
-    log_line("cycle", f"Loaded {len(item_specs)} item(s) from {items_file}. Writing to {output_csv}.")
+    variant_ids_by_key = {f"{name}::{mode}": int(vid) for (vid, name, mode, _dn, _so, _ic) in variants}
+    item_specs = []
+    for (_vid, name, mode, _dn, _so, _ic) in variants:
+        alt = True if mode == "aa" else False if mode == "normal" else None
+        item_specs.append(ItemSpec(name=name, alternate_art=alt))
+
+    log_line("cycle", f"Loaded {len(item_specs)} item(s) from SQLite (bootstrap file: {items_file}).")
     log_line("cycle", f"Polling every {cfg.poll_interval} seconds aligned to start-time grid. Press Ctrl+C to stop.")
 
     start_monotonic = time.monotonic()
-    cycle = 0
+    # Persist cycle numbers across restarts so DB time series accumulates points.
+    cycle = storage.latest_cycle_number(league=DEFAULT_LEAGUE)
+    cycles_done = 0
     divines_per_mirror = DIVINES_PER_MIRROR
 
-    # Load alert config and seed price history from existing CSV.
+    # Load alert config and seed price history from SQLite.
     alert_config = load_alert_config()
-    price_history = seed_price_history(output_csv, alert_config.history_cycles)
+    price_history = seed_price_history_from_db(storage, alert_config.history_cycles)
     alert_state: dict[str, tuple[int, float]] = {}
     log_line(
         "cycle",
@@ -1646,19 +1652,22 @@ def main() -> None:
             "Set DISCORD_WEBHOOK_URL (or POE_DISCORD_WEBHOOK_URL).",
         )
 
-    while cfg.max_cycles is None or cycle < cfg.max_cycles:
+    while cfg.max_cycles is None or cycles_done < cfg.max_cycles:
         cycle += 1
+        cycles_done += 1
         # Console display: use local time for readability (not stored, console-only)
         cycle_start = datetime.now().strftime("%H:%M:%S")
         print("")
         log_line("cycle", f"Cycle {cycle} start at {cycle_start}")
+        run_started_at_utc = datetime.now(timezone.utc).isoformat()
 
         # Reload alert config each cycle so UI changes take effect without restart.
         alert_config = load_alert_config()
 
         try:
             divines_per_mirror = run_cycle(
-                session, rate_limiter, output_csv, listings_cache_file, item_specs, cycle,
+                session, rate_limiter, item_specs, cycle,
+                storage, variant_ids_by_key, run_started_at_utc,
                 divines_per_mirror, price_history, alert_state, alert_config,
                 inference_fetch_cap=cfg.inference_fetch_cap,
             )
@@ -1670,7 +1679,7 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             log_line("error", f"Unexpected error during cycle {cycle}: {exc}")
 
-        if cfg.max_cycles is not None and cycle >= cfg.max_cycles:
+        if cfg.max_cycles is not None and cycles_done >= cfg.max_cycles:
             log_line("cycle", f"Reached max-cycles ({cfg.max_cycles}). Stopping.")
             break
 

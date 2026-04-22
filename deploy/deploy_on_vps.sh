@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy script run on the VPS (see .github/workflows/deploy-vps.yml).
 # Expects repo at APP_DIR with:
-#   - Dashboard: server/server.py (WorkingDirectory=APP_DIR; static files from web/)
+#   - Dashboard: python -m server.server (WorkingDirectory=APP_DIR; static files from web/)
 #   - Poller:    python -m poller (package under poller/)
 set -euo pipefail
 
@@ -44,7 +44,7 @@ else
   echo "No secrets in workflow or on disk; skipping $SECRETS_FILE"
 fi
 
-echo "[4/6] Sync systemd unit files (dashboard: python server/server.py)"
+echo "[4/6] Sync systemd unit files (dashboard: python -m server.server)"
 cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 systemctl daemon-reload

@@ -41,7 +41,7 @@ python3 -m venv .venv
 
 ## 5. Install And Enable systemd Services
 
-The dashboard unit runs the HTTP server from the repo’s **`server/`** package (entrypoint **`server/server.py`**) with `WorkingDirectory=/opt/poe-market-flips`. Static assets are served from **`web/`** (unchanged). Caddy still reverse-proxies to `127.0.0.1:8080`.
+The dashboard unit runs the HTTP server from the repo’s **`server/`** package (entrypoint **`python -m server.server`**) with `WorkingDirectory=/opt/poe-market-flips`. Static assets are served from **`web/`** (unchanged). Caddy still reverse-proxies to `127.0.0.1:8080`.
 
 If you previously installed a unit that used **`web/server.py`**, replace it by copying the current unit file again (see [§9](#9-updating-after-new-push) or the snippet below), then `daemon-reload` and restart.
 
@@ -123,7 +123,7 @@ sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
 
-The `cp` lines keep `/etc/systemd/system` in sync when `ExecStart` or other unit fields change (for example after moving the dashboard from `web/server.py` to `server/server.py`, or after changing the poller entry from `poll_item_prices.py` to `python -m poller`).
+The `cp` lines keep `/etc/systemd/system` in sync when `ExecStart` or other unit fields change (for example after moving the dashboard from `web/server.py` to `python -m server.server`, or after changing the poller entry from `poll_item_prices.py` to `python -m poller`).
 
 ## 10. Automatic Deploy On Every Push (Recommended)
 

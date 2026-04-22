@@ -37,4 +37,6 @@ Thumbs.db
 price_poll.csv
 sale_inference_state.json
 listings_cache.json
+config.json
 logs/
+data/market.db

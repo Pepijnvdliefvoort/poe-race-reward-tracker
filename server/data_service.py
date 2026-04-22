@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import math
 from datetime import datetime, timedelta, timezone
@@ -8,12 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from server.storage_service import ServerStorage
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WEB_DIR = ROOT_DIR / "web"
-CSV_PATH = ROOT_DIR / "price_poll.csv"
-CONFIG_PATH = ROOT_DIR / "config.json"
-ITEMS_FILE = ROOT_DIR / "items.txt"
-LISTINGS_CACHE_PATH = WEB_DIR / "listings_cache.json"
+ITEMS_FILE = ROOT_DIR / "items.txt"  # bootstrap only (DB is source of truth)
+CONFIG_PATH = ROOT_DIR / "config.json"  # bootstrap only (DB is source of truth)
 POLL_INTERVAL_SECONDS = 3600
 
 DEFAULT_CONFIG = {
@@ -29,23 +28,37 @@ DEFAULT_CONFIG = {
 
 
 def load_config() -> dict:
-    if not CONFIG_PATH.exists():
-        return dict(DEFAULT_CONFIG)
+    storage = ServerStorage(ROOT_DIR)
+    # DB-first
     try:
-        with CONFIG_PATH.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        merged = dict(DEFAULT_CONFIG)
-        merged.update({k: v for k, v in data.items() if k in DEFAULT_CONFIG})
-        return merged
+        cfg = storage.get_market_config()
+        if cfg is not None:
+            merged = dict(DEFAULT_CONFIG)
+            merged.update({k: v for k, v in cfg.items() if k in DEFAULT_CONFIG})
+            return merged
     except Exception:
-        return dict(DEFAULT_CONFIG)
+        pass
+    # Bootstrap from legacy file once
+    if CONFIG_PATH.exists():
+        try:
+            with CONFIG_PATH.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            merged = dict(DEFAULT_CONFIG)
+            merged.update({k: v for k, v in data.items() if k in DEFAULT_CONFIG})
+            try:
+                storage.set_market_config(merged)
+            except Exception:
+                pass
+            return merged
+        except Exception:
+            return dict(DEFAULT_CONFIG)
+    return dict(DEFAULT_CONFIG)
 
 
 def save_config(data: dict) -> None:
     merged = dict(DEFAULT_CONFIG)
     merged.update({k: v for k, v in data.items() if k in DEFAULT_CONFIG})
-    with CONFIG_PATH.open("w", encoding="utf-8") as fh:
-        json.dump(merged, fh, indent=2)
+    ServerStorage(ROOT_DIR).set_market_config(merged)
 
 
 def _parse_nonneg_int(value: str | None) -> int:
@@ -275,110 +288,22 @@ def _resolve_icon_filename(item_name: str, is_alt: bool) -> str | None:
 
 
 def _calculate_next_poll_time() -> int | None:
-    """Calculate next poll time from latest observed cycle start + poll interval."""
-    if not CSV_PATH.exists():
-        return None
-
+    """Calculate next poll time from latest poll_run started_at + poll interval."""
     try:
-        variants_by_name, _ = _load_item_variants()
-        first_variant: dict[str, Any] | None = None
-        for variants in variants_by_name.values():
-            for variant in variants:
-                if first_variant is None or _order_or_max(variant.get("order")) < _order_or_max(
-                    first_variant.get("order")
-                ):
-                    first_variant = variant
-
-        first_variant_key = str(first_variant.get("key")) if first_variant else None
-        latest_first_item_time: datetime | None = None
-        latest_cycle: int | None = None
-        earliest_in_latest_cycle: datetime | None = None
-
-        with CSV_PATH.open("r", encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                cycle_raw = (row.get("cycle") or "").strip()
-                timestamp_utc = (row.get("timestamp_utc") or "").strip()
-                if not cycle_raw or not timestamp_utc:
-                    continue
-
-                try:
-                    cycle = int(cycle_raw)
-                    dt = datetime.fromisoformat(timestamp_utc)
-                except ValueError:
-                    continue
-
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-
-                row_item_name = (row.get("item_name") or "").strip()
-                row_mode = _parse_row_mode(row.get("item_mode"))
-                row_key = f"{row_item_name}::{_mode_token(row_mode)}"
-                if first_variant_key and row_key == first_variant_key:
-                    latest_first_item_time = dt
-
-                if latest_cycle is None or cycle > latest_cycle:
-                    latest_cycle = cycle
-                    earliest_in_latest_cycle = dt
-                elif cycle == latest_cycle and earliest_in_latest_cycle is not None and dt < earliest_in_latest_cycle:
-                    earliest_in_latest_cycle = dt
-
-        cycle_start_time = latest_first_item_time or earliest_in_latest_cycle
-
-        if cycle_start_time is None:
+        last_started = ServerStorage(ROOT_DIR).latest_poll_run_started_at()
+        if not last_started:
             return None
-
-        next_dt = cycle_start_time + timedelta(seconds=POLL_INTERVAL_SECONDS)
+        dt = datetime.fromisoformat(last_started)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        next_dt = dt + timedelta(seconds=POLL_INTERVAL_SECONDS)
         return int(next_dt.timestamp() * 1000)
     except Exception:
         return None
 
 
 def fetch_listing_preview(query_id: str) -> dict[str, Any]:
-    cleaned_query_id = query_id.strip()
-    if not cleaned_query_id:
-        raise ValueError("queryId is required")
-
-    if not LISTINGS_CACHE_PATH.exists():
-        return {
-            "queryId": cleaned_query_id,
-            "league": "Standard",
-            "totalResults": 0,
-            "listings": [],
-            "source": "cache-miss",
-        }
-
-    try:
-        with LISTINGS_CACHE_PATH.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except Exception:
-        return {
-            "queryId": cleaned_query_id,
-            "league": "Standard",
-            "totalResults": 0,
-            "listings": [],
-            "source": "cache-read-error",
-        }
-
-    by_query = payload.get("byQueryId") if isinstance(payload, dict) else None
-    entry = by_query.get(cleaned_query_id) if isinstance(by_query, dict) else None
-    if not isinstance(entry, dict):
-        return {
-            "queryId": cleaned_query_id,
-            "league": payload.get("league", "Standard") if isinstance(payload, dict) else "Standard",
-            "totalResults": 0,
-            "listings": [],
-            "source": "cache-not-found",
-        }
-
-    return {
-        "queryId": cleaned_query_id,
-        "league": entry.get("league") or payload.get("league") or "Standard",
-        "totalResults": int(entry.get("totalResults") or 0),
-        "listings": entry.get("listings") if isinstance(entry.get("listings"), list) else [],
-        "updatedAt": entry.get("updatedAt"),
-        "source": "cache",
-    }
+    return ServerStorage(ROOT_DIR).fetch_listing_preview(query_id)
 
 
 def load_price_data() -> dict[str, Any]:
@@ -387,27 +312,42 @@ def load_price_data() -> dict[str, Any]:
     All timestamps in returned data are in epoch milliseconds (UTC-based).
     Frontend receives milliseconds and displays in browser's local timezone.
     """
+    # DB is the source of truth for tracked items. If empty, bootstrap-import from items.txt once.
     variants_by_name, order_by_key = _load_item_variants()
     items: dict[str, dict[str, Any]] = _seed_items_from_variants(variants_by_name)
-    allowed_variant_keys = set(items.keys())
 
-    if not CSV_PATH.exists():
-        item_list = list(items.values())
-        item_list.sort(
-            key=lambda it: (
-                _order_or_max(it.get("sortOrder")),
-                it.get("itemName") or "",
-            )
-        )
+    storage = ServerStorage(ROOT_DIR)
+    from storage.service import StorageService, VariantSpec  # local import
 
-        return {
-            "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "csvPath": str(CSV_PATH),
-            "rowCount": 0,
-            "items": item_list,
-            "nextPollTime": _calculate_next_poll_time(),
-            "warning": "CSV file not found.",
-        }
+    ss = StorageService(root_dir=ROOT_DIR)
+    if not storage.has_any_variants():
+        # Bootstrap from items.txt definitions (the same parsing you already had)
+        variant_specs = []
+        for base_name, variants in variants_by_name.items():
+            for v in variants:
+                mode = _mode_token(v.get("isAA"))
+                variant_specs.append(
+                    VariantSpec(
+                        base_item_name=base_name,
+                        mode=mode,
+                        display_name=str(v.get("displayName") or base_name),
+                        sort_order=_order_or_max(v.get("order")),
+                        icon_path=_get_image_path(base_name, v.get("isAA")),
+                    )
+                )
+        ss.upsert_variants(variant_specs)
+
+    variant_ids_by_key = storage.variant_ids_by_key()
+    items_by_key = storage.variants_for_ui_fallback(items_fallback=items)
+    payload = storage.load_price_payload_points(
+        variant_ids_by_key=variant_ids_by_key,
+        variants_by_key=items_by_key,
+        order_by_key=order_by_key,
+        get_image_path=_get_image_path,
+        epoch_ms=_to_epoch_ms,
+    )
+    payload["nextPollTime"] = _calculate_next_poll_time()
+    return payload
 
     row_count = 0
     # Persist variant mapping by query id so AA/normal does not drift when cycle numbers reset.

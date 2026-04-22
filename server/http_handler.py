@@ -6,7 +6,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from admin_service import (
+from .admin_service import (
     POLLER_LOG_PATH,
     SERVER_LOG_PATH,
     admin_authorized,
@@ -27,9 +27,13 @@ from admin_service import (
     query_log_entries,
     visitor_map_payload,
 )
-from data_service import WEB_DIR, fetch_listing_preview, load_config, load_price_data, save_config
-from data_service import CSV_PATH, LISTINGS_CACHE_PATH
-from stats_service import system_stats_payload
+from .data_service import WEB_DIR, fetch_listing_preview, load_config, load_price_data, save_config
+from pathlib import Path
+
+from storage.db import Database
+
+from .data_service import ROOT_DIR
+from .stats_service import system_stats_payload
 
 _ADMIN_UNAUTHORIZED_HTML = WEB_DIR / "admin-unauthorized.html"
 
@@ -259,18 +263,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             if req_path == "/api/admin/download/price_poll.csv":
-                filename, csv_path = csv_download_headers()
-                if not csv_path.exists():
-                    self.send_error(404)
-                    return
-                data = csv_path.read_bytes()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/csv; charset=utf-8")
-                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                body = json.dumps({"error": "CSV export has been removed (SQLite is the source of truth)."}).encode(
+                    "utf-8"
+                )
+                self.send_response(410)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(data)
+                self.wfile.write(body)
                 return
 
             body = json.dumps({"error": "Unknown admin endpoint"}).encode("utf-8")
@@ -397,9 +398,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._note_admin_auth_success()
 
             if parsed.path == "/api/admin/clear-data":
+                # SQLite is authoritative. Clear it first.
+                try:
+                    Database(ROOT_DIR).ensure_initialized()
+                except Exception:
+                    pass
                 payload = clear_market_data(
-                    listings_cache_path=LISTINGS_CACHE_PATH,
-                    csv_path=CSV_PATH,
+                    listings_cache_path=Path("web") / "listings_cache.json",
+                    csv_path=Path("price_poll.csv"),
                 )
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
                 self.send_response(200)

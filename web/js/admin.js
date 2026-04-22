@@ -94,6 +94,9 @@ function adminEndpointErrorMessage(err, label) {
 let map;
 let heatLayer;
 let markersLayer;
+let visitorMarkersByIp = {};
+let lastVisitorMapData = null;
+let userFocusedVisitor = false;
 
 function formatLocalDateTime(value) {
   if (!value) return "";
@@ -123,27 +126,19 @@ function ensureMap() {
 function renderVisitorMap(data) {
   ensureMap();
   const points = data.points || [];
+  lastVisitorMapData = data;
+  visitorMarkersByIp = {};
   if (heatLayer) {
     map.removeLayer(heatLayer);
     heatLayer = null;
   }
   markersLayer.clearLayers();
 
-  const heat = points.map((p) => [p.lat, p.lng, Math.max(0.15, Math.min(1, p.weight / 8))]);
-  if (heat.length > 0 && typeof L.heatLayer === "function") {
-    heatLayer = L.heatLayer(heat, {
-      radius: 32,
-      blur: 28,
-      maxZoom: 12,
-      max: 1.2,
-      gradient: { 0.4: "blue", 0.65: "lime", 0.85: "yellow", 1: "red" },
-    });
-    map.addLayer(heatLayer);
-  }
+  // Point-only rendering (no heat scaling).
 
   points.forEach((p) => {
     const m = L.circleMarker([p.lat, p.lng], {
-      radius: 6 + Math.min(10, p.visits / 2),
+      radius: 6,
       color: "#2ab7bf",
       weight: 2,
       fillColor: "#ff7a2f",
@@ -154,16 +149,33 @@ function renderVisitorMap(data) {
       `<strong>${escapeHtml(p.ip)}</strong><br/>Visits: ${p.visits}<br/>${lastSeen ? escapeHtml(lastSeen) : ""}`,
     );
     markersLayer.addLayer(m);
+    visitorMarkersByIp[String(p.ip || "")] = m;
   });
 
-  if (points.length > 0) {
-    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]));
-    map.fitBounds(bounds.pad(0.15));
+  // Default view: keep global map (do not auto-focus on visitors).
+  // Only zoom when the user clicks a visitor row.
+  if (!userFocusedVisitor) {
+    map.setView([20, 0], 2, { animate: false });
   }
 
   requestAnimationFrame(() => {
     map.invalidateSize({ animate: false });
   });
+}
+
+function focusVisitorIp(ip) {
+  ensureMap();
+  const key = String(ip || "");
+  if (!key) return;
+  const marker = visitorMarkersByIp[key];
+  if (marker) {
+    userFocusedVisitor = true;
+    const ll = marker.getLatLng();
+    map.setView(ll, Math.max(map.getZoom(), 6), { animate: true });
+    marker.openPopup();
+    return;
+  }
+  // If an IP exists in the table but isn't placed yet (no geo), do nothing.
 }
 
 function escapeHtml(s) {
@@ -191,13 +203,21 @@ function renderVisitorTable(data) {
   tbody.innerHTML = visitors
     .map(
       (v) => `
-    <tr>
+    <tr class="visitor-row" data-ip="${escapeHtml(v.ip)}">
       <td><code>${escapeHtml(v.ip)}</code></td>
       <td>${v.visits}</td>
       <td>${v.lastSeen ? escapeHtml(formatLocalDateTime(v.lastSeen)) : "—"}</td>
     </tr>`,
     )
     .join("");
+
+  // Click a row to focus the map marker.
+  tbody.querySelectorAll?.("tr.visitor-row").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const ip = tr.getAttribute("data-ip") || "";
+      focusVisitorIp(ip);
+    });
+  });
 }
 
 let logPollTimer;
@@ -1543,7 +1563,9 @@ function setupCsvDownload() {
   if (!a) return;
   a.addEventListener("click", (ev) => {
     ev.preventDefault();
-    window.location.href = "/api/admin/download/price_poll.csv";
+    window.alert(
+      "CSV export has been removed.\n\nMarket data is stored in SQLite (data/market.db).",
+    );
   });
 }
 
@@ -1560,7 +1582,7 @@ function setupClearData() {
 
   btn.addEventListener("click", async () => {
     const ok = window.confirm(
-      "This will clear:\n\n- web/listings_cache.json (deleted)\n- price_poll.csv (keeps the header row)\n- sale_inference_state.json (deleted)\n\nContinue?",
+      "This will clear market data from SQLite (data/market.db).\n\nContinue?",
     );
     if (!ok) return;
 
@@ -1569,11 +1591,8 @@ function setupClearData() {
     try {
       const payload = await fetchJsonWithInit("/api/admin/clear-data", { method: "POST" });
       const cleared = payload?.cleared || {};
-      const csv = cleared.pricePollCsv ? "price_poll.csv" : null;
-      const cache = cleared.listingsCache ? "listings_cache.json" : null;
-      const inf = cleared.saleInferenceState ? "sale_inference_state.json" : null;
-      const names = [csv, cache, inf].filter(Boolean).join(", ");
-      setHint(names ? `Cleared: ${names}` : "Cleared.");
+      const sqlite = cleared.sqlite ? "sqlite" : null;
+      setHint(sqlite ? "Cleared: sqlite" : "Cleared.");
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Clear data"), true);
     } finally {

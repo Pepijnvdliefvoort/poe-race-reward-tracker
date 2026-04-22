@@ -71,8 +71,20 @@ class _StreamToLogger:
             line = line.rstrip("\r")
             if not line.strip():
                 continue
+            # If code prints a structured prefix like "[warn]" or "[error]" (common in this repo),
+            # capture it at the correct severity so the admin log filters/counts work.
+            lowered = line.lstrip().lower()
+            if lowered.startswith("[warn]") or lowered.startswith("[warning]"):
+                self._logger.warning(line)
+                continue
+            if lowered.startswith("[error]"):
+                self._logger.error(line)
+                continue
+            if lowered.startswith("[critical]"):
+                self._logger.critical(line)
+                continue
             # Upgrade common "Warning:" prefixes to WARNING even if printed to stdout.
-            if self._level == logging.INFO and line.lstrip().lower().startswith("warning:"):
+            if self._level == logging.INFO and lowered.startswith("warning:"):
                 self._logger.warning(line)
             else:
                 self._logger.log(self._level, line)
