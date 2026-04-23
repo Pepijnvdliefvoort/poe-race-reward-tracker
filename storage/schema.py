@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def migration_001_initial() -> str:
@@ -232,6 +232,11 @@ CREATE INDEX IF NOT EXISTS idx_sales_poll ON sales(item_poll_id);
 
 
 def migration_005_sales_reverts() -> str:
+    """Applied via a Python idempotent migration in `storage/db.py`."""
+    return ""
+
+
+def migration_006_inference_price_state() -> str:
     """Applied via a Python idempotent migration in `storage/db.py`."""
     return ""
 

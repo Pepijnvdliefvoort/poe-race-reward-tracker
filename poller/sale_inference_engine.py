@@ -109,6 +109,21 @@ def _normalize_price_currency(price: dict[str, Any]) -> tuple[str, float] | None
     return None
 
 
+def _raw_price_amount_currency(price: dict[str, Any]) -> tuple[float, str] | None:
+    """
+    Preserve the original listing price (for notifications / UI), even if the currency
+    isn't one we can convert to mirror-equivalent.
+    """
+    amount = price.get("amount")
+    currency = price.get("currency")
+    if not isinstance(amount, (int, float)) or not isinstance(currency, str):
+        return None
+    cur = currency.strip().lower()
+    if not cur:
+        return None
+    return float(amount), cur
+
+
 def _mirror_equivalent(amount: float, currency: str, divines_per_mirror: float) -> float:
     if currency == "mirror":
         return amount
@@ -161,12 +176,17 @@ def listing_signals_from_fetch(
         price_amount: float | None = None
         price_currency: str | None = None
         if isinstance(price, dict):
+            raw = _raw_price_amount_currency(price)
+            if raw is not None:
+                amt_raw, cur_raw = raw
+                price_amount = round(float(amt_raw), 6)
+                price_currency = str(cur_raw)
+
+            # Mirror-equivalent is only available for currencies we normalize.
             norm = _normalize_price_currency(price)
             if norm is not None:
                 cur, amt = norm
-                price_amount = round(float(amt), 6)
-                price_currency = str(cur)
-                m = _mirror_equivalent(amt, cur, divines_per_mirror)
+                m = _mirror_equivalent(float(amt), str(cur), divines_per_mirror)
                 if math.isfinite(m):
                     mirror_eq = round(m, 6)
         out.append(

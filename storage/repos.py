@@ -395,11 +395,19 @@ class InferenceStateRepo:
 
     def load_state(self, *, item_variant_id: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         sig_rows = self._con.execute(
-            "SELECT fingerprint, seller, is_instant, mirror_equiv FROM inference_state_signals WHERE item_variant_id = ?",
+            """
+            SELECT fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency
+            FROM inference_state_signals
+            WHERE item_variant_id = ?
+            """,
             (item_variant_id,),
         ).fetchall()
         pend_rows = self._con.execute(
-            "SELECT fingerprint, seller, removed_cycle, counted_immediate FROM inference_state_pending WHERE item_variant_id = ?",
+            """
+            SELECT fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency
+            FROM inference_state_pending
+            WHERE item_variant_id = ?
+            """,
             (item_variant_id,),
         ).fetchall()
         signals = [
@@ -408,6 +416,8 @@ class InferenceStateRepo:
                 "seller": str(r["seller"]),
                 "isInstant": bool(int(r["is_instant"] or 0)),
                 "mirrorEquiv": (float(r["mirror_equiv"]) if r["mirror_equiv"] is not None else None),
+                "priceAmount": (float(r["price_amount"]) if r["price_amount"] is not None else None),
+                "priceCurrency": (str(r["price_currency"]) if r["price_currency"] is not None else None),
             }
             for r in sig_rows
         ]
@@ -417,6 +427,9 @@ class InferenceStateRepo:
                 "seller": str(r["seller"]),
                 "removed_cycle": int(r["removed_cycle"] or 0),
                 "countedImmediate": bool(int(r["counted_immediate"] or 0)),
+                "mirrorEquiv": (float(r["mirror_equiv"]) if r["mirror_equiv"] is not None else None),
+                "priceAmount": (float(r["price_amount"]) if r["price_amount"] is not None else None),
+                "priceCurrency": (str(r["price_currency"]) if r["price_currency"] is not None else None),
             }
             for r in pend_rows
         ]
@@ -452,13 +465,16 @@ class InferenceStateRepo:
                     seller,
                     1 if bool(s.get("isInstant")) else 0,
                     s.get("mirrorEquiv"),
+                    s.get("priceAmount"),
+                    (str(s.get("priceCurrency") or "").strip().lower() or None),
                     cycle,
                 )
             )
         self._con.executemany(
             """
-            INSERT INTO inference_state_signals(item_variant_id, fingerprint, seller, is_instant, mirror_equiv, last_seen_cycle)
-            VALUES (?,?,?,?,?,?)
+            INSERT INTO inference_state_signals(
+              item_variant_id, fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency, last_seen_cycle
+            ) VALUES (?,?,?,?,?,?,?,?)
             """,
             sig_payload,
         )
@@ -481,12 +497,16 @@ class InferenceStateRepo:
                     seller,
                     int(p.get("removed_cycle") or 0),
                     1 if bool(p.get("countedImmediate")) else 0,
+                    p.get("mirrorEquiv"),
+                    p.get("priceAmount"),
+                    (str(p.get("priceCurrency") or "").strip().lower() or None),
                 )
             )
         self._con.executemany(
             """
-            INSERT INTO inference_state_pending(item_variant_id, fingerprint, seller, removed_cycle, counted_immediate)
-            VALUES (?,?,?,?,?)
+            INSERT INTO inference_state_pending(
+              item_variant_id, fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency
+            ) VALUES (?,?,?,?,?,?,?,?)
             """,
             pend_payload,
         )

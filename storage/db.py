@@ -14,6 +14,7 @@ from .schema import (
     migration_003_visitors,
     migration_004_sales,
     migration_005_sales_reverts,
+    migration_006_inference_price_state,
 )
 
 
@@ -92,6 +93,7 @@ class Database:
             (3, migration_003_visitors()),
             (4, migration_004_sales()),
             (5, migration_005_sales_reverts()),
+            (6, migration_006_inference_price_state()),
         ]
 
         for version, sql in migrations:
@@ -99,6 +101,8 @@ class Database:
                 continue
             if version == 5:
                 self._migration_005_sales_reverts(con)
+            elif version == 6:
+                self._migration_006_inference_price_state(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -123,6 +127,34 @@ class Database:
             )
         if "reverted_reason" not in cols:
             con.execute("ALTER TABLE sales ADD COLUMN reverted_reason TEXT")
+
+    def _migration_006_inference_price_state(self, con: sqlite3.Connection) -> None:
+        """
+        Persist last-seen listing price (amount + currency) for inference state rows so
+        downstream inference events / Discord notifications can display prices even when
+        the currency can't be converted to mirror-equivalent.
+        """
+        # inference_state_signals: add price fields
+        sig_cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(inference_state_signals)").fetchall()
+        }
+        if "price_amount" not in sig_cols:
+            con.execute("ALTER TABLE inference_state_signals ADD COLUMN price_amount REAL")
+        if "price_currency" not in sig_cols:
+            con.execute("ALTER TABLE inference_state_signals ADD COLUMN price_currency TEXT")
+
+        # inference_state_pending: add price fields + mirror_equiv (so events can carry it forward)
+        pend_cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(inference_state_pending)").fetchall()
+        }
+        if "mirror_equiv" not in pend_cols:
+            con.execute("ALTER TABLE inference_state_pending ADD COLUMN mirror_equiv REAL")
+        if "price_amount" not in pend_cols:
+            con.execute("ALTER TABLE inference_state_pending ADD COLUMN price_amount REAL")
+        if "price_currency" not in pend_cols:
+            con.execute("ALTER TABLE inference_state_pending ADD COLUMN price_currency TEXT")
 
 
 def execute_many(con: sqlite3.Connection, sql: str, rows: Iterable[tuple]) -> None:
