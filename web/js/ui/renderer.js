@@ -18,8 +18,16 @@ export function getNextInLineItemName(items) {
 
     let latestItem = null;
     let latestTime = -Infinity;
+    let latestCycle = -Infinity;
+    let latestOrderForTie = -Infinity;
 
-    // Find the item that was polled most recently (by timestamp, not cycle)
+    // Find the item that was polled most recently.
+    //
+    // IMPORTANT: multiple polls can share the same millisecond timestamp (or the backend can
+    // round timestamps), which makes a simple `latest.time` comparison unstable and can make
+    // the UI "skip" the green border. We add tie-breakers:
+    // - `latest.cycle` (higher means later, when available)
+    // - `sortOrder` (higher means later within a cycle when timestamps tie)
     for (let i = 0; i < items.length; i += 1) {
         const latest = items[i].latest;
         if (!latest) {
@@ -27,9 +35,18 @@ export function getNextInLineItemName(items) {
         }
 
         const time = latest.time ?? -Infinity;
+        const cycle = latest.cycle ?? -Infinity;
+        const order = items[i].sortOrder ?? Infinity;
+        const orderForTie = Number.isFinite(order) ? order : Infinity;
 
-        if (time > latestTime) {
+        if (
+            time > latestTime ||
+            (time === latestTime && cycle > latestCycle) ||
+            (time === latestTime && cycle === latestCycle && orderForTie > latestOrderForTie)
+        ) {
             latestTime = time;
+            latestCycle = cycle;
+            latestOrderForTie = orderForTie;
             latestItem = items[i];
         }
     }
