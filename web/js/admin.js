@@ -1132,15 +1132,15 @@ function setupLogSplitView() {
         applyServerStats(ratioSS);
         saveServerStats(ratioSS);
       } else
-      if (vis && vis.server && vis.poller && !vis.stats) {
-        ratio2 = clampDouble(ratio2 + delta, vis);
-        applyDouble(ratio2);
-        saveDouble(ratio2);
-      } else {
-        [x1, x2] = clampSplit(x1 + delta, x2, vis);
-        applyTriple(x1, x2);
-        saveTriple(x1, x2);
-      }
+        if (vis && vis.server && vis.poller && !vis.stats) {
+          ratio2 = clampDouble(ratio2 + delta, vis);
+          applyDouble(ratio2);
+          saveDouble(ratio2);
+        } else {
+          [x1, x2] = clampSplit(x1 + delta, x2, vis);
+          applyTriple(x1, x2);
+          saveTriple(x1, x2);
+        }
     } else {
       if (vis && !vis.server && vis.poller && vis.stats) {
         ratioPS = clampPollerStats((ratioPS == null ? 0.5 : ratioPS) + delta, vis);
@@ -1774,17 +1774,57 @@ function setupMarketConfigEditor() {
   };
 
   const META = {
-    alert_enabled: { label: "Enable alerts", help: "Turns alerting on/off globally." },
-    alert_threshold_pct: { label: "Threshold (%)", help: "Minimum percent drop required to trigger an alert." },
-    alert_history_cycles: { label: "History cycles", help: "How many past cycles to compare against." },
-    alert_min_total_results: { label: "Min results", help: "Ignore items with fewer total results than this." },
-    alert_min_floor_listings: { label: "Min floor listings", help: "Minimum listings required to treat the floor as reliable." },
-    alert_floor_band_pct: { label: "Floor band (%)", help: "Treat listings within this percent of the floor as the floor band." },
-    alert_low_liquidity_extra_drop_pct: { label: "Low-liquidity extra drop (%)", help: "Extra drop required when liquidity is low." },
-    alert_cooldown_cycles: { label: "Cooldown cycles", help: "Minimum cycles between alerts for the same item." },
+    alert_enabled: {
+      label: "Enable alerts",
+      help: "Turns alerting on/off globally.",
+      type: "boolean",
+    },
+    alert_threshold_pct: {
+      label: "Threshold (%)",
+      help: "Minimum percent drop required to trigger an alert.",
+      type: "number",
+    },
+    alert_history_cycles: {
+      label: "History cycles",
+      help: "How many past cycles to compare against.",
+      type: "number",
+    },
+    alert_min_total_results: {
+      label: "Min results",
+      help: "Ignore items with fewer total results than this.",
+      type: "number",
+    },
+    alert_min_floor_listings: {
+      label: "Min floor listings",
+      help: "Minimum listings required to treat the floor as reliable.",
+      type: "number",
+    },
+    alert_floor_band_pct: {
+      label: "Floor band (%)",
+      help: "Treat listings within this percent of the floor as the floor band.",
+      type: "number",
+    },
+    alert_low_liquidity_extra_drop_pct: {
+      label: "Low-liquidity extra drop (%)",
+      help: "Extra drop required when liquidity is low.",
+      type: "number",
+    },
+    alert_cooldown_cycles: {
+      label: "Cooldown cycles",
+      help: "Minimum cycles between alerts for the same item.",
+      type: "number",
+    },
     sales_discord_window_days: {
       label: "Sales Discord window (days)",
       help: 'Rolling window for "total est. sold" in Discord sale notifications (match your chart period, e.g. 90 ~ 3m preset).',
+    },
+    inference_listings_fetch_cap: {
+      label: "Inference listings fetch cap",
+      help: "Max search result IDs to fetch for sale inference per item (PoE caps at 100; 0 disables).",
+    },
+    inference_truncation_safe_margin_pct: {
+      label: "Inference truncation safe margin (%)",
+      help: "Safe margin for truncation of inference results. Anything above this margin is ignored.",
     },
   };
 
