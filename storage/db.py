@@ -7,7 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from .schema import SCHEMA_VERSION, migration_001_initial, migration_002_app_config, migration_003_visitors
+from .schema import (
+    SCHEMA_VERSION,
+    migration_001_initial,
+    migration_002_app_config,
+    migration_003_visitors,
+    migration_004_sales,
+    migration_005_sales_reverts,
+)
 
 
 def _utc_now_iso() -> str:
@@ -83,6 +90,8 @@ class Database:
             (1, migration_001_initial()),
             (2, migration_002_app_config()),
             (3, migration_003_visitors()),
+            (4, migration_004_sales()),
+            (5, migration_005_sales_reverts()),
         ]
 
         for version, sql in migrations:

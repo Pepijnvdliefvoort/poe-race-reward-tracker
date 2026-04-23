@@ -123,6 +123,23 @@ def load_sales_discord_window_days(storage: StorageService) -> int:
     return max(1, min(3650, d))
 
 
+def load_inference_truncation_safe_margin_pct(storage: StorageService) -> float:
+    """
+    When the trade ladder is truncated (total_results > fetched IDs), we only treat a vanished row
+    as a sale/removal if its price was clearly inside the observed slice, i.e. <= cutoff * (1 - margin).
+
+    Config key: app_config.market.inference_truncation_safe_margin_pct (default 6.0)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = float(data.get("inference_truncation_safe_margin_pct", 6.0))
+    except Exception:
+        raw = 6.0
+    if not math.isfinite(raw):
+        raw = 6.0
+    return max(0.0, min(50.0, float(raw)))
+
+
 def load_alert_config() -> AlertConfig:
     webhook_url = load_discord_webhook_url_from_env()
     defaults = AlertConfig(
@@ -1436,12 +1453,25 @@ def run_cycle(
         prev_signals, pending = ([], [])
         if variant_id:
             prev_signals, pending = storage.load_inference_state(variant_id=variant_id)
+        truncation_margin_pct = load_inference_truncation_safe_margin_pct(storage)
         inf, new_pending, curr_signals = evaluate_listing_transition(
             item_key=item_key,
             cycle=cycle,
             prev_signals=prev_signals,
             curr_signals=inference_signals,
             pending_instant=pending,
+            snapshot_truncated=bool(effective_inference_cap > 0 and total_results > effective_inference_cap),
+            truncation_cutoff_mirror=(
+                max(
+                    (
+                        float(s.get("mirrorEquiv"))
+                        for s in (inference_signals or [])
+                        if isinstance(s, dict) and isinstance(s.get("mirrorEquiv"), (int, float)) and math.isfinite(float(s.get("mirrorEquiv")))
+                    ),
+                    default=None,
+                )
+            ),
+            truncation_safe_margin_pct=float(truncation_margin_pct),
         )
         (
             xfer,

@@ -254,6 +254,9 @@ def evaluate_listing_transition(
     prev_signals: list[dict[str, Any]],
     curr_signals: list[dict[str, Any]],
     pending_instant: list[dict[str, Any]],
+    snapshot_truncated: bool = False,
+    truncation_cutoff_mirror: float | None = None,
+    truncation_safe_margin_pct: float = 6.0,
 ) -> tuple[InferenceCycleResult, list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Returns (result, new_pending_instant, new_prev_signals_for_storage_as_curr).
@@ -268,6 +271,29 @@ def evaluate_listing_transition(
 
     prev_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in prev_signals}
     curr_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in curr_signals}
+
+    def _safe_to_infer_vanish(mirror_equiv: Any) -> bool:
+        """
+        When the API snapshot is truncated (we only see the cheapest N results),
+        some previously-seen rows can disappear simply by being pushed past the cutoff.
+
+        Middle ground:
+        - If not truncated: allow inference.
+        - If truncated: only allow inference for rows clearly inside the slice,
+          i.e. priced meaningfully below the current cutoff price.
+        """
+        if not snapshot_truncated:
+            return True
+        if truncation_cutoff_mirror is None:
+            return False
+        m = _as_float(mirror_equiv)
+        if m is None:
+            return False
+        cutoff = float(truncation_cutoff_mirror)
+        if cutoff <= 0:
+            return False
+        margin = max(0.0, float(truncation_safe_margin_pct)) / 100.0
+        return m <= cutoff * (1.0 - margin)
 
     # --- Resolve older instant removals (rules 2 vs 3) ---
     new_pending: list[dict[str, Any]] = []
@@ -302,19 +328,21 @@ def evaluate_listing_transition(
             if counted_imm:
                 pass
             else:
-                result.likely_instant_sale += 1
-                events.append(
-                    {
-                        "rule": "likely_instant_sale",
-                        "itemKey": item_key,
-                        "fingerprint": fp,
-                        "seller": seller,
-                        "mirrorEquiv": mirror_eq,
-                        "priceAmount": price_amount,
-                        "priceCurrency": price_currency,
-                        "cycle": cycle,
-                    }
-                )
+                # Only resolve legacy pending-to-sale when it's safe (not a bump-out).
+                if _safe_to_infer_vanish(mirror_eq):
+                    result.likely_instant_sale += 1
+                    events.append(
+                        {
+                            "rule": "likely_instant_sale",
+                            "itemKey": item_key,
+                            "fingerprint": fp,
+                            "seller": seller,
+                            "mirrorEquiv": mirror_eq,
+                            "priceAmount": price_amount,
+                            "priceCurrency": price_currency,
+                            "cycle": cycle,
+                        }
+                    )
             continue
         new_pending.append(pend)
 
@@ -359,6 +387,10 @@ def evaluate_listing_transition(
         mirror_eq = meta.get("mirrorEquiv")
         price_amount = meta.get("priceAmount")
         price_currency = meta.get("priceCurrency")
+
+        # If we're truncated and this vanished row was near the cutoff, it may have been bumped out.
+        if not _safe_to_infer_vanish(mirror_eq):
+            continue
 
         ps = _sellers_for_fingerprint(prev_signals, fp)
         cs = _sellers_for_fingerprint(curr_signals, fp)
@@ -526,6 +558,8 @@ def run_inference_for_item(
         prev_signals=prev_signals,
         curr_signals=curr_signals,
         pending_instant=pending,
+        snapshot_truncated=False,
+        truncation_cutoff_mirror=None,
     )
 
     by[item_key] = {

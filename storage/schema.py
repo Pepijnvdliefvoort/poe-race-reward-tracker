@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 
 def migration_001_initial() -> str:
@@ -186,5 +186,62 @@ CREATE TABLE IF NOT EXISTS ip_geo_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ip_geo_cache_updated ON ip_geo_cache(updated_at_utc);
+"""
+
+
+def migration_004_sales() -> str:
+    return """
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS sales (
+  id INTEGER PRIMARY KEY,
+  item_poll_id INTEGER NOT NULL REFERENCES item_polls(id) ON DELETE CASCADE,
+  item_variant_id INTEGER NOT NULL REFERENCES item_variants(id) ON DELETE CASCADE,
+
+  -- The poll timestamp (when we observed the transition).
+  occurred_at_utc TEXT NOT NULL,
+  -- When we wrote this row (can differ from occurred_at_utc on retries/backfills).
+  recorded_at_utc TEXT NOT NULL,
+
+  -- Which inference rule produced the sale signal.
+  rule TEXT NOT NULL CHECK (rule IN ('confirmed_transfer', 'likely_instant_sale')),
+  fingerprint TEXT NOT NULL DEFAULT '',
+
+  seller TEXT NOT NULL,
+  buyer TEXT NOT NULL DEFAULT '',
+
+  -- Price as observed on the ladder row (if present), plus normalized mirror equivalent.
+  price_amount REAL,
+  price_currency TEXT,
+  mirror_equiv REAL,
+
+  quantity INTEGER NOT NULL DEFAULT 1,
+
+  -- If an instant-sale signal was later negated (e.g. relist), we mark it reverted instead of deleting.
+  reverted_at_utc TEXT,
+  reverted_by_item_poll_id INTEGER REFERENCES item_polls(id) ON DELETE SET NULL,
+  reverted_reason TEXT,
+
+  UNIQUE(item_variant_id, rule, fingerprint, seller, buyer, occurred_at_utc)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sales_variant_time ON sales(item_variant_id, occurred_at_utc);
+CREATE INDEX IF NOT EXISTS idx_sales_time ON sales(occurred_at_utc);
+CREATE INDEX IF NOT EXISTS idx_sales_poll ON sales(item_poll_id);
+"""
+
+
+def migration_005_sales_reverts() -> str:
+    """
+    Backfill migration for older DBs that already created `sales` without revert columns.
+    Safe to run even if columns already exist (SQLite supports IF NOT EXISTS only on tables/indexes,
+    so we use a best-effort ADD COLUMN sequence).
+    """
+    return """
+PRAGMA foreign_keys = ON;
+
+ALTER TABLE sales ADD COLUMN reverted_at_utc TEXT;
+ALTER TABLE sales ADD COLUMN reverted_by_item_poll_id INTEGER REFERENCES item_polls(id) ON DELETE SET NULL;
+ALTER TABLE sales ADD COLUMN reverted_reason TEXT;
 """
 

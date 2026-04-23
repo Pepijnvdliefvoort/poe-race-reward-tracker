@@ -491,3 +491,100 @@ class InferenceStateRepo:
             pend_payload,
         )
 
+
+class SalesRepo:
+    def __init__(self, con: sqlite3.Connection) -> None:
+        self._con = con
+
+    def insert_sale(
+        self,
+        *,
+        item_poll_id: int,
+        item_variant_id: int,
+        occurred_at_utc: str,
+        recorded_at_utc: str,
+        rule: str,
+        fingerprint: str | None,
+        seller: str,
+        buyer: str | None,
+        price_amount: float | None,
+        price_currency: str | None,
+        mirror_equiv: float | None,
+        quantity: int = 1,
+    ) -> None:
+        fp = (fingerprint or "").strip()
+        b = (buyer or "").strip()
+        cur = (price_currency or "").strip().lower() or None
+        qty = int(quantity) if int(quantity) > 0 else 1
+        self._con.execute(
+            """
+            INSERT OR IGNORE INTO sales(
+              item_poll_id, item_variant_id, occurred_at_utc, recorded_at_utc,
+              rule, fingerprint, seller, buyer,
+              price_amount, price_currency, mirror_equiv, quantity
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                int(item_poll_id),
+                int(item_variant_id),
+                str(occurred_at_utc),
+                str(recorded_at_utc),
+                str(rule),
+                fp,
+                str(seller),
+                b,
+                price_amount,
+                cur,
+                mirror_equiv,
+                qty,
+            ),
+        )
+
+    def revert_latest_instant_sale(
+        self,
+        *,
+        item_variant_id: int,
+        fingerprint: str,
+        seller: str,
+        occurred_at_or_before_utc: str,
+        reverted_at_utc: str,
+        reverted_by_item_poll_id: int,
+        reverted_reason: str,
+    ) -> int:
+        """
+        Mark the latest matching likely_instant_sale row as reverted.
+
+        Returns number of rows updated (0 or 1).
+        """
+        cur = self._con.execute(
+            """
+            UPDATE sales
+            SET reverted_at_utc = ?,
+                reverted_by_item_poll_id = ?,
+                reverted_reason = ?
+            WHERE id = (
+              SELECT s.id
+              FROM sales s
+              WHERE s.item_variant_id = ?
+                AND s.rule = 'likely_instant_sale'
+                AND s.fingerprint = ?
+                AND s.seller = ?
+                AND s.buyer = ''
+                AND s.reverted_at_utc IS NULL
+                AND s.occurred_at_utc <= ?
+              ORDER BY s.occurred_at_utc DESC, s.id DESC
+              LIMIT 1
+            )
+            """,
+            (
+                str(reverted_at_utc),
+                int(reverted_by_item_poll_id),
+                str(reverted_reason),
+                int(item_variant_id),
+                str(fingerprint),
+                str(seller),
+                str(occurred_at_or_before_utc),
+            ),
+        )
+        return int(cur.rowcount or 0)
+

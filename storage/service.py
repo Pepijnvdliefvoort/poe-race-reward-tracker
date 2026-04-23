@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .db import Database
-from .repos import ConfigRepo, InferenceStateRepo, ItemsRepo, PollsRepo
+from .repos import ConfigRepo, InferenceStateRepo, ItemsRepo, PollsRepo, SalesRepo
 
 
 def _utc_now_iso() -> str:
@@ -218,6 +218,13 @@ class StorageService:
 
             polls.replace_listing_snapshots(item_poll_id=item_poll_id, rows=listing_preview_rows)
             polls.replace_inference_events(item_poll_id=item_poll_id, events=inference_events)
+            self._record_sales_from_inference_events(
+                con,
+                item_poll_id=item_poll_id,
+                item_variant_id=variant_id,
+                occurred_at_utc=requested_at_utc,
+                inference_events=inference_events,
+            )
 
             if inference_state is not None:
                 curr_signals, pending = inference_state
@@ -228,4 +235,89 @@ class StorageService:
             return item_poll_id
         finally:
             con.close()
+
+    def _record_sales_from_inference_events(
+        self,
+        con,
+        *,
+        item_poll_id: int,
+        item_variant_id: int,
+        occurred_at_utc: str,
+        inference_events: list[dict[str, Any]],
+    ) -> None:
+        """
+        Persist inferred sales into `sales`.
+
+        We only record inference rules that contribute to the estimated-sales count:
+        - confirmed_transfer (+1)
+        - likely_instant_sale (+1)
+        And we revert `likely_instant_sale` when a relist undoes it (rule 3).
+        """
+        repo = SalesRepo(con)
+        now = _utc_now_iso()
+        for ev in inference_events or []:
+            if not isinstance(ev, dict):
+                continue
+            rule = str(ev.get("rule") or "")
+            if rule == "relist_same_seller":
+                seller = str(ev.get("seller") or "").strip()
+                fp = str(ev.get("fingerprint") or "").strip()
+                if seller and fp:
+                    repo.revert_latest_instant_sale(
+                        item_variant_id=item_variant_id,
+                        fingerprint=fp,
+                        seller=seller,
+                        occurred_at_or_before_utc=occurred_at_utc,
+                        reverted_at_utc=now,
+                        reverted_by_item_poll_id=item_poll_id,
+                        reverted_reason="relist_same_seller",
+                    )
+                continue
+
+            if rule not in {"confirmed_transfer", "likely_instant_sale"}:
+                continue
+
+            fp = ev.get("fingerprint")
+            fingerprint = str(fp) if isinstance(fp, str) and fp.strip() else None
+
+            if rule == "confirmed_transfer":
+                seller = str(ev.get("from_seller") or "").strip()
+                buyer = str(ev.get("to_seller") or "").strip() or None
+                if not seller:
+                    continue
+                price_amount = ev.get("fromPriceAmount")
+                price_currency = ev.get("fromPriceCurrency")
+                mirror_equiv = ev.get("fromMirrorEquiv")
+            else:
+                seller = str(ev.get("seller") or "").strip()
+                buyer = None
+                if not seller:
+                    continue
+                price_amount = ev.get("priceAmount")
+                price_currency = ev.get("priceCurrency")
+                mirror_equiv = ev.get("mirrorEquiv")
+
+            try:
+                pa = float(price_amount) if price_amount is not None else None
+            except Exception:
+                pa = None
+            try:
+                me = float(mirror_equiv) if mirror_equiv is not None else None
+            except Exception:
+                me = None
+
+            repo.insert_sale(
+                item_poll_id=item_poll_id,
+                item_variant_id=item_variant_id,
+                occurred_at_utc=occurred_at_utc,
+                recorded_at_utc=now,
+                rule=rule,
+                fingerprint=fingerprint,
+                seller=seller,
+                buyer=buyer,
+                price_amount=pa,
+                price_currency=str(price_currency) if isinstance(price_currency, str) else None,
+                mirror_equiv=me,
+                quantity=1,
+            )
 
