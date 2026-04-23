@@ -24,7 +24,10 @@ export function getFilteredAndSortedItems(items) {
         filtered = filtered.filter((item) => {
             const price = getAvailableLowestPrice(item);
             if (price == null) {
-                return false;
+                // Keep "no data" items out of price-range filtering, except when they are
+                // the next item in the poll cycle (green border). Otherwise the border
+                // appears to "skip" to the next item that *does* have data.
+                return item.itemName === state.nextInLineItemName;
             }
             const belowCap =
                 state.filters.priceMax >= state.globalPriceRange.max ||

@@ -69,17 +69,8 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
         seller = str(ev.get("seller") or "unknown")
         return f"Seller **{seller}** relisted it (undoes the instant-sale signal)."
 
-    if rule == "reprice_same_seller":
-        seller = str(ev.get("seller") or "unknown")
-        a = _fmt_listed_price(ev.get("prevPriceAmount"), ev.get("prevPriceCurrency")) or _fmt_mirrors(ev.get("prevMirrorEquiv"))
-        b = _fmt_listed_price(ev.get("currPriceAmount"), ev.get("currPriceCurrency")) or _fmt_mirrors(ev.get("currMirrorEquiv"))
-        if a and b:
-            return f"Seller **{seller}** repriced it from **{a}** to **{b}**."
-        return f"Seller **{seller}** repriced it."
-
-    if rule == "non_instant_removed_inconclusive":
-        seller = str(ev.get("seller") or "unknown")
-        return f"Seller **{seller}**'s listing disappeared (non-instant; inconclusive)."
+    # Intentionally omit inference events that do not contribute to the estimated-sales
+    # delta shown in the alert (e.g. reprices, non-instant removals).
 
     return None
 
