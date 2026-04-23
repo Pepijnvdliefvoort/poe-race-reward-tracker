@@ -269,6 +269,7 @@ def evaluate_listing_transition(
         fp = str(pend.get("fingerprint") or "")
         seller = str(pend.get("seller") or "")
         removed = int(pend.get("removed_cycle") or 0)
+        mirror_eq = pend.get("mirrorEquiv")
         if not fp or not seller:
             continue
         counted_imm = bool(pend.get("countedImmediate"))
@@ -282,6 +283,7 @@ def evaluate_listing_transition(
                     "itemKey": item_key,
                     "fingerprint": fp,
                     "seller": seller,
+                    "mirrorEquiv": mirror_eq,
                     "cycle": cycle,
                 }
             )
@@ -297,6 +299,7 @@ def evaluate_listing_transition(
                         "itemKey": item_key,
                         "fingerprint": fp,
                         "seller": seller,
+                        "mirrorEquiv": mirror_eq,
                         "cycle": cycle,
                     }
                 )
@@ -318,6 +321,7 @@ def evaluate_listing_transition(
             a = next(iter(ps))
             b = next(iter(cs))
             if a and b and a != b:
+                from_meta = _meta_for(prev_signals, fp, a)
                 result.confirmed_transfer += 1
                 events.append(
                     {
@@ -326,6 +330,7 @@ def evaluate_listing_transition(
                         "fingerprint": fp,
                         "from_seller": a,
                         "to_seller": b,
+                        "fromMirrorEquiv": (from_meta or {}).get("mirrorEquiv"),
                         "cycle": cycle,
                     }
                 )
@@ -337,6 +342,7 @@ def evaluate_listing_transition(
         if not meta:
             continue
         instant = bool(meta.get("isInstant"))
+        mirror_eq = meta.get("mirrorEquiv")
 
         ps = _sellers_for_fingerprint(prev_signals, fp)
         cs = _sellers_for_fingerprint(curr_signals, fp)
@@ -354,6 +360,7 @@ def evaluate_listing_transition(
                     "itemKey": item_key,
                     "fingerprint": fp,
                     "seller": seller,
+                    "mirrorEquiv": mirror_eq,
                     "cycle": cycle,
                 }
             )
@@ -366,6 +373,7 @@ def evaluate_listing_transition(
                 "itemKey": item_key,
                 "fingerprint": fp,
                 "seller": seller,
+                "mirrorEquiv": mirror_eq,
                 "cycle": cycle,
             }
         )
@@ -375,6 +383,7 @@ def evaluate_listing_transition(
                 "seller": seller,
                 "removed_cycle": cycle,
                 "countedImmediate": True,
+                "mirrorEquiv": mirror_eq,
             }
         )
         events.append(
@@ -383,6 +392,7 @@ def evaluate_listing_transition(
                 "itemKey": item_key,
                 "fingerprint": fp,
                 "seller": seller,
+                "mirrorEquiv": mirror_eq,
                 "cycle": cycle,
             }
         )

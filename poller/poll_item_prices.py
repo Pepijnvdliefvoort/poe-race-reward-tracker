@@ -1547,6 +1547,7 @@ def run_cycle(
                         window_days=int(sales_window_days),
                         confirmed_transfer=int(inf.confirmed_transfer),
                         likely_instant_sale=int(inf.likely_instant_sale),
+                        inference_events=inf.events,
                     )
                 except Exception as exc:  # noqa: BLE001
                     log_line("warn", f"Failed sales Discord webhook for {item.name}: {exc}")

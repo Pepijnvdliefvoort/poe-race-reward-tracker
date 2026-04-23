@@ -7,6 +7,60 @@ from typing import Any
 import requests
 
 
+def _fmt_mirrors(x: Any) -> str | None:
+    try:
+        v = float(x)
+    except Exception:
+        return None
+    if not (v == v):  # NaN
+        return None
+    if abs(v) >= 10:
+        s = f"{v:.2f}"
+    elif abs(v) >= 1:
+        s = f"{v:.3f}"
+    else:
+        s = f"{v:.4f}"
+    s = s.rstrip("0").rstrip(".")
+    return f"{s} mirrors"
+
+
+def _event_sentence(ev: dict[str, Any]) -> str | None:
+    rule = str(ev.get("rule") or "")
+
+    if rule == "confirmed_transfer":
+        seller = str(ev.get("from_seller") or "unknown")
+        buyer = str(ev.get("to_seller") or "unknown")
+        price = _fmt_mirrors(ev.get("fromMirrorEquiv"))
+        if price:
+            return f"Seller **{seller}** has sold it for **{price}** to **{buyer}**."
+        return f"Seller **{seller}** has sold it to **{buyer}**."
+
+    if rule == "likely_instant_sale":
+        seller = str(ev.get("seller") or "unknown")
+        price = _fmt_mirrors(ev.get("mirrorEquiv"))
+        if price:
+            return f"Seller **{seller}** has likely sold it for **{price}** (instant buyout disappeared)."
+        return f"Seller **{seller}** has likely sold it (instant buyout disappeared)."
+
+    if rule == "relist_same_seller":
+        seller = str(ev.get("seller") or "unknown")
+        return f"Seller **{seller}** relisted it (undoes the instant-sale signal)."
+
+    if rule == "reprice_same_seller":
+        seller = str(ev.get("seller") or "unknown")
+        a = _fmt_mirrors(ev.get("prevMirrorEquiv"))
+        b = _fmt_mirrors(ev.get("currMirrorEquiv"))
+        if a and b:
+            return f"Seller **{seller}** repriced it from **{a}** to **{b}**."
+        return f"Seller **{seller}** repriced it."
+
+    if rule == "non_instant_removed_inconclusive":
+        seller = str(ev.get("seller") or "unknown")
+        return f"Seller **{seller}**'s listing disappeared (non-instant; inconclusive)."
+
+    return None
+
+
 def _estimated_sales_rules_breakdown(
     *,
     confirmed_transfer: int,
@@ -32,6 +86,7 @@ def build_estimated_sales_embed(
     window_days: int,
     confirmed_transfer: int,
     likely_instant_sale: int,
+    inference_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     label = f"last {window_days} day" + ("" if window_days == 1 else "s")
     sign = "+" if cycle_delta > 0 else ""
@@ -44,6 +99,18 @@ def build_estimated_sales_embed(
     )
     if rules:
         lines.append(rules)
+
+    if inference_events:
+        sentences = [s for s in (_event_sentence(ev) for ev in inference_events) if s]
+        if sentences:
+            lines.append("")
+            lines.append("**Signals:**")
+            max_lines = 8
+            for s in sentences[:max_lines]:
+                lines.append(f"- {s}")
+            if len(sentences) > max_lines:
+                lines.append(f"- …and {len(sentences) - max_lines} more")
+
     lines.append(f"**Total est. sold ({label}):** ~{total_in_window}")
     embed: dict[str, Any] = {
         "title": f"Est. sales: {item_name}",
@@ -66,6 +133,7 @@ def send_estimated_sales_change_notification(
     window_days: int,
     confirmed_transfer: int,
     likely_instant_sale: int,
+    inference_events: list[dict[str, Any]] | None = None,
 ) -> None:
     embed = build_estimated_sales_embed(
         item_name=item_name,
@@ -75,6 +143,7 @@ def send_estimated_sales_change_notification(
         window_days=window_days,
         confirmed_transfer=confirmed_transfer,
         likely_instant_sale=likely_instant_sale,
+        inference_events=inference_events,
     )
     payload: dict[str, Any] = {"content": "@here", "embeds": [embed]}
     resp = session.post(webhook_url, json=payload, timeout=10.0)
