@@ -12,7 +12,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/css/variables.css" />
-    <link rel="stylesheet" href="/css/admin.css" />
+    <link rel="stylesheet" href="/css/admin.css?v=20260423-1" />
     <script type="module">
       import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
       mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
@@ -43,27 +43,40 @@
         </div>
       </div>
 
-      <div class="admin-db-layout" id="dbLayout">
+      <div class="admin-db-shell" id="dbLayout">
+        <div class="admin-db-shell-head" role="region" aria-label="DB explorer header">
+          <div class="admin-db-shell-title">
+            <div class="admin-db-shell-k">Active DB</div>
+            <div id="dbFilePath" class="admin-db-shell-v"><code>—</code></div>
+          </div>
+          <div class="admin-db-shell-actions" aria-label="DB explorer actions">
+            <div class="admin-db-shell-hint admin-muted">Tip: <code>Ctrl+Enter</code> runs SQL.</div>
+          </div>
+        </div>
+
+        <div class="admin-db-layout">
         <aside class="admin-db-sidebar" aria-label="Database objects">
-          <div class="admin-db-card">
-            <p class="admin-muted">File</p>
-            <p id="dbFilePath" class="admin-db-path" style="margin: 0"><code>—</code></p>
-            <p class="admin-muted" style="margin-top: 10px">Attached DBs</p>
+          <div class="admin-db-side-section" aria-label="Attached databases">
+            <div class="admin-db-side-head">
+              <div class="admin-db-side-title">Attached DBs</div>
+              <div class="admin-db-side-sub admin-muted">Click to switch</div>
+            </div>
             <div id="dbDatabaseList" class="admin-db-list"></div>
           </div>
 
-          <div class="admin-db-card" style="margin-top: 14px">
-            <p class="admin-muted">Tables</p>
+          <div class="admin-db-side-section" aria-label="Tables">
+            <div class="admin-db-side-head">
+              <div class="admin-db-side-title">Tables</div>
+              <div class="admin-db-side-sub admin-muted">Browse</div>
+            </div>
             <div id="dbTablesList" class="admin-db-list" role="list"></div>
           </div>
         </aside>
 
         <main class="admin-db-main" aria-label="Database viewer">
-          <div class="admin-db-card">
+          <div class="admin-db-main-surface">
             <div class="admin-db-tabs" role="tablist" aria-label="DB explorer tabs">
-              <button class="admin-pill" id="tabStructure" type="button" role="tab" aria-selected="true">
-                Structure
-              </button>
+              <button class="admin-pill" id="tabStructure" type="button" role="tab" aria-selected="true">Structure</button>
               <button class="admin-pill" id="tabData" type="button" role="tab" aria-selected="false">Data</button>
               <button class="admin-pill" id="tabSql" type="button" role="tab" aria-selected="false">SQL</button>
             </div>
@@ -74,7 +87,7 @@
                 <div id="dbErDiagram" class="admin-db-er-diagram"></div>
               </div>
               <div id="dbStructureWrap" hidden>
-                <h3 style="margin: 12px 0 6px 0">Columns</h3>
+                <h3 class="admin-db-h3">Columns</h3>
                 <div class="admin-table-wrap">
                   <table class="admin-table">
                     <thead>
@@ -90,7 +103,7 @@
                   </table>
                 </div>
 
-                <h3 style="margin: 18px 0 6px 0">Indexes</h3>
+                <h3 class="admin-db-h3 admin-db-h3--spaced">Indexes</h3>
                 <div class="admin-table-wrap">
                   <table class="admin-table">
                     <thead>
@@ -150,6 +163,7 @@
             </div>
           </div>
         </main>
+        </div>
       </div>
     </section>
   </body>
