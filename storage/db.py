@@ -111,7 +111,10 @@ class Database:
 
     def _migration_005_sales_reverts(self, con: sqlite3.Connection) -> None:
         # Idempotent migration: older DBs need these columns; newer DBs may already have them.
-        cols = {str(r["name"]) for r in con.execute("PRAGMA table_info(sales)").fetchall()}
+        rows = con.execute("PRAGMA table_info(sales)").fetchall()
+        # During migrations we use a plain sqlite3 connection (row_factory not set),
+        # so PRAGMA rows are tuples: (cid, name, type, notnull, dflt_value, pk).
+        cols = {str((r["name"] if isinstance(r, sqlite3.Row) else r[1])) for r in rows}
         if "reverted_at_utc" not in cols:
             con.execute("ALTER TABLE sales ADD COLUMN reverted_at_utc TEXT")
         if "reverted_by_item_poll_id" not in cols:
