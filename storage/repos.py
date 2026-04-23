@@ -608,3 +608,47 @@ class SalesRepo:
         )
         return int(cur.rowcount or 0)
 
+
+class PriceAlertCooldownRepo:
+    def __init__(self, con: sqlite3.Connection) -> None:
+        self._con = con
+
+    def load_all(self) -> list[tuple[int, int, float]]:
+        rows = self._con.execute(
+            """
+            SELECT item_variant_id, last_alert_cycle, last_alert_low_mirror
+            FROM price_alert_cooldown
+            """
+        ).fetchall()
+        out: list[tuple[int, int, float]] = []
+        for r in rows:
+            out.append(
+                (
+                    int(r["item_variant_id"]),
+                    int(r["last_alert_cycle"]),
+                    float(r["last_alert_low_mirror"]),
+                )
+            )
+        return out
+
+    def upsert(
+        self,
+        *,
+        item_variant_id: int,
+        last_alert_cycle: int,
+        last_alert_low_mirror: float,
+        updated_at_utc: str,
+    ) -> None:
+        self._con.execute(
+            """
+            INSERT INTO price_alert_cooldown(
+                item_variant_id, last_alert_cycle, last_alert_low_mirror, updated_at_utc
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(item_variant_id) DO UPDATE SET
+                last_alert_cycle = excluded.last_alert_cycle,
+                last_alert_low_mirror = excluded.last_alert_low_mirror,
+                updated_at_utc = excluded.updated_at_utc
+            """,
+            (int(item_variant_id), int(last_alert_cycle), float(last_alert_low_mirror), str(updated_at_utc)),
+        )
+

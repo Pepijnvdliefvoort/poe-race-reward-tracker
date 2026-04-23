@@ -233,6 +233,21 @@ def seed_price_history_from_db(storage: StorageService, history_cycles: int) -> 
     return history
 
 
+def seed_price_alert_cooldown_from_db(
+    storage: StorageService, variant_ids_by_key: dict[str, int]
+) -> dict[str, tuple[int, float]]:
+    """Restore price-drop alert cooldown from SQLite (same keys/cycles as ``run_cycle``)."""
+    by_variant: dict[int, tuple[int, float]] = {}
+    for vid, last_cycle, last_low in storage.load_price_alert_cooldown_rows():
+        by_variant[int(vid)] = (int(last_cycle), float(last_low))
+    state: dict[str, tuple[int, float]] = {}
+    for key, vid in variant_ids_by_key.items():
+        row = by_variant.get(int(vid))
+        if row is not None:
+            state[key] = row
+    return state
+
+
 def send_discord_alert(
     alert_session: requests.Session,
     item: ItemSpec,
@@ -1640,6 +1655,12 @@ def run_cycle(
                                 item_image_url=cheapest_icon_url,
                             )
                             alert_state[item_key] = (cycle, low_mirror)
+                            if variant_id:
+                                storage.upsert_price_alert_cooldown(
+                                    variant_id=variant_id,
+                                    last_cycle=cycle,
+                                    last_low_mirror=float(low_mirror),
+                                )
 
             # Append median (not lowest) to history — more stable baseline.
             if median_mirror is not None:
@@ -1733,7 +1754,8 @@ def main() -> None:
     # Load alert config and seed price history from SQLite.
     alert_config = load_alert_config()
     price_history = seed_price_history_from_db(storage, alert_config.history_cycles)
-    alert_state: dict[str, tuple[int, float]] = {}
+    alert_state = seed_price_alert_cooldown_from_db(storage, variant_ids_by_key)
+    log_line("cycle", f"Loaded {len(alert_state)} persisted price-alert cooldown entries.")
     logged_sales_webhook_cfg = False
     log_line(
         "cycle",

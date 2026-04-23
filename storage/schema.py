@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def migration_001_initial() -> str:
@@ -239,4 +239,18 @@ def migration_005_sales_reverts() -> str:
 def migration_006_inference_price_state() -> str:
     """Applied via a Python idempotent migration in `storage/db.py`."""
     return ""
+
+
+def migration_007_price_alert_cooldown() -> str:
+    """Last price-drop Discord alert per variant (survives poller restarts; uses global cycle_number)."""
+    return """
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS price_alert_cooldown (
+  item_variant_id INTEGER PRIMARY KEY NOT NULL REFERENCES item_variants(id) ON DELETE CASCADE,
+  last_alert_cycle INTEGER NOT NULL,
+  last_alert_low_mirror REAL NOT NULL,
+  updated_at_utc TEXT NOT NULL
+);
+"""
 

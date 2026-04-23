@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .db import Database
-from .repos import ConfigRepo, InferenceStateRepo, ItemsRepo, PollsRepo, SalesRepo
+from .repos import ConfigRepo, InferenceStateRepo, ItemsRepo, PollsRepo, PriceAlertCooldownRepo, SalesRepo
 
 
 def _utc_now_iso() -> str:
@@ -111,6 +111,37 @@ class StorageService:
             if not row or row["m"] is None:
                 return 0
             return int(row["m"])
+        finally:
+            con.close()
+
+    def load_price_alert_cooldown_rows(self) -> list[tuple[int, int, float]]:
+        """
+        Rows (item_variant_id, last_alert_cycle, last_alert_low_mirror) for price-drop Discord cooldown.
+        """
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            return PriceAlertCooldownRepo(con).load_all()
+        finally:
+            con.close()
+
+    def upsert_price_alert_cooldown(
+        self,
+        *,
+        variant_id: int,
+        last_cycle: int,
+        last_low_mirror: float,
+    ) -> None:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            PriceAlertCooldownRepo(con).upsert(
+                item_variant_id=int(variant_id),
+                last_alert_cycle=int(last_cycle),
+                last_alert_low_mirror=float(last_low_mirror),
+                updated_at_utc=_utc_now_iso(),
+            )
+            con.commit()
         finally:
             con.close()
 

@@ -15,6 +15,7 @@ from .schema import (
     migration_004_sales,
     migration_005_sales_reverts,
     migration_006_inference_price_state,
+    migration_007_price_alert_cooldown,
 )
 
 
@@ -94,6 +95,7 @@ class Database:
             (4, migration_004_sales()),
             (5, migration_005_sales_reverts()),
             (6, migration_006_inference_price_state()),
+            (7, migration_007_price_alert_cooldown()),
         ]
 
         for version, sql in migrations:

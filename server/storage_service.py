@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,50 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _valid_positive_mirror(v: Any) -> bool:
+    if v is None:
+        return False
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(f) and f > 0
+
+
+def _last_known_mirror_fields_from_history(points: list[dict[str, Any]]) -> dict[str, float]:
+    """Newest-first scan of polls before the last row; per field, first valid mirror value wins."""
+    out: dict[str, float] = {}
+    if len(points) < 2:
+        return out
+    for key in ("lowestMirror", "medianMirror", "highestMirror"):
+        for p in reversed(points[:-1]):
+            v = p.get(key)
+            if _valid_positive_mirror(v):
+                out[key] = float(v)
+                break
+    return out
+
+
+def _attach_last_known_mirror_prices(item: dict[str, Any]) -> None:
+    """
+    When the latest poll has no usable mirror prices (e.g. 0 listings), expose the most recent
+    prior values on ``latest`` so the UI can show last known instead of n/a.
+    """
+    points = item.get("points") or []
+    latest = item.get("latest")
+    if not isinstance(latest, dict) or len(points) < 1:
+        return
+    lk = _last_known_mirror_fields_from_history(points)
+    lk_field = {
+        "lowestMirror": "lastKnownLowestMirror",
+        "medianMirror": "lastKnownMedianMirror",
+        "highestMirror": "lastKnownHighestMirror",
+    }
+    for cur, lk_key in lk_field.items():
+        if not _valid_positive_mirror(latest.get(cur)) and cur in lk:
+            latest[lk_key] = lk[cur]
 
 
 class ServerStorage:
@@ -211,6 +256,8 @@ class ServerStorage:
                         series["queryId"] = qid
 
             item_list = list(items.values())
+            for it in item_list:
+                _attach_last_known_mirror_prices(it)
             item_list.sort(
                 key=lambda it: (
                     order_by_key.get(f"{it.get('baseItemName','')}::{it.get('mode','')}", 10**9),

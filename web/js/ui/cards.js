@@ -9,7 +9,11 @@ import {
     state,
 } from "../core/state.js";
 import { aggregateInferenceSignalsOverWindow, formatEstimatedSoldLine } from "../domain/inferenceStats.js";
-import { getAvailableLowestPrice } from "../domain/pricing.js";
+import {
+  getDisplayHighestMirror,
+  getDisplayLowestMirror,
+  isShowingLastKnownMirrorPrice,
+} from "../domain/pricing.js";
 import { formatNumber, formatTime, getChartSeriesWithPrediction } from "../core/utils.js";
 import { stopListingsPopover, wireListingsPopover } from "../cards/listingsPopover.js";
 
@@ -361,8 +365,9 @@ export function updateCard(item, onFavoriteToggle) {
   const latest = item.latest || {};
   const latestAge = latest.time ? Date.now() - latest.time : Infinity;
   const latestValid = latestAge < THREE_MONTHS_MS;
-  const low = latestValid ? latest.lowestMirror : null;
-  const high = latestValid ? latest.highestMirror : null;
+  const low = latestValid ? getDisplayLowestMirror(latest) : null;
+  const high = latestValid ? getDisplayHighestMirror(latest) : null;
+  const priceIsLastKnown = latestValid && isShowingLastKnownMirrorPrice(latest);
 
   if (item.imagePath) {
     img.src = item.imagePath;
@@ -384,11 +389,12 @@ export function updateCard(item, onFavoriteToggle) {
     img.style.cursor = "default";
   }
 
+  const staleSuffix = priceIsLastKnown ? " (last known)" : "";
   const priceText =
     low != null && high != null
-      ? `Prices: ${formatNumber(low)} to ${formatNumber(high)} mirror`
+      ? `Prices: ${formatNumber(low)} to ${formatNumber(high)} mirror${staleSuffix}`
       : low != null
-        ? `Price: ${formatNumber(low)} mirror`
+        ? `Price: ${formatNumber(low)} mirror${staleSuffix}`
         : "Price: n/a";
   priceBox.textContent = priceText;
 
