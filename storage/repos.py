@@ -223,6 +223,7 @@ class PollsRepo:
         highest_divine: float | None,
         inf_confirmed_transfer: int,
         inf_likely_instant_sale: int,
+        inf_likely_non_instant_online: int,
         inf_relist_same_seller: int,
         inf_non_instant_removed: int,
         inf_reprice_same_seller: int,
@@ -237,11 +238,11 @@ class PollsRepo:
               poll_run_id, item_variant_id, requested_at_utc, query_id, total_results, used_results, unsupported_price_count,
               mirror_count, lowest_mirror, median_mirror, highest_mirror,
               divine_count, lowest_divine, median_divine, highest_divine,
-              inf_confirmed_transfer, inf_likely_instant_sale, inf_relist_same_seller, inf_non_instant_removed,
+              inf_confirmed_transfer, inf_likely_instant_sale, inf_likely_non_instant_online, inf_relist_same_seller, inf_non_instant_removed,
               inf_reprice_same_seller, inf_multi_seller_same_fingerprint, inf_new_listing_rows,
               fetched_for_inference
             )
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(poll_run_id, item_variant_id) DO UPDATE SET
               requested_at_utc=excluded.requested_at_utc,
               query_id=excluded.query_id,
@@ -258,6 +259,7 @@ class PollsRepo:
               highest_divine=excluded.highest_divine,
               inf_confirmed_transfer=excluded.inf_confirmed_transfer,
               inf_likely_instant_sale=excluded.inf_likely_instant_sale,
+              inf_likely_non_instant_online=excluded.inf_likely_non_instant_online,
               inf_relist_same_seller=excluded.inf_relist_same_seller,
               inf_non_instant_removed=excluded.inf_non_instant_removed,
               inf_reprice_same_seller=excluded.inf_reprice_same_seller,
@@ -283,6 +285,7 @@ class PollsRepo:
                 highest_divine,
                 int(inf_confirmed_transfer),
                 int(inf_likely_instant_sale),
+                int(inf_likely_non_instant_online),
                 int(inf_relist_same_seller),
                 int(inf_non_instant_removed),
                 int(inf_reprice_same_seller),
@@ -393,10 +396,12 @@ class InferenceStateRepo:
     def __init__(self, con: sqlite3.Connection) -> None:
         self._con = con
 
-    def load_state(self, *, item_variant_id: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    def load_state(
+        self, *, item_variant_id: int
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
         sig_rows = self._con.execute(
             """
-            SELECT fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency
+            SELECT fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency, seller_online
             FROM inference_state_signals
             WHERE item_variant_id = ?
             """,
@@ -404,7 +409,7 @@ class InferenceStateRepo:
         ).fetchall()
         pend_rows = self._con.execute(
             """
-            SELECT fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency
+            SELECT fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency, pending_kind
             FROM inference_state_pending
             WHERE item_variant_id = ?
             """,
@@ -415,14 +420,18 @@ class InferenceStateRepo:
                 "fingerprint": str(r["fingerprint"]),
                 "seller": str(r["seller"]),
                 "isInstant": bool(int(r["is_instant"] or 0)),
+                "sellerOnline": bool(int(r["seller_online"] or 0)),
                 "mirrorEquiv": (float(r["mirror_equiv"]) if r["mirror_equiv"] is not None else None),
                 "priceAmount": (float(r["price_amount"]) if r["price_amount"] is not None else None),
                 "priceCurrency": (str(r["price_currency"]) if r["price_currency"] is not None else None),
             }
             for r in sig_rows
         ]
-        pending = [
-            {
+        pending_instant: list[dict[str, Any]] = []
+        pending_online: list[dict[str, Any]] = []
+        for r in pend_rows:
+            kind = str(r["pending_kind"] or "instant")
+            row = {
                 "fingerprint": str(r["fingerprint"]),
                 "seller": str(r["seller"]),
                 "removed_cycle": int(r["removed_cycle"] or 0),
@@ -431,9 +440,11 @@ class InferenceStateRepo:
                 "priceAmount": (float(r["price_amount"]) if r["price_amount"] is not None else None),
                 "priceCurrency": (str(r["price_currency"]) if r["price_currency"] is not None else None),
             }
-            for r in pend_rows
-        ]
-        return signals, pending
+            if kind == "online_non_instant":
+                pending_online.append(row)
+            else:
+                pending_instant.append(row)
+        return signals, pending_instant, pending_online
 
     def save_state(
         self,
@@ -442,6 +453,7 @@ class InferenceStateRepo:
         cycle: int,
         curr_signals: list[dict[str, Any]],
         pending_instant: list[dict[str, Any]],
+        pending_online: list[dict[str, Any]],
     ) -> None:
         self._con.execute("DELETE FROM inference_state_signals WHERE item_variant_id = ?", (item_variant_id,))
         self._con.execute("DELETE FROM inference_state_pending WHERE item_variant_id = ?", (item_variant_id,))
@@ -468,27 +480,29 @@ class InferenceStateRepo:
                     s.get("priceAmount"),
                     (str(s.get("priceCurrency") or "").strip().lower() or None),
                     cycle,
+                    1 if bool(s.get("sellerOnline")) else 0,
                 )
             )
         self._con.executemany(
             """
             INSERT INTO inference_state_signals(
-              item_variant_id, fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency, last_seen_cycle
-            ) VALUES (?,?,?,?,?,?,?,?)
+              item_variant_id, fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency, last_seen_cycle, seller_online
+            ) VALUES (?,?,?,?,?,?,?,?,?)
             """,
             sig_payload,
         )
 
         pend_payload: list[tuple] = []
-        seen_pend: set[tuple[str, str]] = set()
-        for p in pending_instant:
+        seen_pend: set[tuple[str, str, str]] = set()
+
+        def _append_pending(p: dict[str, Any], kind: str) -> None:
             fp = str(p.get("fingerprint") or "")
             seller = str(p.get("seller") or "")
             if not fp or not seller:
-                continue
-            key = (fp, seller)
+                return
+            key = (fp, seller, kind)
             if key in seen_pend:
-                continue
+                return
             seen_pend.add(key)
             pend_payload.append(
                 (
@@ -500,13 +514,20 @@ class InferenceStateRepo:
                     p.get("mirrorEquiv"),
                     p.get("priceAmount"),
                     (str(p.get("priceCurrency") or "").strip().lower() or None),
+                    kind,
                 )
             )
+
+        for p in pending_instant:
+            _append_pending(p, "instant")
+        for p in pending_online:
+            _append_pending(p, "online_non_instant")
+
         self._con.executemany(
             """
             INSERT INTO inference_state_pending(
-              item_variant_id, fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency
-            ) VALUES (?,?,?,?,?,?,?,?)
+              item_variant_id, fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency, pending_kind
+            ) VALUES (?,?,?,?,?,?,?,?,?)
             """,
             pend_payload,
         )

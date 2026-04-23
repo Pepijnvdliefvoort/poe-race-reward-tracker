@@ -2,10 +2,14 @@
 Heuristic rules for inferring whether trade listings likely sold between polls.
 
 Rules:
-1. Same item fingerprint under seller A, then same fingerprint under seller B -> transfer / sold.
+1. Same item fingerprint under seller A, then same fingerprint under seller B -> transfer / sold
+   (includes sold-then-relisted-by-another seller when both ladders show one seller each).
 2. Instant buyout listing gone on next fetch -> likely sold (unless rule 3).
-3. Same fingerprint + same seller vanishes then returns next poll -> relist, not a sale.
-4. Non-instant listing gone -> inconclusive (seller may be offline); not counted as sale.
+3. Same fingerprint + same seller vanishes then returns next poll -> relist, not a sale (undoes rule 2 or 4b).
+4. Non-instant listing gone -> inconclusive if seller appears offline; not counted as sale.
+4b. Non-instant listing gone while seller appears online -> likely sold (pending relist can undo).
+   The poller prefers a live account-filter search + fetch (`listing.account.online` on another of
+   their listings); if that probe fails, it falls back to `sellerOnline` from the prior ladder fetch.
 5. Same fingerprint + same seller still listed but mirror-equivalent price moved materially -> repriced
    (not a sale; distinguishes relist/reprice from churn).
 6. Same fingerprint offered by 2+ different sellers in one fetch -> multi-party contention signal.
@@ -155,6 +159,15 @@ def extract_listing_seller_name(entry: dict[str, Any]) -> str:
     return "unknown"
 
 
+def extract_listing_account_online(entry: dict[str, Any]) -> bool:
+    """True if trade fetch shows the listing account as online (PoE ``listing.account.online``)."""
+    listing = entry.get("listing") if isinstance(entry, dict) else None
+    account = listing.get("account") if isinstance(listing, dict) else None
+    if isinstance(account, dict) and "online" in account:
+        return bool(account.get("online"))
+    return False
+
+
 def listing_signals_from_fetch(
     listings: list[dict[str, Any]],
     divines_per_mirror: float,
@@ -172,6 +185,7 @@ def listing_signals_from_fetch(
         fp = fingerprint_trade_item(item if isinstance(item, dict) else None)
         seller = extract_listing_seller_name(entry)
         instant = _is_instant_buyout(listing, price)
+        seller_online = extract_listing_account_online(entry)
         mirror_eq: float | None = None
         price_amount: float | None = None
         price_currency: str | None = None
@@ -194,6 +208,7 @@ def listing_signals_from_fetch(
                 "fingerprint": fp,
                 "seller": seller,
                 "isInstant": instant,
+                "sellerOnline": seller_online,
                 "mirrorEquiv": mirror_eq,
                 "priceAmount": price_amount,
                 "priceCurrency": price_currency,
@@ -206,6 +221,7 @@ def listing_signals_from_fetch(
 class InferenceCycleResult:
     confirmed_transfer: int = 0
     likely_instant_sale: int = 0
+    likely_non_instant_online: int = 0
     relist_same_seller: int = 0
     non_instant_removed: int = 0
     reprice_same_seller: int = 0
@@ -213,10 +229,11 @@ class InferenceCycleResult:
     new_listing_rows: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
 
-    def to_csv_tuple(self) -> tuple[int, int, int, int, int, int, int]:
+    def to_csv_tuple(self) -> tuple[int, int, int, int, int, int, int, int]:
         return (
             self.confirmed_transfer,
             self.likely_instant_sale,
+            self.likely_non_instant_online,
             self.relist_same_seller,
             self.non_instant_removed,
             self.reprice_same_seller,
@@ -244,6 +261,73 @@ def _as_float(x: Any) -> float | None:
     if isinstance(x, (int, float)) and math.isfinite(float(x)):
         return float(x)
     return None
+
+
+def safe_to_infer_vanish(
+    mirror_equiv: Any,
+    *,
+    snapshot_truncated: bool = False,
+    truncation_cutoff_mirror: float | None = None,
+    truncation_safe_margin_pct: float = 6.0,
+) -> bool:
+    """
+    When the API snapshot is truncated (we only see the cheapest N results),
+    some previously-seen rows can disappear simply by being pushed past the cutoff.
+    """
+    if not snapshot_truncated:
+        return True
+    if truncation_cutoff_mirror is None:
+        return False
+    m = _as_float(mirror_equiv)
+    if m is None:
+        return False
+    cutoff = float(truncation_cutoff_mirror)
+    if cutoff <= 0:
+        return False
+    margin = max(0.0, float(truncation_safe_margin_pct)) / 100.0
+    return m <= cutoff * (1.0 - margin)
+
+
+def non_instant_vanished_seller_accounts_for_online_probe(
+    prev_signals: list[dict[str, Any]],
+    curr_signals: list[dict[str, Any]],
+    *,
+    snapshot_truncated: bool = False,
+    truncation_cutoff_mirror: float | None = None,
+    truncation_safe_margin_pct: float = 6.0,
+) -> list[str]:
+    """
+    Sellers whose vanished non-instant rows need an online check (same filters as Rule 4/4b).
+
+    Used by the poller to run an account-scoped trade search + fetch before inference.
+    """
+    prev_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in prev_signals}
+    curr_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in curr_signals}
+    seen: set[str] = set()
+    out: list[str] = []
+    for fp, seller in prev_keys - curr_keys:
+        if not seller or seller == "unknown":
+            continue
+        meta = _meta_for(prev_signals, fp, seller)
+        if not meta or bool(meta.get("isInstant")):
+            continue
+        mirror_eq = meta.get("mirrorEquiv")
+        if not safe_to_infer_vanish(
+            mirror_eq,
+            snapshot_truncated=snapshot_truncated,
+            truncation_cutoff_mirror=truncation_cutoff_mirror,
+            truncation_safe_margin_pct=truncation_safe_margin_pct,
+        ):
+            continue
+        ps = _sellers_for_fingerprint(prev_signals, fp)
+        cs = _sellers_for_fingerprint(curr_signals, fp)
+        transfer = len(ps) == 1 and len(cs) == 1 and next(iter(ps)) != next(iter(cs))
+        if transfer:
+            continue
+        if seller not in seen:
+            seen.add(seller)
+            out.append(seller)
+    return out
 
 
 def _meaningful_price_change(prev_m: float, curr_m: float) -> bool:
@@ -274,49 +358,68 @@ def evaluate_listing_transition(
     prev_signals: list[dict[str, Any]],
     curr_signals: list[dict[str, Any]],
     pending_instant: list[dict[str, Any]],
+    pending_online: list[dict[str, Any]] | None = None,
+    seller_online_probe: dict[str, bool] | None = None,
     snapshot_truncated: bool = False,
     truncation_cutoff_mirror: float | None = None,
     truncation_safe_margin_pct: float = 6.0,
-) -> tuple[InferenceCycleResult, list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[InferenceCycleResult, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """
-    Returns (result, new_pending_instant, new_prev_signals_for_storage_as_curr).
+    Returns (result, new_pending_instant, new_pending_online_non_instant, curr_signals_for_storage).
 
     Instant buyout rows that vanish (rule 2, not a transfer) credit `likely_instant_sale` on the
     same cycle. A pending entry with `countedImmediate` stays open for one more poll so a same-
     seller relist (rule 3) can decrement that credit. Legacy pendings without `countedImmediate`
     still resolve to +1 on the first later cycle where the row stays gone (old behaviour).
+
+    Non-instant rows that vanish while the seller was online (rule 4b) credit `likely_non_instant_online`;
+    pending entries allow a same-seller relist to decrement that credit.
+
+    ``seller_online_probe``: optional map account name -> online bool from a live account search + fetch
+    (poller). When present for a seller, overrides ``sellerOnline`` stored on the prior snapshot row.
     """
     result = InferenceCycleResult()
     events: list[dict[str, Any]] = []
 
+    pending_online = pending_online or []
+    seller_online_probe = seller_online_probe or {}
+
     prev_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in prev_signals}
     curr_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in curr_signals}
 
-    def _safe_to_infer_vanish(mirror_equiv: Any) -> bool:
-        """
-        When the API snapshot is truncated (we only see the cheapest N results),
-        some previously-seen rows can disappear simply by being pushed past the cutoff.
-
-        Middle ground:
-        - If not truncated: allow inference.
-        - If truncated: only allow inference for rows clearly inside the slice,
-          i.e. priced meaningfully below the current cutoff price.
-        """
-        if not snapshot_truncated:
-            return True
-        if truncation_cutoff_mirror is None:
-            return False
-        m = _as_float(mirror_equiv)
-        if m is None:
-            return False
-        cutoff = float(truncation_cutoff_mirror)
-        if cutoff <= 0:
-            return False
-        margin = max(0.0, float(truncation_safe_margin_pct)) / 100.0
-        return m <= cutoff * (1.0 - margin)
+    # --- Resolve pending non-instant "online" removals (rule 4b vs 3) ---
+    new_pending_online: list[dict[str, Any]] = []
+    for pend in pending_online:
+        fp = str(pend.get("fingerprint") or "")
+        seller = str(pend.get("seller") or "")
+        removed = int(pend.get("removed_cycle") or 0)
+        mirror_eq = pend.get("mirrorEquiv")
+        price_amount = pend.get("priceAmount")
+        price_currency = pend.get("priceCurrency")
+        if not fp or not seller:
+            continue
+        if (fp, seller) in curr_keys:
+            result.relist_same_seller += 1
+            result.likely_non_instant_online -= 1
+            events.append(
+                {
+                    "rule": "relist_same_seller",
+                    "itemKey": item_key,
+                    "fingerprint": fp,
+                    "seller": seller,
+                    "mirrorEquiv": mirror_eq,
+                    "priceAmount": price_amount,
+                    "priceCurrency": price_currency,
+                    "cycle": cycle,
+                }
+            )
+            continue
+        if removed < cycle:
+            continue
+        new_pending_online.append(pend)
 
     # --- Resolve older instant removals (rules 2 vs 3) ---
-    new_pending: list[dict[str, Any]] = []
+    new_pending_instant: list[dict[str, Any]] = []
     for pend in pending_instant:
         fp = str(pend.get("fingerprint") or "")
         seller = str(pend.get("seller") or "")
@@ -349,7 +452,12 @@ def evaluate_listing_transition(
                 pass
             else:
                 # Only resolve legacy pending-to-sale when it's safe (not a bump-out).
-                if _safe_to_infer_vanish(mirror_eq):
+                if safe_to_infer_vanish(
+                    mirror_eq,
+                    snapshot_truncated=snapshot_truncated,
+                    truncation_cutoff_mirror=truncation_cutoff_mirror,
+                    truncation_safe_margin_pct=truncation_safe_margin_pct,
+                ):
                     result.likely_instant_sale += 1
                     events.append(
                         {
@@ -364,7 +472,7 @@ def evaluate_listing_transition(
                         }
                     )
             continue
-        new_pending.append(pend)
+        new_pending_instant.append(pend)
 
     # --- Rule 1: seller swap with same fingerprint ---
     all_fps = set()
@@ -409,7 +517,12 @@ def evaluate_listing_transition(
         price_currency = meta.get("priceCurrency")
 
         # If we're truncated and this vanished row was near the cutoff, it may have been bumped out.
-        if not _safe_to_infer_vanish(mirror_eq):
+        if not safe_to_infer_vanish(
+            mirror_eq,
+            snapshot_truncated=snapshot_truncated,
+            truncation_cutoff_mirror=truncation_cutoff_mirror,
+            truncation_safe_margin_pct=truncation_safe_margin_pct,
+        ):
             continue
 
         ps = _sellers_for_fingerprint(prev_signals, fp)
@@ -421,19 +534,48 @@ def evaluate_listing_transition(
             continue
 
         if not instant:
-            result.non_instant_removed += 1
-            events.append(
-                {
-                    "rule": "non_instant_removed_inconclusive",
-                    "itemKey": item_key,
-                    "fingerprint": fp,
-                    "seller": seller,
-                    "mirrorEquiv": mirror_eq,
-                    "priceAmount": price_amount,
-                    "priceCurrency": price_currency,
-                    "cycle": cycle,
-                }
-            )
+            if seller in seller_online_probe:
+                was_online = bool(seller_online_probe[seller])
+            else:
+                was_online = bool(meta.get("sellerOnline"))
+            if was_online:
+                result.likely_non_instant_online += 1
+                events.append(
+                    {
+                        "rule": "likely_non_instant_online_sale",
+                        "itemKey": item_key,
+                        "fingerprint": fp,
+                        "seller": seller,
+                        "mirrorEquiv": mirror_eq,
+                        "priceAmount": price_amount,
+                        "priceCurrency": price_currency,
+                        "cycle": cycle,
+                    }
+                )
+                new_pending_online.append(
+                    {
+                        "fingerprint": fp,
+                        "seller": seller,
+                        "removed_cycle": cycle,
+                        "mirrorEquiv": mirror_eq,
+                        "priceAmount": price_amount,
+                        "priceCurrency": price_currency,
+                    }
+                )
+            else:
+                result.non_instant_removed += 1
+                events.append(
+                    {
+                        "rule": "non_instant_removed_inconclusive",
+                        "itemKey": item_key,
+                        "fingerprint": fp,
+                        "seller": seller,
+                        "mirrorEquiv": mirror_eq,
+                        "priceAmount": price_amount,
+                        "priceCurrency": price_currency,
+                        "cycle": cycle,
+                    }
+                )
             continue
 
         result.likely_instant_sale += 1
@@ -449,7 +591,7 @@ def evaluate_listing_transition(
                 "cycle": cycle,
             }
         )
-        new_pending.append(
+        new_pending_instant.append(
             {
                 "fingerprint": fp,
                 "seller": seller,
@@ -526,7 +668,7 @@ def evaluate_listing_transition(
         )
 
     result.events = events
-    return result, new_pending, curr_signals
+    return result, new_pending_instant, new_pending_online, curr_signals
 
 
 def load_inference_state(path: Path) -> dict[str, Any]:
@@ -571,13 +713,17 @@ def run_inference_for_item(
     prev_signals = [x for x in prev_signals if isinstance(x, dict)]
     pending = bucket.get("pendingInstant") if isinstance(bucket.get("pendingInstant"), list) else []
     pending = [x for x in pending if isinstance(x, dict)]
+    pending_online = bucket.get("pendingOnlineNonInstant") if isinstance(bucket.get("pendingOnlineNonInstant"), list) else []
+    pending_online = [x for x in pending_online if isinstance(x, dict)]
 
-    result, new_pending, _ = evaluate_listing_transition(
+    result, new_pending, new_pending_online, _ = evaluate_listing_transition(
         item_key=item_key,
         cycle=cycle,
         prev_signals=prev_signals,
         curr_signals=curr_signals,
         pending_instant=pending,
+        pending_online=pending_online,
+        seller_online_probe=None,
         snapshot_truncated=False,
         truncation_cutoff_mirror=None,
     )
@@ -585,6 +731,7 @@ def run_inference_for_item(
     by[item_key] = {
         "signals": curr_signals,
         "pendingInstant": new_pending,
+        "pendingOnlineNonInstant": new_pending_online,
         "lastCycle": cycle,
     }
     return result

@@ -61,7 +61,10 @@ class StorageService:
         finally:
             con.close()
 
-    def load_inference_state(self, *, variant_id: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    def load_inference_state(
+        self, *, variant_id: int
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Returns (signals, pending_instant, pending_online_non_instant)."""
         self.ensure_initialized()
         con = self._db.connect()
         try:
@@ -147,7 +150,7 @@ class StorageService:
 
     def sum_estimated_sales_since(self, *, variant_id: int, since_utc_iso: str) -> int:
         """
-        Sum per-poll estimated sold signals (confirmed transfer + likely instant, incl. negatives)
+        Sum per-poll estimated sold signals (xfer + instant + non-instant online heuristic, incl. negatives)
         for rows at or after since_utc_iso. Matches UI ``estimatedSoldCount`` aggregation.
         """
         self.ensure_initialized()
@@ -159,6 +162,7 @@ class StorageService:
                     SUM(
                         COALESCE(ip.inf_confirmed_transfer, 0)
                         + COALESCE(ip.inf_likely_instant_sale, 0)
+                        + COALESCE(ip.inf_likely_non_instant_online, 0)
                     ),
                     0
                 ) AS total
@@ -201,13 +205,13 @@ class StorageService:
         fetched_for_inference: int,
         listing_preview_rows: list[dict[str, Any]],
         inference_events: list[dict[str, Any]],
-        inference_state: tuple[list[dict[str, Any]], list[dict[str, Any]]] | None = None,
+        inference_state: tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]] | None = None,
     ) -> int:
         """
         Store the poll run + one item poll row + listing snapshots + inference events.
 
-        If `inference_state` is passed, it should be (curr_signals, pending_instant) and will be
-        persisted for next cycle comparisons.
+        If `inference_state` is passed, it should be
+        (curr_signals, pending_instant, pending_online_non_instant) and will be persisted for next cycle comparisons.
         """
         self.ensure_initialized()
         con = self._db.connect()
@@ -239,6 +243,7 @@ class StorageService:
                 highest_divine=highest_divine,
                 inf_confirmed_transfer=int(inference_counts.get("confirmedTransfer", 0)),
                 inf_likely_instant_sale=int(inference_counts.get("likelyInstantSale", 0)),
+                inf_likely_non_instant_online=int(inference_counts.get("likelyNonInstantOnline", 0)),
                 inf_relist_same_seller=int(inference_counts.get("relistSameSeller", 0)),
                 inf_non_instant_removed=int(inference_counts.get("nonInstantRemoved", 0)),
                 inf_reprice_same_seller=int(inference_counts.get("repriceSameSeller", 0)),
@@ -258,9 +263,15 @@ class StorageService:
             )
 
             if inference_state is not None:
-                curr_signals, pending = inference_state
+                curr_signals, pending_inst, pending_on = inference_state
                 inf_repo = InferenceStateRepo(con)
-                inf_repo.save_state(item_variant_id=variant_id, cycle=cycle_number, curr_signals=curr_signals, pending_instant=pending)
+                inf_repo.save_state(
+                    item_variant_id=variant_id,
+                    cycle=cycle_number,
+                    curr_signals=curr_signals,
+                    pending_instant=pending_inst,
+                    pending_online=pending_on,
+                )
 
             con.commit()
             return item_poll_id
@@ -283,6 +294,9 @@ class StorageService:
         - confirmed_transfer (+1)
         - likely_instant_sale (+1)
         And we revert `likely_instant_sale` when a relist undoes it (rule 3).
+
+        Note: ``likely_non_instant_online_sale`` is counted in item_polls / UI but is not inserted
+        into ``sales`` (legacy schema CHECK on ``sales.rule``).
         """
         repo = SalesRepo(con)
         now = _utc_now_iso()

@@ -350,7 +350,7 @@ _DEFAULT_PRICE_POLL_HEADER = (
     "timestamp_utc,cycle,item_name,item_mode,query_id,total_results,used_results,"
     "unsupported_price_count,mirror_count,lowest_mirror,median_mirror,highest_mirror,"
     "divine_count,lowest_divine,median_divine,highest_divine,"
-    "inference_confirmed_transfer,inference_likely_instant_sale,"
+    "inference_confirmed_transfer,inference_likely_instant_sale,inference_likely_non_instant_online,"
     "inference_relist_same_seller,inference_non_instant_removed,"
     "inference_reprice_same_seller,inference_multi_seller_same_fingerprint,"
     "inference_new_listing_rows\n"

@@ -105,12 +105,25 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
             return f"Seller **{seller}** has likely sold it for **{price}** (instant buyout disappeared)."
         return f"Seller **{seller}** has likely sold it (instant buyout disappeared)."
 
+    if rule == "likely_non_instant_online_sale":
+        seller = str(ev.get("seller") or "unknown")
+        price = _fmt_listed_price(ev.get("priceAmount"), ev.get("priceCurrency")) or _fmt_mirror_equiv(
+            ev.get("mirrorEquiv"),
+            divines_per_mirror=divines_per_mirror,
+        )
+        if price:
+            return (
+                f"Seller **{seller}** — non-instant listing disappeared while online (likely sold), "
+                f"was **{price}**."
+            )
+        return f"Seller **{seller}** — non-instant listing disappeared while online (likely sold)."
+
     if rule == "relist_same_seller":
         seller = str(ev.get("seller") or "unknown")
-        return f"Seller **{seller}** relisted it (undoes the instant-sale signal)."
+        return f"Seller **{seller}** relisted it (undoes a prior estimated-sale signal)."
 
     # Intentionally omit inference events that do not contribute to the estimated-sales
-    # delta shown in the alert (e.g. reprices, non-instant removals).
+    # delta (e.g. reprices, inconclusive non-instant removals when seller was offline).
 
     return None
 
@@ -119,15 +132,18 @@ def _estimated_sales_rules_breakdown(
     *,
     confirmed_transfer: int,
     likely_instant_sale: int,
+    likely_non_instant_online: int,
 ) -> str:
-    """Human-readable mapping to ``sale_inference_engine`` doc rules 1–3."""
+    """Human-readable mapping to ``sale_inference_engine`` rule counters."""
     parts: list[str] = []
     if confirmed_transfer:
         parts.append(f"Rule 1 (transfer / sold): **{confirmed_transfer:+d}**")
     if likely_instant_sale > 0:
         parts.append(f"Rule 2 (instant B/O gone, likely sold): **{likely_instant_sale:+d}**")
     elif likely_instant_sale < 0:
-        parts.append(f"Rule 3 (relist — undid Rule 2): **{likely_instant_sale:+d}**")
+        parts.append(f"Rule 3 (relist — undid instant / online-sale signal): **{likely_instant_sale:+d}**")
+    if likely_non_instant_online:
+        parts.append(f"Rule 4b (non-instant gone, seller was online): **{likely_non_instant_online:+d}**")
     return " | ".join(parts)
 
 
@@ -140,6 +156,7 @@ def build_estimated_sales_embed(
     window_days: int,
     confirmed_transfer: int,
     likely_instant_sale: int,
+    likely_non_instant_online: int = 0,
     divines_per_mirror: float | None = None,
     inference_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -151,6 +168,7 @@ def build_estimated_sales_embed(
     rules = _estimated_sales_rules_breakdown(
         confirmed_transfer=confirmed_transfer,
         likely_instant_sale=likely_instant_sale,
+        likely_non_instant_online=likely_non_instant_online,
     )
     if rules:
         lines.append(rules)
@@ -201,6 +219,7 @@ def send_estimated_sales_change_notification(
     window_days: int,
     confirmed_transfer: int,
     likely_instant_sale: int,
+    likely_non_instant_online: int = 0,
     divines_per_mirror: float | None = None,
     inference_events: list[dict[str, Any]] | None = None,
 ) -> None:
@@ -212,6 +231,7 @@ def send_estimated_sales_change_notification(
         window_days=window_days,
         confirmed_transfer=confirmed_transfer,
         likely_instant_sale=likely_instant_sale,
+        likely_non_instant_online=likely_non_instant_online,
         divines_per_mirror=divines_per_mirror,
         inference_events=inference_events,
     )

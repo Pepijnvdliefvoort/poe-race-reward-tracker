@@ -16,6 +16,7 @@ import requests
 from .sale_inference_engine import (
     evaluate_listing_transition,
     listing_signals_from_fetch,
+    non_instant_vanished_seller_accounts_for_online_probe,
 )
 
 from server.sales_discord_notify import send_estimated_sales_change_notification
@@ -728,6 +729,107 @@ def search_item(
         total = len(result_ids)
 
     return query_id, result_ids, total
+
+
+def build_account_search_payload(account_name: str) -> dict[str, Any]:
+    """Minimal trade search JSON: filter by seller account (for online probe after a listing vanishes)."""
+    acct = (account_name or "").strip()
+    return {
+        "query": {
+            "status": {"option": "any"},
+            "stats": [{"type": "and", "filters": []}],
+            "filters": {
+                "trade_filters": {
+                    "filters": {
+                        "account": {"input": acct},
+                    }
+                }
+            },
+        },
+        "sort": {"price": "asc"},
+    }
+
+
+def search_trade_by_account(
+    session: requests.Session,
+    rate_limiter: AdaptiveRateLimiter,
+    *,
+    league: str,
+    account_name: str,
+) -> tuple[str | None, list[str], int]:
+    url = f"{BASE_URL}/search/{league}"
+    payload = build_account_search_payload(account_name)
+
+    rate_limiter.wait_before_request()
+    response = session.post(url, data=json.dumps(payload), timeout=30.0)
+    rate_limiter.update_from_response(
+        response.headers, response.status_code, request_label="trade.search[account]"
+    )
+    response.raise_for_status()
+
+    data = response.json()
+    query_id = data.get("id")
+    result_ids = data.get("result", [])
+    total = data.get("total", 0)
+
+    if not isinstance(query_id, str) or not query_id:
+        return None, [], 0
+    if not isinstance(result_ids, list):
+        return None, [], 0
+    if not isinstance(total, int):
+        total = len(result_ids)
+
+    ids = [x for x in result_ids if isinstance(x, str)]
+    return query_id, ids, int(total)
+
+
+def probe_seller_online_via_account_search(
+    session: requests.Session,
+    rate_limiter: AdaptiveRateLimiter,
+    *,
+    league: str,
+    account_name: str,
+) -> bool | None:
+    """
+    PoE trade: account-filter search, then GET /fetch for the first result id with ``?query=``.
+
+    Returns whether ``listing.account.online`` is true on that listing. Uses the same rate limiter
+    as the rest of the poller (one search + one fetch per seller).
+
+    Returns:
+        True/False when the probe completes successfully.
+        None on HTTP errors / malformed responses (caller falls back to snapshot ``sellerOnline``).
+
+    If the account search returns no hits, returns False (cannot observe online; treat as not online
+    for rule 4b).
+    """
+    acct = (account_name or "").strip()
+    if not acct or acct == "unknown":
+        return None
+
+    try:
+        query_id, result_ids, total = search_trade_by_account(
+            session, rate_limiter, league=league, account_name=acct
+        )
+    except Exception:
+        return None
+
+    if not query_id or total <= 0 or not result_ids:
+        return False
+
+    try:
+        rows = _fetch_listing_entries_batched(session, rate_limiter, query_id, [result_ids[0]])
+    except Exception:
+        return None
+
+    if not rows:
+        return False
+    entry = rows[0]
+    listing = entry.get("listing") if isinstance(entry, dict) else None
+    account = listing.get("account") if isinstance(listing, dict) else None
+    if isinstance(account, dict) and "online" in account:
+        return bool(account.get("online"))
+    return False
 
 
 def find_first_priced_listing(listings: list[dict[str, Any]]) -> tuple[str, float] | None:
@@ -1465,32 +1567,53 @@ def run_cycle(
 
         item_key = f"{item.name}::{item_mode_token(item)}"
         variant_id = int(variant_ids_by_key.get(item_key) or 0)
-        prev_signals, pending = ([], [])
+        prev_signals, pending_inst, pending_on = ([], [], [])
         if variant_id:
-            prev_signals, pending = storage.load_inference_state(variant_id=variant_id)
+            prev_signals, pending_inst, pending_on = storage.load_inference_state(variant_id=variant_id)
         truncation_margin_pct = load_inference_truncation_safe_margin_pct(storage)
-        inf, new_pending, curr_signals = evaluate_listing_transition(
+        snap_trunc = bool(effective_inference_cap > 0 and total_results > effective_inference_cap)
+        trunc_cutoff = max(
+            (
+                float(s.get("mirrorEquiv"))
+                for s in (inference_signals or [])
+                if isinstance(s, dict)
+                and isinstance(s.get("mirrorEquiv"), (int, float))
+                and math.isfinite(float(s.get("mirrorEquiv")))
+            ),
+            default=None,
+        )
+
+        seller_online_probe: dict[str, bool] = {}
+        probe_accounts = non_instant_vanished_seller_accounts_for_online_probe(
+            prev_signals,
+            inference_signals,
+            snapshot_truncated=snap_trunc,
+            truncation_cutoff_mirror=trunc_cutoff,
+            truncation_safe_margin_pct=float(truncation_margin_pct),
+        )
+        for acct in probe_accounts:
+            online_guess = probe_seller_online_via_account_search(
+                session, rate_limiter, league=DEFAULT_LEAGUE, account_name=acct
+            )
+            if online_guess is not None:
+                seller_online_probe[acct] = online_guess
+
+        inf, new_pending_inst, new_pending_on, curr_signals = evaluate_listing_transition(
             item_key=item_key,
             cycle=cycle,
             prev_signals=prev_signals,
             curr_signals=inference_signals,
-            pending_instant=pending,
-            snapshot_truncated=bool(effective_inference_cap > 0 and total_results > effective_inference_cap),
-            truncation_cutoff_mirror=(
-                max(
-                    (
-                        float(s.get("mirrorEquiv"))
-                        for s in (inference_signals or [])
-                        if isinstance(s, dict) and isinstance(s.get("mirrorEquiv"), (int, float)) and math.isfinite(float(s.get("mirrorEquiv")))
-                    ),
-                    default=None,
-                )
-            ),
+            pending_instant=pending_inst,
+            pending_online=pending_on,
+            seller_online_probe=seller_online_probe,
+            snapshot_truncated=snap_trunc,
+            truncation_cutoff_mirror=trunc_cutoff,
             truncation_safe_margin_pct=float(truncation_margin_pct),
         )
         (
             xfer,
             instant,
+            online_ni,
             relist,
             nib,
             repr_seller,
@@ -1557,6 +1680,7 @@ def run_cycle(
                 inference_counts={
                     "confirmedTransfer": inf.confirmed_transfer,
                     "likelyInstantSale": inf.likely_instant_sale,
+                    "likelyNonInstantOnline": inf.likely_non_instant_online,
                     "relistSameSeller": inf.relist_same_seller,
                     "nonInstantRemoved": inf.non_instant_removed,
                     "repriceSameSeller": inf.reprice_same_seller,
@@ -1566,10 +1690,14 @@ def run_cycle(
                 fetched_for_inference=len(listings_inference),
                 listing_preview_rows=listing_preview_rows,
                 inference_events=inf.events,
-                inference_state=(curr_signals, new_pending),
+                inference_state=(curr_signals, new_pending_inst, new_pending_on),
             )
 
-            cycle_est = int(inf.confirmed_transfer) + int(inf.likely_instant_sale)
+            cycle_est = (
+                int(inf.confirmed_transfer)
+                + int(inf.likely_instant_sale)
+                + int(inf.likely_non_instant_online)
+            )
             if sales_webhook_url and cycle_est != 0:
                 try:
                     since = (datetime.now(timezone.utc) - timedelta(days=int(sales_window_days))).isoformat()
@@ -1578,7 +1706,8 @@ def run_cycle(
                         "alert",
                         (
                             f"Est. sales alert fired: {item.name} delta={cycle_est} "
-                            f"(xfer={inf.confirmed_transfer} instant={inf.likely_instant_sale}) "
+                            f"(xfer={inf.confirmed_transfer} instant={inf.likely_instant_sale} "
+                            f"non_inst_online={inf.likely_non_instant_online}) "
                             f"total~={total_est} ({sales_window_days}d); sending Discord webhook"
                         ),
                     )
@@ -1592,6 +1721,7 @@ def run_cycle(
                         window_days=int(sales_window_days),
                         confirmed_transfer=int(inf.confirmed_transfer),
                         likely_instant_sale=int(inf.likely_instant_sale),
+                        likely_non_instant_online=int(inf.likely_non_instant_online),
                         divines_per_mirror=divines_per_mirror,
                         inference_events=inf.events,
                     )
@@ -1677,11 +1807,11 @@ def run_cycle(
             "item",
             f"[{index_label}] {name_field} {mode_field} {total_field}  cheapest={cheapest_text}",
         )
-        if xfer or instant or relist or nib or repr_seller or multi_fp or new_rows:
+        if xfer or instant or online_ni or relist or nib or repr_seller or multi_fp or new_rows:
             log_line(
                 "inference",
-                f"           inference: xfer={xfer} instant_sale={instant} relist={relist} "
-                f"non_instant_offline?={nib} reprice={repr_seller} multi_seller_fp={multi_fp} new_rows={new_rows}",
+                f"           inference: xfer={xfer} instant_sale={instant} non_inst_online={online_ni} "
+                f"relist={relist} non_instant_offline?={nib} reprice={repr_seller} multi_seller_fp={multi_fp} new_rows={new_rows}",
             )
 
     return divines_per_mirror

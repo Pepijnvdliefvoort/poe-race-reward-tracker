@@ -30,6 +30,7 @@ export function aggregateInferenceSignalsOverWindow(points, spanMs) {
     pollsInWindow: list.length,
     xfer: sumKey("inferenceConfirmedTransfer"),
     instant: sumKey("inferenceLikelyInstantSale"),
+    nonInstOnline: sumKey("inferenceLikelyNonInstantOnline"),
     relist: sumKey("inferenceRelistSameSeller"),
     nib: sumKey("inferenceNonInstantRemoved"),
     repr: sumKey("inferenceRepriceSameSeller"),
@@ -39,14 +40,18 @@ export function aggregateInferenceSignalsOverWindow(points, spanMs) {
 }
 
 /**
- * Rough sold count: confirmed transfers + likely instant sales (same signals as the rules engine).
- * Other counters (relist, reprice, etc.) are excluded — they are not treated as sales.
+ * Rough sold count: confirmed transfers + likely instant sales + non-instant/online heuristic
+ * (same signals as the rules engine). Other counters are excluded — not treated as sales.
  */
 export function estimatedSoldCount(agg) {
   if (!agg) {
     return 0;
   }
-  return (Number(agg.xfer) || 0) + (Number(agg.instant) || 0);
+  return (
+    (Number(agg.xfer) || 0) +
+    (Number(agg.instant) || 0) +
+    (Number(agg.nonInstOnline) || 0)
+  );
 }
 
 export function formatEstimatedSoldLine(agg) {

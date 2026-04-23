@@ -456,6 +456,7 @@ def load_price_data() -> dict[str, Any]:
                 "usedResults": int(row.get("used_results") or 0),
                 "inferenceConfirmedTransfer": _parse_nonneg_int(row.get("inference_confirmed_transfer")),
                 "inferenceLikelyInstantSale": _parse_signed_int(row.get("inference_likely_instant_sale")),
+                "inferenceLikelyNonInstantOnline": _parse_signed_int(row.get("inference_likely_non_instant_online")),
                 "inferenceRelistSameSeller": _parse_nonneg_int(row.get("inference_relist_same_seller")),
                 "inferenceNonInstantRemoved": _parse_nonneg_int(row.get("inference_non_instant_removed")),
                 "inferenceRepriceSameSeller": _parse_nonneg_int(row.get("inference_reprice_same_seller")),

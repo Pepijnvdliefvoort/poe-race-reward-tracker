@@ -16,6 +16,7 @@ from .schema import (
     migration_005_sales_reverts,
     migration_006_inference_price_state,
     migration_007_price_alert_cooldown,
+    migration_008_non_instant_online_inference,
 )
 
 
@@ -96,6 +97,7 @@ class Database:
             (5, migration_005_sales_reverts()),
             (6, migration_006_inference_price_state()),
             (7, migration_007_price_alert_cooldown()),
+            (8, migration_008_non_instant_online_inference()),
         ]
 
         for version, sql in migrations:
@@ -105,6 +107,8 @@ class Database:
                 self._migration_005_sales_reverts(con)
             elif version == 6:
                 self._migration_006_inference_price_state(con)
+            elif version == 8:
+                self._migration_008_non_instant_online_inference(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -157,6 +161,32 @@ class Database:
             con.execute("ALTER TABLE inference_state_pending ADD COLUMN price_amount REAL")
         if "price_currency" not in pend_cols:
             con.execute("ALTER TABLE inference_state_pending ADD COLUMN price_currency TEXT")
+
+    def _migration_008_non_instant_online_inference(self, con: sqlite3.Connection) -> None:
+        poll_cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(item_polls)").fetchall()
+        }
+        if "inf_likely_non_instant_online" not in poll_cols:
+            con.execute(
+                "ALTER TABLE item_polls ADD COLUMN inf_likely_non_instant_online INTEGER NOT NULL DEFAULT 0"
+            )
+
+        sig_cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(inference_state_signals)").fetchall()
+        }
+        if "seller_online" not in sig_cols:
+            con.execute("ALTER TABLE inference_state_signals ADD COLUMN seller_online INTEGER NOT NULL DEFAULT 0")
+
+        pend_cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(inference_state_pending)").fetchall()
+        }
+        if "pending_kind" not in pend_cols:
+            con.execute(
+                "ALTER TABLE inference_state_pending ADD COLUMN pending_kind TEXT NOT NULL DEFAULT 'instant'"
+            )
 
 
 def execute_many(con: sqlite3.Connection, sql: str, rows: Iterable[tuple]) -> None:

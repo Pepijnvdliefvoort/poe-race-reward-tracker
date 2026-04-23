@@ -239,6 +239,7 @@ class ServerStorage:
                         "usedResults": int(r["used_results"] or 0),
                         "inferenceConfirmedTransfer": int(r["inf_confirmed_transfer"] or 0),
                         "inferenceLikelyInstantSale": int(r["inf_likely_instant_sale"] or 0),
+                        "inferenceLikelyNonInstantOnline": int(r["inf_likely_non_instant_online"] or 0),
                         "inferenceRelistSameSeller": int(r["inf_relist_same_seller"] or 0),
                         "inferenceNonInstantRemoved": int(r["inf_non_instant_removed"] or 0),
                         "inferenceRepriceSameSeller": int(r["inf_reprice_same_seller"] or 0),
