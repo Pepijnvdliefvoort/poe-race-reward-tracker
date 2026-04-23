@@ -201,9 +201,14 @@ class ServerStorage:
                         "inferenceNewListingRows": int(r["inf_new_listing_rows"] or 0),
                     }
                     series["points"].append(point)
-                    if point["lowestMirror"] is not None:
-                        series["latest"] = point
-                        series["queryId"] = str(r["query_id"] or "") or series.get("queryId")
+                    # Always advance `latest` to the most recent poll point, even when no price
+                    # was available (e.g. 0 results). The UI uses `latest.time`/`latest.cycle`
+                    # to compute the poll cycle highlight ("next in line"). Price availability
+                    # is handled separately by `getAvailableLowestPrice()`.
+                    series["latest"] = point
+                    qid = str(r["query_id"] or "").strip()
+                    if qid:
+                        series["queryId"] = qid
 
             item_list = list(items.values())
             item_list.sort(
