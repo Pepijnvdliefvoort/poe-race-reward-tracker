@@ -24,20 +24,43 @@ def _fmt_mirrors(x: Any) -> str | None:
     return f"{s} mirrors"
 
 
+def _fmt_listed_price(amount: Any, currency: Any) -> str | None:
+    try:
+        if amount is None:
+            return None
+        v = float(amount)
+    except Exception:
+        return None
+    if not (v == v):  # NaN
+        return None
+    cur = str(currency or "").strip().lower()
+    if not cur:
+        return None
+    if abs(v) >= 10:
+        s = f"{v:.2f}"
+    elif abs(v) >= 1:
+        s = f"{v:.3f}"
+    else:
+        s = f"{v:.4f}"
+    s = s.rstrip("0").rstrip(".")
+    unit = "divines" if cur == "divine" else ("mirrors" if cur == "mirror" else ("exalts" if cur == "exalted" else cur))
+    return f"{s} {unit}"
+
+
 def _event_sentence(ev: dict[str, Any]) -> str | None:
     rule = str(ev.get("rule") or "")
 
     if rule == "confirmed_transfer":
         seller = str(ev.get("from_seller") or "unknown")
         buyer = str(ev.get("to_seller") or "unknown")
-        price = _fmt_mirrors(ev.get("fromMirrorEquiv"))
+        price = _fmt_listed_price(ev.get("fromPriceAmount"), ev.get("fromPriceCurrency")) or _fmt_mirrors(ev.get("fromMirrorEquiv"))
         if price:
             return f"Seller **{seller}** has sold it for **{price}** to **{buyer}**."
         return f"Seller **{seller}** has sold it to **{buyer}**."
 
     if rule == "likely_instant_sale":
         seller = str(ev.get("seller") or "unknown")
-        price = _fmt_mirrors(ev.get("mirrorEquiv"))
+        price = _fmt_listed_price(ev.get("priceAmount"), ev.get("priceCurrency")) or _fmt_mirrors(ev.get("mirrorEquiv"))
         if price:
             return f"Seller **{seller}** has likely sold it for **{price}** (instant buyout disappeared)."
         return f"Seller **{seller}** has likely sold it (instant buyout disappeared)."
@@ -48,8 +71,8 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
 
     if rule == "reprice_same_seller":
         seller = str(ev.get("seller") or "unknown")
-        a = _fmt_mirrors(ev.get("prevMirrorEquiv"))
-        b = _fmt_mirrors(ev.get("currMirrorEquiv"))
+        a = _fmt_listed_price(ev.get("prevPriceAmount"), ev.get("prevPriceCurrency")) or _fmt_mirrors(ev.get("prevMirrorEquiv"))
+        b = _fmt_listed_price(ev.get("currPriceAmount"), ev.get("currPriceCurrency")) or _fmt_mirrors(ev.get("currMirrorEquiv"))
         if a and b:
             return f"Seller **{seller}** repriced it from **{a}** to **{b}**."
         return f"Seller **{seller}** repriced it."
@@ -101,15 +124,21 @@ def build_estimated_sales_embed(
         lines.append(rules)
 
     if inference_events:
-        sentences = [s for s in (_event_sentence(ev) for ev in inference_events) if s]
-        if sentences:
+        raw_sentences = [s for s in (_event_sentence(ev) for ev in inference_events) if s]
+        if raw_sentences:
+            counts: dict[str, int] = {}
+            for s in raw_sentences:
+                counts[s] = counts.get(s, 0) + 1
+            sentences = sorted(counts.keys(), key=lambda s: (-counts[s], s))
             lines.append("")
             lines.append("**Signals:**")
-            max_lines = 8
+            max_lines = 12
             for s in sentences[:max_lines]:
-                lines.append(f"- {s}")
+                n = counts.get(s, 1)
+                suffix = f" ×{n}" if n > 1 else ""
+                lines.append(f"- {s}{suffix}")
             if len(sentences) > max_lines:
-                lines.append(f"- …and {len(sentences) - max_lines} more")
+                lines.append(f"- …and {len(sentences) - max_lines} more unique signals")
 
     lines.append(f"**Total est. sold ({label}):** ~{total_in_window}")
     embed: dict[str, Any] = {

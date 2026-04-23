@@ -158,10 +158,14 @@ def listing_signals_from_fetch(
         seller = extract_listing_seller_name(entry)
         instant = _is_instant_buyout(listing, price)
         mirror_eq: float | None = None
+        price_amount: float | None = None
+        price_currency: str | None = None
         if isinstance(price, dict):
             norm = _normalize_price_currency(price)
             if norm is not None:
                 cur, amt = norm
+                price_amount = round(float(amt), 6)
+                price_currency = str(cur)
                 m = _mirror_equivalent(amt, cur, divines_per_mirror)
                 if math.isfinite(m):
                     mirror_eq = round(m, 6)
@@ -171,6 +175,8 @@ def listing_signals_from_fetch(
                 "seller": seller,
                 "isInstant": instant,
                 "mirrorEquiv": mirror_eq,
+                "priceAmount": price_amount,
+                "priceCurrency": price_currency,
             }
         )
     return out
@@ -270,6 +276,8 @@ def evaluate_listing_transition(
         seller = str(pend.get("seller") or "")
         removed = int(pend.get("removed_cycle") or 0)
         mirror_eq = pend.get("mirrorEquiv")
+        price_amount = pend.get("priceAmount")
+        price_currency = pend.get("priceCurrency")
         if not fp or not seller:
             continue
         counted_imm = bool(pend.get("countedImmediate"))
@@ -284,6 +292,8 @@ def evaluate_listing_transition(
                     "fingerprint": fp,
                     "seller": seller,
                     "mirrorEquiv": mirror_eq,
+                    "priceAmount": price_amount,
+                    "priceCurrency": price_currency,
                     "cycle": cycle,
                 }
             )
@@ -300,6 +310,8 @@ def evaluate_listing_transition(
                         "fingerprint": fp,
                         "seller": seller,
                         "mirrorEquiv": mirror_eq,
+                        "priceAmount": price_amount,
+                        "priceCurrency": price_currency,
                         "cycle": cycle,
                     }
                 )
@@ -331,6 +343,8 @@ def evaluate_listing_transition(
                         "from_seller": a,
                         "to_seller": b,
                         "fromMirrorEquiv": (from_meta or {}).get("mirrorEquiv"),
+                        "fromPriceAmount": (from_meta or {}).get("priceAmount"),
+                        "fromPriceCurrency": (from_meta or {}).get("priceCurrency"),
                         "cycle": cycle,
                     }
                 )
@@ -343,6 +357,8 @@ def evaluate_listing_transition(
             continue
         instant = bool(meta.get("isInstant"))
         mirror_eq = meta.get("mirrorEquiv")
+        price_amount = meta.get("priceAmount")
+        price_currency = meta.get("priceCurrency")
 
         ps = _sellers_for_fingerprint(prev_signals, fp)
         cs = _sellers_for_fingerprint(curr_signals, fp)
@@ -361,6 +377,8 @@ def evaluate_listing_transition(
                     "fingerprint": fp,
                     "seller": seller,
                     "mirrorEquiv": mirror_eq,
+                    "priceAmount": price_amount,
+                    "priceCurrency": price_currency,
                     "cycle": cycle,
                 }
             )
@@ -374,6 +392,8 @@ def evaluate_listing_transition(
                 "fingerprint": fp,
                 "seller": seller,
                 "mirrorEquiv": mirror_eq,
+                "priceAmount": price_amount,
+                "priceCurrency": price_currency,
                 "cycle": cycle,
             }
         )
@@ -384,6 +404,8 @@ def evaluate_listing_transition(
                 "removed_cycle": cycle,
                 "countedImmediate": True,
                 "mirrorEquiv": mirror_eq,
+                "priceAmount": price_amount,
+                "priceCurrency": price_currency,
             }
         )
         events.append(
@@ -393,6 +415,8 @@ def evaluate_listing_transition(
                 "fingerprint": fp,
                 "seller": seller,
                 "mirrorEquiv": mirror_eq,
+                "priceAmount": price_amount,
+                "priceCurrency": price_currency,
                 "cycle": cycle,
             }
         )
@@ -417,6 +441,10 @@ def evaluate_listing_transition(
                     "seller": seller,
                     "prevMirrorEquiv": a,
                     "currMirrorEquiv": b,
+                    "prevPriceAmount": pm.get("priceAmount"),
+                    "prevPriceCurrency": pm.get("priceCurrency"),
+                    "currPriceAmount": cm.get("priceAmount"),
+                    "currPriceCurrency": cm.get("priceCurrency"),
                     "cycle": cycle,
                 }
             )
