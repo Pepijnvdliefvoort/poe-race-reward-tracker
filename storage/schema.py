@@ -232,16 +232,6 @@ CREATE INDEX IF NOT EXISTS idx_sales_poll ON sales(item_poll_id);
 
 
 def migration_005_sales_reverts() -> str:
-    """
-    Backfill migration for older DBs that already created `sales` without revert columns.
-    Safe to run even if columns already exist (SQLite supports IF NOT EXISTS only on tables/indexes,
-    so we use a best-effort ADD COLUMN sequence).
-    """
-    return """
-PRAGMA foreign_keys = ON;
-
-ALTER TABLE sales ADD COLUMN reverted_at_utc TEXT;
-ALTER TABLE sales ADD COLUMN reverted_by_item_poll_id INTEGER REFERENCES item_polls(id) ON DELETE SET NULL;
-ALTER TABLE sales ADD COLUMN reverted_reason TEXT;
-"""
+    """Applied via a Python idempotent migration in `storage/db.py`."""
+    return ""
 

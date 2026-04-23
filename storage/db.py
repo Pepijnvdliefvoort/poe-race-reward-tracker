@@ -97,7 +97,10 @@ class Database:
         for version, sql in migrations:
             if version in applied:
                 continue
-            con.executescript(sql)
+            if version == 5:
+                self._migration_005_sales_reverts(con)
+            elif sql.strip():
+                con.executescript(sql)
             con.execute(
                 "INSERT INTO schema_migrations(version, applied_at_utc) VALUES (?, ?)",
                 (version, _utc_now_iso()),
@@ -105,6 +108,18 @@ class Database:
 
         if max(applied | {0}) > SCHEMA_VERSION:
             raise RuntimeError(f"DB schema version is newer than app supports: {max(applied)} > {SCHEMA_VERSION}")
+
+    def _migration_005_sales_reverts(self, con: sqlite3.Connection) -> None:
+        # Idempotent migration: older DBs need these columns; newer DBs may already have them.
+        cols = {str(r["name"]) for r in con.execute("PRAGMA table_info(sales)").fetchall()}
+        if "reverted_at_utc" not in cols:
+            con.execute("ALTER TABLE sales ADD COLUMN reverted_at_utc TEXT")
+        if "reverted_by_item_poll_id" not in cols:
+            con.execute(
+                "ALTER TABLE sales ADD COLUMN reverted_by_item_poll_id INTEGER REFERENCES item_polls(id) ON DELETE SET NULL"
+            )
+        if "reverted_reason" not in cols:
+            con.execute("ALTER TABLE sales ADD COLUMN reverted_reason TEXT")
 
 
 def execute_many(con: sqlite3.Connection, sql: str, rows: Iterable[tuple]) -> None:
