@@ -1577,6 +1577,7 @@ def run_cycle(
                         window_days=int(sales_window_days),
                         confirmed_transfer=int(inf.confirmed_transfer),
                         likely_instant_sale=int(inf.likely_instant_sale),
+                        divines_per_mirror=divines_per_mirror,
                         inference_events=inf.events,
                     )
                 except Exception as exc:  # noqa: BLE001

@@ -7,6 +7,16 @@ from typing import Any
 import requests
 
 
+def _fmt_amount(v: float) -> str:
+    if abs(v) >= 10:
+        s = f"{v:.2f}"
+    elif abs(v) >= 1:
+        s = f"{v:.3f}"
+    else:
+        s = f"{v:.4f}"
+    return s.rstrip("0").rstrip(".")
+
+
 def _fmt_mirrors(x: Any) -> str | None:
     try:
         v = float(x)
@@ -14,14 +24,37 @@ def _fmt_mirrors(x: Any) -> str | None:
         return None
     if not (v == v):  # NaN
         return None
-    if abs(v) >= 10:
-        s = f"{v:.2f}"
-    elif abs(v) >= 1:
-        s = f"{v:.3f}"
-    else:
-        s = f"{v:.4f}"
-    s = s.rstrip("0").rstrip(".")
-    return f"{s} mirrors"
+    return f"{_fmt_amount(v)} mirrors"
+
+
+def _fmt_mirror_equiv(
+    mirror_equiv: Any,
+    *,
+    divines_per_mirror: float | None,
+) -> str | None:
+    """
+    Prefer divines for sub-mirror prices so the signal reads naturally.
+    Fall back to mirrors if the conversion ratio is unavailable.
+    """
+    try:
+        m = float(mirror_equiv)
+    except Exception:
+        return None
+    if not (m == m):  # NaN
+        return None
+    if divines_per_mirror is None:
+        return _fmt_mirrors(m)
+    try:
+        dpm = float(divines_per_mirror)
+    except Exception:
+        dpm = float("nan")
+    if not (dpm == dpm) or dpm <= 0:  # NaN or invalid
+        return _fmt_mirrors(m)
+
+    if 0 <= m < 1:
+        d = m * dpm
+        return f"{_fmt_amount(d)} divines"
+    return f"{_fmt_amount(m)} mirrors"
 
 
 def _fmt_listed_price(amount: Any, currency: Any) -> str | None:
@@ -48,19 +81,26 @@ def _fmt_listed_price(amount: Any, currency: Any) -> str | None:
 
 
 def _event_sentence(ev: dict[str, Any]) -> str | None:
+    divines_per_mirror = ev.get("divinesPerMirror")
     rule = str(ev.get("rule") or "")
 
     if rule == "confirmed_transfer":
         seller = str(ev.get("from_seller") or "unknown")
         buyer = str(ev.get("to_seller") or "unknown")
-        price = _fmt_listed_price(ev.get("fromPriceAmount"), ev.get("fromPriceCurrency")) or _fmt_mirrors(ev.get("fromMirrorEquiv"))
+        price = _fmt_listed_price(ev.get("fromPriceAmount"), ev.get("fromPriceCurrency")) or _fmt_mirror_equiv(
+            ev.get("fromMirrorEquiv"),
+            divines_per_mirror=divines_per_mirror,
+        )
         if price:
             return f"Seller **{seller}** has sold it for **{price}** to **{buyer}**."
         return f"Seller **{seller}** has sold it to **{buyer}**."
 
     if rule == "likely_instant_sale":
         seller = str(ev.get("seller") or "unknown")
-        price = _fmt_listed_price(ev.get("priceAmount"), ev.get("priceCurrency")) or _fmt_mirrors(ev.get("mirrorEquiv"))
+        price = _fmt_listed_price(ev.get("priceAmount"), ev.get("priceCurrency")) or _fmt_mirror_equiv(
+            ev.get("mirrorEquiv"),
+            divines_per_mirror=divines_per_mirror,
+        )
         if price:
             return f"Seller **{seller}** has likely sold it for **{price}** (instant buyout disappeared)."
         return f"Seller **{seller}** has likely sold it (instant buyout disappeared)."
@@ -100,6 +140,7 @@ def build_estimated_sales_embed(
     window_days: int,
     confirmed_transfer: int,
     likely_instant_sale: int,
+    divines_per_mirror: float | None = None,
     inference_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     label = f"last {window_days} day" + ("" if window_days == 1 else "s")
@@ -115,7 +156,14 @@ def build_estimated_sales_embed(
         lines.append(rules)
 
     if inference_events:
-        raw_sentences = [s for s in (_event_sentence(ev) for ev in inference_events) if s]
+        enriched_events: list[dict[str, Any]] = []
+        for ev in inference_events:
+            if isinstance(ev, dict):
+                ev2 = dict(ev)
+                if divines_per_mirror is not None:
+                    ev2.setdefault("divinesPerMirror", divines_per_mirror)
+                enriched_events.append(ev2)
+        raw_sentences = [s for s in (_event_sentence(ev) for ev in enriched_events) if s]
         if raw_sentences:
             counts: dict[str, int] = {}
             for s in raw_sentences:
@@ -153,6 +201,7 @@ def send_estimated_sales_change_notification(
     window_days: int,
     confirmed_transfer: int,
     likely_instant_sale: int,
+    divines_per_mirror: float | None = None,
     inference_events: list[dict[str, Any]] | None = None,
 ) -> None:
     embed = build_estimated_sales_embed(
@@ -163,6 +212,7 @@ def send_estimated_sales_change_notification(
         window_days=window_days,
         confirmed_transfer=confirmed_transfer,
         likely_instant_sale=likely_instant_sale,
+        divines_per_mirror=divines_per_mirror,
         inference_events=inference_events,
     )
     payload: dict[str, Any] = {"embeds": [embed]}
