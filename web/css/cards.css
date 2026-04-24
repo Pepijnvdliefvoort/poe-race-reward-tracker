@@ -107,6 +107,16 @@
   max-height: 144px;
   object-fit: contain;
   filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
+  opacity: 1;
+  transition: opacity 160ms ease;
+}
+
+.item-art.is-loading {
+  opacity: 0;
+}
+
+.item-art.is-loaded {
+  opacity: 1;
 }
 
 .price-box {
