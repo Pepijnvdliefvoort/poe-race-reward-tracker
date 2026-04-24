@@ -53,7 +53,13 @@ def load_config() -> dict:
             return merged
         except Exception:
             return dict(DEFAULT_CONFIG)
-    return dict(DEFAULT_CONFIG)
+    # Fresh clone: persist defaults so admin UI can load/edit immediately.
+    merged = dict(DEFAULT_CONFIG)
+    try:
+        storage.set_market_config(merged)
+    except Exception:
+        pass
+    return merged
 
 
 def save_config(data: dict) -> None:

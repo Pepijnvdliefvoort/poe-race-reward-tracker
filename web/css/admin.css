@@ -1024,6 +1024,18 @@ button.admin-db-list-item {
   margin-top: 10px;
 }
 
+/* Status text next to "Save" button */
+.admin-marketcfg-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(560px, 55vw);
+}
+
 /* JSON syntax highlight overlay (textarea stays editable) */
 .admin-json-editor {
   position: relative;

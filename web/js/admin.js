@@ -1714,6 +1714,20 @@ function setupMarketConfigEditor() {
     hintEl.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
   };
 
+  const formatConfigTimestamp = (value) => {
+    // Expected input: ISO-8601 UTC string. Render: dd-MM-yyyy HH:mm
+    if (!value) return "";
+    const d = value instanceof Date ? value : new Date(String(value));
+    if (Number.isNaN(d.getTime())) return String(value);
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const dd = pad2(d.getDate());
+    const MM = pad2(d.getMonth() + 1);
+    const yyyy = String(d.getFullYear());
+    const HH = pad2(d.getHours());
+    const mm = pad2(d.getMinutes());
+    return `${dd}-${MM}-${yyyy} ${HH}:${mm}`;
+  };
+
   let currentParsed = null; // object|array|primitive|null
 
   const escapeHtml = (s) =>
@@ -1973,7 +1987,7 @@ function setupMarketConfigEditor() {
       } catch {
         renderFields(null);
       }
-      setHint(payload?.updated_at_utc ? `Loaded · updated ${payload.updated_at_utc}` : "Loaded.");
+      setHint(payload?.updated_at_utc ? `Loaded · updated ${formatConfigTimestamp(payload.updated_at_utc)}` : "Loaded.");
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Load market config"), true);
     } finally {
@@ -2047,7 +2061,7 @@ function setupMarketConfigEditor() {
           // ignore
         }
       }
-      setHint(payload?.updated_at_utc ? `Saved · updated ${payload.updated_at_utc}` : "Saved.");
+      setHint(payload?.updated_at_utc ? `Saved · updated ${formatConfigTimestamp(payload.updated_at_utc)}` : "Saved.");
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Save market config"), true);
     } finally {
