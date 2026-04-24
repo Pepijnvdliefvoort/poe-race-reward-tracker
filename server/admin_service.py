@@ -625,11 +625,12 @@ def visitor_map_payload() -> dict[str, Any]:
     ip_counts = {ip: c for ip, c in ip_counts.items() if not skip_ip_in_visitor_stats(ip)}
     ip_last = {ip: ts for ip, ts in ip_last.items() if ip in ip_counts}
 
-    # Only surface the top N visitors.
-    TOP_N = 10
-    sorted_ips = sorted(ip_counts.items(), key=lambda x: (-x[1], x[0]))[:TOP_N]
-    ip_counts = {ip: count for ip, count in sorted_ips}
-    ip_last = {ip: ip_last.get(ip, "") for ip, _ in sorted_ips if ip in ip_last}
+    # Sort all visitors once (highest visits first).
+    sorted_ips = sorted(ip_counts.items(), key=lambda x: (-x[1], x[0]))
+
+    # Only show the top N visitors in the table, but show *all* geo-resolved points on the map.
+    TOP_TABLE_N = 10
+    top_table = sorted_ips[:TOP_TABLE_N]
 
     with _geo_lock:
         points: list[dict[str, Any]] = []
@@ -668,7 +669,7 @@ def visitor_map_payload() -> dict[str, Any]:
 
         pending_geocodes = sum(1 for ip, _ in sorted_ips if ServerStorage().geo_get(ip=ip) is None)
 
-    visitor_rows = [{"ip": ip, "visits": count, "lastSeen": ip_last.get(ip)} for ip, count in sorted_ips]
+    visitor_rows = [{"ip": ip, "visits": count, "lastSeen": ip_last.get(ip)} for ip, count in top_table]
 
     return {
         "points": points,
