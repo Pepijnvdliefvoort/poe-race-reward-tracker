@@ -147,6 +147,9 @@ function renderVisitorMap(data) {
     const lastSeen = p.lastSeen ? formatLocalDateTime(p.lastSeen) : "";
     m.bindPopup(
       `<strong>${escapeHtml(p.ip)}</strong><br/>Visits: ${p.visits}<br/>${lastSeen ? escapeHtml(lastSeen) : ""}`,
+      // Keep the marker centered when focusing an IP. Leaflet popups auto-pan by default,
+      // which nudges the map so the popup fits in view (making the marker not centered).
+      { autoPan: false },
     );
     markersLayer.addLayer(m);
     visitorMarkersByIp[String(p.ip || "")] = m;

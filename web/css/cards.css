@@ -17,10 +17,15 @@
   transform: translateY(0);
   opacity: 1;
   z-index: 1;
+  /* Perf: skip layout/paint for offscreen cards (keeps scroll size stable). */
+  content-visibility: auto;
+  contain-intrinsic-size: 280px 260px;
 }
 
 .card.popover-active {
   z-index: 9000;
+  /* Ensure popover card is fully rendered even if previously offscreen. */
+  content-visibility: visible;
 }
 
 .card.next-in-line {

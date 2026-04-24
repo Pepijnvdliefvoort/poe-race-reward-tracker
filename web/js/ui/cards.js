@@ -23,6 +23,37 @@ const IMG_PLACEHOLDER_SRC =
 
 let cardImageObserver = null;
 let cardChartObserver = null;
+let cardViewportObserver = null;
+
+function ensureCardViewportObserver() {
+  if (cardViewportObserver) return cardViewportObserver;
+  if (!("IntersectionObserver" in window)) return null;
+
+  // Overscan so cards are "warmed up" before they scroll into view.
+  cardViewportObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const cardEl = entry.target;
+        const key = cardEl?.dataset?.cardKey;
+        if (!key) continue;
+        const cardEntry = chartMap.get(key);
+        if (!cardEntry) continue;
+
+        cardEntry.isNearViewport = !!entry.isIntersecting;
+
+        // If we skipped updates while offscreen, apply the latest state when it becomes visible.
+        if (cardEntry.isNearViewport && cardEntry.pendingItemForViewport) {
+          const { item, onFavoriteToggle } = cardEntry.pendingItemForViewport;
+          cardEntry.pendingItemForViewport = null;
+          updateCard(item, onFavoriteToggle);
+        }
+      }
+    },
+    { root: null, rootMargin: "900px 0px", threshold: 0.01 },
+  );
+
+  return cardViewportObserver;
+}
 
 function ensureCardImageObserver() {
   if (cardImageObserver) return cardImageObserver;
@@ -303,6 +334,7 @@ export function ensureCard(item, onFavoriteToggle) {
 
   const card = document.createElement("article");
   card.className = "card card-enter";
+  card.dataset.cardKey = key;
   card.addEventListener(
     "animationend",
     () => {
@@ -439,9 +471,14 @@ export function ensureCard(item, onFavoriteToggle) {
     handleViewportChange: null,
     openPopover: null,
     closePopover: null,
+    isNearViewport: true,
+    pendingItemForViewport: null,
   };
   chartMap.set(key, entry);
   wireListingsPopover(entry);
+
+  const viewportObserver = ensureCardViewportObserver();
+  viewportObserver?.observe?.(card);
   return entry;
 }
 
@@ -648,7 +685,15 @@ export function updateAllCards(itemsToRender, onFavoriteToggle) {
       dom.cardsEl.insertBefore(entry.card, currentAtIndex ?? null);
     }
 
-    updateCard(item, onFavoriteToggle);
+    // Performance: on browsers without effective `content-visibility` (e.g. Firefox),
+    // updating hundreds/thousands of offscreen cards every refresh causes jank.
+    // Only update cards near the viewport; apply the latest state when they scroll into view.
+    if (entry?.isNearViewport) {
+      updateCard(item, onFavoriteToggle);
+      entry.pendingItemForViewport = null;
+    } else if (entry) {
+      entry.pendingItemForViewport = { item, onFavoriteToggle };
+    }
 
     // Keep listings preview open across refreshes if the user had it open.
     // During re-render we may briefly close due to transient payload changes;
