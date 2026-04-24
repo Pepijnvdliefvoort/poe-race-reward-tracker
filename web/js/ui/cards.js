@@ -572,7 +572,7 @@ export function updateCard(item, onFavoriteToggle) {
     img.style.cursor = "default";
   }
 
-  const staleSuffix = priceIsLastKnown ? " (last known)" : "";
+  const staleSuffix = priceIsLastKnown ? "" : "";
   const priceText =
     low != null && high != null
       ? `Prices: ${formatNumber(low)} to ${formatNumber(high)} mirror${staleSuffix}`
