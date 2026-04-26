@@ -242,6 +242,42 @@
       </div>
       <p id="adminDataHint" class="admin-muted" aria-live="polite"></p>
       <p id="adminPollerHint" class="admin-muted" aria-live="polite"></p>
+
+      <div class="admin-appconfig-card admin-data-tools" aria-label="Market data tools">
+        <h3 style="margin: 0 0 6px">Delete recorded sales</h3>
+        <p class="admin-muted" style="margin: 0 0 10px">
+          Remove persisted <code>sales</code> rows for a specific item (or variant). This affects the sales chart and any features based on
+          recorded sales.
+        </p>
+
+        <div class="admin-appconfig-row">
+          <label class="admin-appconfig-k" for="adminSalesItemInput">Item</label>
+          <div>
+            <input
+              id="adminSalesItemInput"
+              class="admin-appconfig-input"
+              list="adminSalesItemList"
+              placeholder="Type to search…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <datalist id="adminSalesItemList"></datalist>
+          </div>
+        </div>
+
+        <div class="admin-appconfig-row">
+          <span class="admin-appconfig-k">Preview</span>
+          <p id="adminSalesPreview" class="admin-muted" style="margin: 0">Loading…</p>
+        </div>
+
+        <div class="admin-appconfig-actions">
+          <button id="adminDeleteSalesBtn" class="admin-btn admin-btn-danger" type="button" disabled>Delete sales</button>
+          <button id="adminResetInferenceBtn" class="admin-btn admin-btn-secondary" type="button" disabled>
+            Reset “Est. sold”
+          </button>
+          <span id="adminSalesDeleteHint" class="admin-muted" aria-live="polite"></span>
+        </div>
+      </div>
     </section>
 
     <footer class="admin-footer">

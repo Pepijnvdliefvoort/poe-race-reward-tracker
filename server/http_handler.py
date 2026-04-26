@@ -325,6 +325,55 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            if req_path == "/api/admin/market/variants-sales":
+                # List item variants with non-reverted sales counts (for admin tooling).
+                try:
+                    Database(ROOT_DIR).ensure_initialized()
+                except Exception:
+                    pass
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    rows = con.execute(
+                        """
+                        SELECT
+                          v.id AS variant_id,
+                          v.display_name AS display_name,
+                          v.mode AS mode,
+                          i.name AS base_item_name,
+                          (
+                            SELECT COUNT(*)
+                            FROM sales s
+                            WHERE s.item_variant_id = v.id
+                              AND s.reverted_at_utc IS NULL
+                          ) AS sales_count
+                        FROM item_variants v
+                        JOIN items i ON i.id = v.item_id
+                        ORDER BY v.display_name ASC, v.mode ASC
+                        """
+                    ).fetchall()
+                    variants = []
+                    for r in rows:
+                        variants.append(
+                            {
+                                "variantId": int(r["variant_id"]),
+                                "displayName": str(r["display_name"] or ""),
+                                "mode": str(r["mode"] or ""),
+                                "baseItemName": str(r["base_item_name"] or ""),
+                                "salesCount": int(r["sales_count"] or 0),
+                            }
+                        )
+                finally:
+                    con.close()
+                body = json.dumps({"ok": True, "variants": variants}, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             if req_path == "/api/admin/app-config":
                 # List available app_config keys.
                 storage = ServerStorage(ROOT_DIR)
@@ -804,6 +853,156 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     csv_path=Path("price_poll.csv"),
                 )
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/sales/delete":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    data = json.loads(raw or b"{}")
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+
+                scope = str(data.get("scope") or "variant").strip().lower()
+                vid_raw = data.get("variantId")
+                try:
+                    variant_id = int(vid_raw)
+                except Exception:
+                    variant_id = 0
+
+                if variant_id <= 0:
+                    body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                try:
+                    Database(ROOT_DIR).ensure_initialized()
+                except Exception:
+                    pass
+
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    variant_ids: list[int]
+                    if scope == "item":
+                        row = con.execute("SELECT item_id FROM item_variants WHERE id = ?", (variant_id,)).fetchone()
+                        if not row:
+                            body = json.dumps({"ok": False, "error": "Variant not found"}).encode("utf-8")
+                            self.send_response(404)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            self.send_header("Cache-Control", "no-store")
+                            self.send_header("Content-Length", str(len(body)))
+                            self.end_headers()
+                            self.wfile.write(body)
+                            return
+                        item_id = int(row["item_id"])
+                        ids = con.execute("SELECT id FROM item_variants WHERE item_id = ?", (item_id,)).fetchall()
+                        variant_ids = [int(r["id"]) for r in ids]
+                    else:
+                        variant_ids = [variant_id]
+
+                    deleted_total = 0
+                    deleted_by_variant: dict[str, int] = {}
+
+                    for vid in variant_ids:
+                        cnt_row = con.execute(
+                            "SELECT COUNT(*) AS n FROM sales WHERE item_variant_id = ? AND reverted_at_utc IS NULL",
+                            (vid,),
+                        ).fetchone()
+                        before = int(cnt_row["n"] or 0) if cnt_row else 0
+                        con.execute("DELETE FROM sales WHERE item_variant_id = ?", (vid,))
+                        deleted_by_variant[str(vid)] = before
+                        deleted_total += before
+
+                    con.commit()
+                finally:
+                    con.close()
+
+                body = json.dumps(
+                    {"ok": True, "scope": scope, "variantIds": variant_ids, "deleted": deleted_total, "deletedByVariantId": deleted_by_variant},
+                    allow_nan=False,
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/inference/reset-counters":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    data = json.loads(raw or b"{}")
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+
+                vid_raw = data.get("variantId")
+                try:
+                    variant_id = int(vid_raw)
+                except Exception:
+                    variant_id = 0
+
+                if variant_id <= 0:
+                    body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                try:
+                    Database(ROOT_DIR).ensure_initialized()
+                except Exception:
+                    pass
+
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    row = con.execute(
+                        "SELECT COUNT(*) AS n FROM item_polls WHERE item_variant_id = ?",
+                        (variant_id,),
+                    ).fetchone()
+                    polls = int(row["n"] or 0) if row else 0
+                    con.execute(
+                        """
+                        UPDATE item_polls
+                        SET
+                          inf_confirmed_transfer = 0,
+                          inf_likely_instant_sale = 0,
+                          inf_likely_non_instant_online = 0,
+                          inf_relist_same_seller = 0,
+                          inf_non_instant_removed = 0,
+                          inf_reprice_same_seller = 0,
+                          inf_multi_seller_same_fingerprint = 0,
+                          inf_new_listing_rows = 0
+                        WHERE item_variant_id = ?
+                        """,
+                        (variant_id,),
+                    )
+                    con.commit()
+                finally:
+                    con.close()
+
+                body = json.dumps({"ok": True, "variantId": variant_id, "pollsUpdated": polls}, allow_nan=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")

@@ -1317,6 +1317,16 @@ let pollerLogViewer;
 let logRefreshTick = 0;
 let logRefreshSeq = 0;
 
+function isEditingAdminDatalist() {
+  const el = document.activeElement;
+  if (!el) return false;
+  // When typing in a <input list="...">, browsers can dismiss the suggestions on unrelated DOM churn.
+  // We pause log/visitor rendering while the user is interacting with these controls.
+  if (el.id === "adminSalesItemInput") return true;
+  if (typeof el.closest === "function" && el.closest(".admin-data-tools")) return true;
+  return false;
+}
+
 function appendLocalConsoleLine(viewer, { msg, level = "info" }) {
   if (!viewer) return;
   const entry = {
@@ -1329,6 +1339,10 @@ function appendLocalConsoleLine(viewer, { msg, level = "info" }) {
 }
 
 async function refreshLogs() {
+  // Keep <datalist> suggestions stable while the user is selecting an item.
+  if (isEditingAdminDatalist()) {
+    return;
+  }
   const seq = (logRefreshSeq += 1);
   const serverEl = document.getElementById("serverConsole");
   const pollerEl = document.getElementById("pollerConsole");
@@ -1425,6 +1439,9 @@ async function refreshLogs() {
 }
 
 async function refreshVisitors() {
+  if (isEditingAdminDatalist()) {
+    return;
+  }
   try {
     const data = await fetchJson("/api/admin/visitor-map");
     renderVisitorMap(data);
@@ -1626,6 +1643,9 @@ function renderStatsCards(payload) {
 }
 
 async function refreshStats() {
+  if (isEditingAdminDatalist()) {
+    return;
+  }
   try {
     const payload = await fetchJson("/api/admin/stats");
     if (!payload?.ok) {
@@ -1699,6 +1719,142 @@ function setupClearData() {
       btn.disabled = false;
     }
   });
+}
+
+function setupDeleteSalesTool() {
+  const input = document.getElementById("adminSalesItemInput");
+  const list = document.getElementById("adminSalesItemList");
+  const preview = document.getElementById("adminSalesPreview");
+  const btn = document.getElementById("adminDeleteSalesBtn");
+  const resetBtn = document.getElementById("adminResetInferenceBtn");
+  const hint = document.getElementById("adminSalesDeleteHint");
+  if (!input || !list || !preview || !btn || !resetBtn || !hint) return;
+
+  const setHint = (text, isWarn = false) => {
+    hint.textContent = text || "";
+    hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  let variants = [];
+  let byLabel = new Map();
+  let selected = null;
+
+  const fmt = (v) => {
+    const mode = v.mode ? ` · ${v.mode}` : "";
+    const base = v.baseItemName ? ` · base: ${v.baseItemName}` : "";
+    return `${v.displayName}${mode}${base}`;
+  };
+
+  const updatePreview = () => {
+    const v = selected;
+    if (!v) {
+      preview.textContent = "Select an item variant.";
+      btn.disabled = true;
+      resetBtn.disabled = true;
+      return;
+    }
+    const count = Number(v.salesCount) || 0;
+    const label = fmt(v);
+    preview.textContent = `${label} · recorded sales: ${count}`;
+    btn.disabled = false;
+    resetBtn.disabled = false;
+  };
+
+  const selectFromInput = () => {
+    const raw = String(input.value || "").trim();
+    selected = byLabel.get(raw) || null;
+    updatePreview();
+  };
+
+  input.addEventListener("change", selectFromInput);
+  input.addEventListener("input", () => {
+    // Live update preview when an exact match exists.
+    selectFromInput();
+  });
+
+  btn.addEventListener("click", async () => {
+    if (!selected) return;
+    const msg = `Delete recorded sales for:\n\n${selected.displayName}\n\nThis cannot be undone.\n\nContinue?`;
+    const ok = window.confirm(msg);
+    if (!ok) return;
+
+    btn.disabled = true;
+    setHint("Deleting…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/sales/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "variant", variantId: selected.variantId }),
+      });
+      if (!payload?.ok) {
+        setHint(payload?.error ? `Delete sales: ${payload.error}` : "Delete sales failed", true);
+        return;
+      }
+      const n = payload?.deleted ?? 0;
+      setHint(`Deleted ${n} sale row(s).`);
+      // Refresh counts in UI so the preview stays accurate.
+      await loadVariants();
+      selectFromInput();
+    } catch (e) {
+      setHint(adminEndpointErrorMessage(e, "Delete sales"), true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  resetBtn.addEventListener("click", async () => {
+    if (!selected) return;
+    const ok = window.confirm(
+      `Reset inferred sale counters (used by “Est. sold”) for:\n\n${selected.displayName}\n\nThis keeps price history but will make “Est. sold” drop to 0 for this item.\n\nContinue?`,
+    );
+    if (!ok) return;
+
+    resetBtn.disabled = true;
+    setHint("Resetting…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/inference/reset-counters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variantId: selected.variantId }),
+      });
+      if (!payload?.ok) {
+        setHint(payload?.error ? `Reset est sold: ${payload.error}` : "Reset est sold failed", true);
+        return;
+      }
+      const n = payload?.pollsUpdated ?? 0;
+      setHint(`Reset inferred counters for ${n} poll row(s).`);
+    } catch (e) {
+      setHint(adminEndpointErrorMessage(e, "Reset est sold"), true);
+    } finally {
+      resetBtn.disabled = false;
+    }
+  });
+
+  async function loadVariants() {
+    preview.textContent = "Loading…";
+    btn.disabled = true;
+    resetBtn.disabled = true;
+    setHint("");
+    try {
+      const payload = await fetchJson("/api/admin/market/variants-sales");
+      if (!payload?.ok) throw new Error(payload?.error || "Failed to load variants");
+      variants = payload.variants || [];
+      byLabel = new Map();
+      list.innerHTML = "";
+      variants.forEach((v) => {
+        const label = `${v.displayName} (${v.mode || "variant"})`;
+        byLabel.set(label, v);
+        const opt = document.createElement("option");
+        opt.value = label;
+        list.appendChild(opt);
+      });
+      preview.textContent = "Select an item variant.";
+    } catch (e) {
+      preview.textContent = adminEndpointErrorMessage(e, "Load variants");
+    }
+  }
+
+  void loadVariants();
 }
 
 function setupMarketConfigEditor() {
@@ -2185,6 +2341,7 @@ function main() {
   setupCsvDownload();
   setupDbDownload();
   setupClearData();
+  setupDeleteSalesTool();
   setupMarketConfigEditor();
   setupStopPoller();
   setupRestartPoller();

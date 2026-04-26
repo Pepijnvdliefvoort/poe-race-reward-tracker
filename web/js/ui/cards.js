@@ -16,6 +16,13 @@ import {
 } from "../domain/pricing.js";
 import { formatNumber, formatTime, getChartSeriesWithPrediction } from "../core/utils.js";
 import { stopListingsPopover, wireListingsPopover } from "../cards/listingsPopover.js";
+import {
+    applyPendingSalesChartUpdate,
+    buildPendingSalesView,
+    destroySalesChart,
+    ensureSalesChart,
+    ensureSalesChartDom,
+} from "./itemSalesChart.js";
 
 const IMG_PLACEHOLDER_SRC =
   "data:image/svg+xml;charset=utf-8," +
@@ -91,8 +98,14 @@ function ensureCardChartObserver() {
         if (!key) continue;
         const cardEntry = chartMap.get(key);
         if (!cardEntry) continue;
-        ensureChart(cardEntry);
-        applyPendingChartUpdate(cardEntry);
+        const kind = canvas?.dataset?.lazyChart || "price";
+        if (kind === "sales") {
+          ensureSalesChart(cardEntry);
+          applyPendingSalesChartUpdate(cardEntry);
+        } else {
+          ensureChart(cardEntry);
+          applyPendingChartUpdate(cardEntry);
+        }
         cardChartObserver.unobserve(canvas);
       }
     },
@@ -392,6 +405,7 @@ export function ensureCard(item, onFavoriteToggle) {
   chartWrap.className = "chart-wrap";
   const canvas = document.createElement("canvas");
   canvas.dataset.cardKey = key;
+  canvas.dataset.lazyChart = "price";
   chartWrap.appendChild(canvas);
 
   const salesSummary = document.createElement("div");
@@ -473,8 +487,21 @@ export function ensureCard(item, onFavoriteToggle) {
     closePopover: null,
     isNearViewport: true,
     pendingItemForViewport: null,
+    salesChartOuter: null,
+    salesChartMini: null,
+    salesChartMiniCanvas: null,
+    salesChartPop: null,
+    salesChartPopCanvas: null,
+    salesChartEmpty: null,
+    salesChart: null,
+    salesChartExpanded: null,
+    pendingSalesView: null,
+    salesView: null,
+    _salesOpen: null,
+    _salesDocClick: null,
   };
   chartMap.set(key, entry);
+  ensureSalesChartDom(entry);
   wireListingsPopover(entry);
 
   const viewportObserver = ensureCardViewportObserver();
@@ -543,6 +570,19 @@ export function updateCard(item, onFavoriteToggle) {
     } else {
       ensureChart(entry);
       applyPendingChartUpdate(entry);
+    }
+  }
+
+  buildPendingSalesView(entry, item);
+  if (entry.salesChart) {
+    applyPendingSalesChartUpdate(entry);
+  } else if (entry.salesChartMiniCanvas && entry.pendingSalesView) {
+    const so = ensureCardChartObserver();
+    if (so) {
+      so.observe(entry.salesChartMiniCanvas);
+    } else {
+      ensureSalesChart(entry);
+      applyPendingSalesChartUpdate(entry);
     }
   }
 
@@ -712,6 +752,7 @@ export function updateAllCards(itemsToRender, onFavoriteToggle) {
       stopListingsPopover(entry);
       entry.chartTooltipCleanup?.();
       entry.chart?.destroy?.();
+      destroySalesChart(entry);
       entry.card.remove();
       chartMap.delete(key);
     }

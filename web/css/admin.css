@@ -843,6 +843,11 @@ button.admin-db-list-item {
   min-width: 0;
 }
 
+/* Extra breathing room for data tools blocks under section header. */
+.admin-section > .admin-appconfig-card.admin-data-tools {
+  margin-top: 14px;
+}
+
 .admin-appconfig-card--full {
   grid-column: 1 / -1;
 }

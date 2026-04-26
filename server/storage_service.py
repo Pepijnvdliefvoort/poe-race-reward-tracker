@@ -205,7 +205,44 @@ class ServerStorage:
                     "points": [],
                     "latest": None,
                     "queryId": None,
+                    "sales": [],
                 }
+
+            sales_by_variant_id: dict[int, list[dict[str, Any]]] = {}
+            if variant_ids_by_key:
+                vids: list[int] = []
+                for _k, vid in variant_ids_by_key.items():
+                    if isinstance(vid, int) and vid > 0:
+                        vids.append(vid)
+                if vids:
+                    placeholders = ",".join("?" * len(vids))
+                    sale_rows = con.execute(
+                        f"""
+                        SELECT item_variant_id, occurred_at_utc, mirror_equiv
+                        FROM sales
+                        WHERE item_variant_id IN ({placeholders})
+                          AND reverted_at_utc IS NULL
+                          AND mirror_equiv IS NOT NULL
+                        ORDER BY item_variant_id ASC, occurred_at_utc ASC
+                        """,
+                        vids,
+                    ).fetchall()
+                    for sr in sale_rows:
+                        try:
+                            vid = int(sr["item_variant_id"])
+                        except (TypeError, ValueError):
+                            continue
+                        t_ms = epoch_ms(str(sr["occurred_at_utc"] or ""))
+                        if t_ms is None:
+                            continue
+                        try:
+                            m = float(sr["mirror_equiv"] or 0.0)
+                        except (TypeError, ValueError):
+                            m = 0.0
+                        sales_by_variant_id.setdefault(vid, []).append(
+                            # Keep decimal mirror prices (e.g. 0.37 mirrors) so points land correctly.
+                            {"time": t_ms, "price": round(m, 2)}
+                        )
 
             for variant_key, variant_id in variant_ids_by_key.items():
                 if variant_key not in items:
@@ -255,6 +292,17 @@ class ServerStorage:
                     qid = str(r["query_id"] or "").strip()
                     if qid:
                         series["queryId"] = qid
+
+            for variant_key, variant_id in variant_ids_by_key.items():
+                if variant_key not in items:
+                    continue
+                it = items[variant_key]
+                try:
+                    vid = int(variant_id)
+                except (TypeError, ValueError):
+                    it["sales"] = []
+                    continue
+                it["sales"] = list(sales_by_variant_id.get(vid, []))
 
             item_list = list(items.values())
             for it in item_list:

@@ -221,7 +221,7 @@ export function registerFilterEventListeners() {
         state.filters.favoritesOnly = false;
         state.filters.priceMin = 0;
         state.filters.priceMax = 100;
-        state.filters.chartTimespanPreset = "3m";
+        state.filters.chartTimespanPreset = "all";
         state.filters.chartTimespanCustomAmount = 3;
         state.filters.chartTimespanCustomUnit = "month";
 

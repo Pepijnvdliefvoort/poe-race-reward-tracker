@@ -184,6 +184,154 @@
   padding: 3px;
 }
 
+/* Inferred sales: scatter, mirrors vs time; expanded panel on hover / tap. */
+.sales-chart-outer {
+  position: relative;
+  z-index: 1;
+  margin-top: 4px;
+}
+
+.sales-chart-outer.is-open {
+  z-index: 200;
+}
+
+.sales-chart-outer[hidden] {
+  display: none;
+}
+
+.sales-chart-mini {
+  height: 38px;
+  border: 1px solid rgba(241, 190, 75, 0.55);
+  background: rgba(7, 11, 18, 0.94);
+  border-radius: 3px;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+.sales-chart-canvas {
+  display: block;
+  width: 100% !important;
+  height: 32px !important;
+}
+
+/* Panel lives in the card until opened; then it is portaled to body. */
+.sales-chart-pop {
+  display: none;
+  box-sizing: border-box;
+  flex-direction: column;
+  border: 1px solid rgba(241, 190, 75, 0.68);
+  background: rgba(6, 10, 16, 0.98);
+  border-radius: 6px;
+  padding: 0;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.45);
+}
+
+.sales-chart-pop.sales-chart-pop--floating {
+  display: flex;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  /* Above portaled listings popover (12000) and other overlays */
+  z-index: 20000;
+  width: min(92vw, 720px);
+  height: min(70vh, 480px);
+  max-height: 90vh;
+  margin: 0;
+}
+
+.sales-chart-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19990;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.sales-chart-pop-header {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 4px 10px;
+  border-bottom: 1px solid rgba(241, 190, 75, 0.18);
+}
+
+.sales-chart-sub {
+  margin: 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: rgba(241, 190, 75, 0.92);
+  text-align: left;
+  flex: 1;
+}
+
+.sales-chart-close {
+  position: relative;
+  z-index: 3;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(241, 190, 75, 0.45);
+  border-radius: 4px;
+  background: rgba(10, 16, 24, 0.95);
+  color: rgba(241, 190, 75, 0.94);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sales-chart-close:hover,
+.sales-chart-close:focus-visible {
+  border-color: rgba(255, 203, 72, 0.9);
+  outline: none;
+}
+
+.sales-chart-plot {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 8px 8px;
+}
+
+.sales-chart-canvas-expanded {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0;
+  flex: 1;
+}
+
+.sales-chart-empty {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: rgba(200, 214, 235, 0.72);
+  pointer-events: none;
+}
+
 .card-sales-summary {
   margin-top: 4px;
   padding: 3px 4px 2px;
@@ -506,6 +654,36 @@
 :root.light-theme .chart-wrap {
   background: rgba(250, 252, 255, 0.95);
   border-color: rgba(255, 140, 0, 0.4);
+}
+
+:root.light-theme .sales-chart-mini {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(193, 104, 15, 0.55);
+}
+
+:root.light-theme .sales-chart-pop {
+  background: rgba(252, 254, 255, 0.99);
+  border-color: rgba(193, 104, 15, 0.52);
+  box-shadow: 0 10px 20px rgba(20, 40, 50, 0.18);
+}
+
+:root.light-theme .sales-chart-backdrop {
+  background: rgba(40, 55, 70, 0.35);
+}
+
+:root.light-theme .sales-chart-sub,
+:root.light-theme .sales-chart-empty {
+  color: rgba(60, 80, 100, 0.88);
+}
+
+:root.light-theme .sales-chart-pop-header {
+  border-bottom-color: rgba(193, 104, 15, 0.22);
+}
+
+:root.light-theme .sales-chart-close {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(193, 104, 15, 0.42);
+  color: rgba(193, 104, 15, 0.95);
 }
 
 :root.light-theme .card-sales-summary {
