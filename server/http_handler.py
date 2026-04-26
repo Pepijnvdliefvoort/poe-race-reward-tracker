@@ -363,6 +363,43 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 finally:
                     con.close()
                 if not row:
+                    # Fresh clones won't have any app_config rows yet. For the primary "market"
+                    # config, fall back to the same defaults as `/api/config`, and persist them
+                    # so the admin editor can load immediately.
+                    if key == "market":
+                        try:
+                            _ = load_config()
+                        except Exception:
+                            pass
+                        con2 = storage.connect()
+                        try:
+                            row = con2.execute(
+                                "SELECT key, value_json, updated_at_utc FROM app_config WHERE key = ?",
+                                (key,),
+                            ).fetchone()
+                        finally:
+                            con2.close()
+                        if row:
+                            raw = str(row["value_json"] or "")
+                            try:
+                                parsed = json.loads(raw)
+                                raw = json.dumps(parsed, ensure_ascii=False, sort_keys=True, indent=2)
+                            except Exception:
+                                pass
+                            payload = {
+                                "ok": True,
+                                "key": str(row["key"]),
+                                "value_json": raw,
+                                "updated_at_utc": str(row["updated_at_utc"] or ""),
+                            }
+                            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                            self.send_response(200)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            self.send_header("Cache-Control", "no-store")
+                            self.send_header("Content-Length", str(len(body)))
+                            self.end_headers()
+                            self.wfile.write(body)
+                            return
                     body = json.dumps({"ok": False, "error": "Not found"}).encode("utf-8")
                     self.send_response(404)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -391,7 +428,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if req_path.rstrip("/").endswith("/stats"):
                 payload = system_stats_payload()
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                self.send_response(200 if payload.get("ok") else 500)
+                # Avoid surfacing a 500 for expected local-dev conditions (e.g. missing psutil).
+                # The UI can still render a helpful error message from the JSON payload.
+                self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(body)))

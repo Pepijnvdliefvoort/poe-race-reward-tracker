@@ -105,12 +105,45 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgba(255, 122, 47, 0.14), rgba(42, 183, 191, 0.10)),
+    var(--surface);
+  border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 999px;
   padding: 8px 14px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(8px);
+  font-size: 0.88rem;
+  line-height: 1.1;
+}
+
+#meta {
+  gap: 10px;
+}
+
+.meta-icon {
+  opacity: 0.9;
+  filter: saturate(0.95);
+}
+
+.meta-label {
+  color: var(--ink-soft);
+  letter-spacing: 0.01em;
+}
+
+.meta-value {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.meta-value--mono {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.next-poll-pill {
+  gap: 8px;
 }
 
 .status-dot {

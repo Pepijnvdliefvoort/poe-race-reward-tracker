@@ -105,30 +105,41 @@ export function updateOverview(payload) {
 
     const pill = document.createElement("div");
     pill.className = "meta next-poll-pill";
+    const icon = document.createElement("span");
+    icon.className = "meta-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "⏰";
+
+    const label = document.createElement("span");
+    label.className = "meta-label";
+    label.textContent = "Next poll";
+
+    const value = document.createElement("span");
+    value.className = "meta-value meta-value--mono";
+
+    pill.appendChild(icon);
+    pill.appendChild(label);
+    pill.appendChild(value);
+
     if (nextPollTime) {
-        // Update countdown immediately
         const updateCountdown = () => {
             const now = Date.now();
             const timeRemaining = nextPollTime - now;
-            const countdownString = formatCountdown(timeRemaining);
-            pill.innerHTML = `⏰ Next poll: ${countdownString}`;
+            value.textContent = formatCountdown(timeRemaining);
         };
-        
+
         updateCountdown();
-        
-        // Update every second
+
         const interval = setInterval(updateCountdown, 1000);
-        
-        // Store interval ID on the pill so we can clear it later if needed
-        pill.dataset.countdownInterval = interval;
+        pill.dataset.countdownInterval = String(interval);
     } else {
-        pill.innerHTML = `⏰ Next poll: —`;
+        value.textContent = "—";
     }
     
     // Clear any existing interval from previous pill
     const oldPill = dom.overviewEl.querySelector(".next-poll-pill");
     if (oldPill?.dataset.countdownInterval) {
-        clearInterval(parseInt(oldPill.dataset.countdownInterval));
+        clearInterval(parseInt(oldPill.dataset.countdownInterval, 10));
     }
     
     dom.overviewEl.replaceChildren(pill);
