@@ -404,6 +404,7 @@ def evaluate_listing_transition(
             events.append(
                 {
                     "rule": "relist_same_seller",
+                    "revertsSaleRule": "likely_non_instant_online_sale",
                     "itemKey": item_key,
                     "fingerprint": fp,
                     "seller": seller,
@@ -437,6 +438,7 @@ def evaluate_listing_transition(
             events.append(
                 {
                     "rule": "relist_same_seller",
+                    "revertsSaleRule": "likely_instant_sale",
                     "itemKey": item_key,
                     "fingerprint": fp,
                     "seller": seller,

@@ -581,10 +581,11 @@ class SalesRepo:
             ),
         )
 
-    def revert_latest_instant_sale(
+    def revert_latest_sale(
         self,
         *,
         item_variant_id: int,
+        rule: str,
         fingerprint: str,
         seller: str,
         occurred_at_or_before_utc: str,
@@ -593,10 +594,13 @@ class SalesRepo:
         reverted_reason: str,
     ) -> int:
         """
-        Mark the latest matching likely_instant_sale row as reverted.
+        Mark the latest matching inferred-sale row (instant or non-instant 4b) as reverted on relist.
 
         Returns number of rows updated (0 or 1).
         """
+        r = str(rule)
+        if r not in {"likely_instant_sale", "likely_non_instant_online_sale"}:
+            return 0
         cur = self._con.execute(
             """
             UPDATE sales
@@ -607,7 +611,7 @@ class SalesRepo:
               SELECT s.id
               FROM sales s
               WHERE s.item_variant_id = ?
-                AND s.rule = 'likely_instant_sale'
+                AND s.rule = ?
                 AND s.fingerprint = ?
                 AND s.seller = ?
                 AND s.buyer = ''
@@ -622,6 +626,7 @@ class SalesRepo:
                 int(reverted_by_item_poll_id),
                 str(reverted_reason),
                 int(item_variant_id),
+                r,
                 str(fingerprint),
                 str(seller),
                 str(occurred_at_or_before_utc),

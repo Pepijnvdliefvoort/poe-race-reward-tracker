@@ -17,6 +17,7 @@ from .schema import (
     migration_006_inference_price_state,
     migration_007_price_alert_cooldown,
     migration_008_non_instant_online_inference,
+    migration_009_widen_sales_rule,
 )
 
 
@@ -98,6 +99,7 @@ class Database:
             (6, migration_006_inference_price_state()),
             (7, migration_007_price_alert_cooldown()),
             (8, migration_008_non_instant_online_inference()),
+            (9, migration_009_widen_sales_rule()),
         ]
 
         for version, sql in migrations:
@@ -109,6 +111,8 @@ class Database:
                 self._migration_006_inference_price_state(con)
             elif version == 8:
                 self._migration_008_non_instant_online_inference(con)
+            elif version == 9:
+                self._migration_009_widen_sales_rule_check(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -187,6 +191,54 @@ class Database:
             con.execute(
                 "ALTER TABLE inference_state_pending ADD COLUMN pending_kind TEXT NOT NULL DEFAULT 'instant'"
             )
+
+    def _migration_009_widen_sales_rule_check(self, con: sqlite3.Connection) -> None:
+        """
+        Allow `sales.rule` = `likely_non_instant_online_sale` (SQLite cannot ALTER CHECK in place).
+        """
+        info = con.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sales'").fetchone()
+        create_sql = (str(info[0]) if info else "") or ""
+        if "likely_non_instant_online_sale" in create_sql:
+            return
+        con.execute("PRAGMA foreign_keys = OFF;")
+        try:
+            con.executescript(
+                """
+                BEGIN;
+                CREATE TABLE sales__m9 (
+                  id INTEGER PRIMARY KEY,
+                  item_poll_id INTEGER NOT NULL REFERENCES item_polls(id) ON DELETE CASCADE,
+                  item_variant_id INTEGER NOT NULL REFERENCES item_variants(id) ON DELETE CASCADE,
+                  occurred_at_utc TEXT NOT NULL,
+                  recorded_at_utc TEXT NOT NULL,
+                  rule TEXT NOT NULL CHECK (rule IN (
+                    'confirmed_transfer',
+                    'likely_instant_sale',
+                    'likely_non_instant_online_sale'
+                  )),
+                  fingerprint TEXT NOT NULL DEFAULT '',
+                  seller TEXT NOT NULL,
+                  buyer TEXT NOT NULL DEFAULT '',
+                  price_amount REAL,
+                  price_currency TEXT,
+                  mirror_equiv REAL,
+                  quantity INTEGER NOT NULL DEFAULT 1,
+                  reverted_at_utc TEXT,
+                  reverted_by_item_poll_id INTEGER REFERENCES item_polls(id) ON DELETE SET NULL,
+                  reverted_reason TEXT,
+                  UNIQUE(item_variant_id, rule, fingerprint, seller, buyer, occurred_at_utc)
+                );
+                INSERT INTO sales__m9 SELECT * FROM sales;
+                DROP TABLE sales;
+                ALTER TABLE sales__m9 RENAME TO sales;
+                CREATE INDEX IF NOT EXISTS idx_sales_variant_time ON sales(item_variant_id, occurred_at_utc);
+                CREATE INDEX IF NOT EXISTS idx_sales_time ON sales(occurred_at_utc);
+                CREATE INDEX IF NOT EXISTS idx_sales_poll ON sales(item_poll_id);
+                COMMIT;
+                """
+            )
+        finally:
+            con.execute("PRAGMA foreign_keys = ON;")
 
 
 def execute_many(con: sqlite3.Connection, sql: str, rows: Iterable[tuple]) -> None:

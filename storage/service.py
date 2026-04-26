@@ -288,15 +288,13 @@ class StorageService:
         inference_events: list[dict[str, Any]],
     ) -> None:
         """
-        Persist inferred sales into `sales`.
-
-        We only record inference rules that contribute to the estimated-sales count:
+        Persist inferred sales into `sales` for every rule that counts toward estimated sales:
         - confirmed_transfer (+1)
         - likely_instant_sale (+1)
-        And we revert `likely_instant_sale` when a relist undoes it (rule 3).
+        - likely_non_instant_online_sale (+1, rule 4b)
 
-        Note: ``likely_non_instant_online_sale`` is counted in item_polls / UI but is not inserted
-        into ``sales`` (legacy schema CHECK on ``sales.rule``).
+        On relist (rule 3), revert the latest matching `likely_instant_sale` or
+        `likely_non_instant_online_sale` row according to the engine event's `revertsSaleRule`.
         """
         repo = SalesRepo(con)
         now = _utc_now_iso()
@@ -307,9 +305,13 @@ class StorageService:
             if rule == "relist_same_seller":
                 seller = str(ev.get("seller") or "").strip()
                 fp = str(ev.get("fingerprint") or "").strip()
+                rsr = str(ev.get("revertsSaleRule") or "likely_instant_sale").strip()
+                if rsr not in {"likely_instant_sale", "likely_non_instant_online_sale"}:
+                    rsr = "likely_instant_sale"
                 if seller and fp:
-                    repo.revert_latest_instant_sale(
+                    repo.revert_latest_sale(
                         item_variant_id=item_variant_id,
+                        rule=rsr,
                         fingerprint=fp,
                         seller=seller,
                         occurred_at_or_before_utc=occurred_at_utc,
@@ -319,7 +321,11 @@ class StorageService:
                     )
                 continue
 
-            if rule not in {"confirmed_transfer", "likely_instant_sale"}:
+            if rule not in {
+                "confirmed_transfer",
+                "likely_instant_sale",
+                "likely_non_instant_online_sale",
+            }:
                 continue
 
             fp = ev.get("fingerprint")
@@ -334,6 +340,7 @@ class StorageService:
                 price_currency = ev.get("fromPriceCurrency")
                 mirror_equiv = ev.get("fromMirrorEquiv")
             else:
+                # likely_instant_sale, likely_non_instant_online_sale
                 seller = str(ev.get("seller") or "").strip()
                 buyer = None
                 if not seller:

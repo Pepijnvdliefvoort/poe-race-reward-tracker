@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def migration_001_initial() -> str:
@@ -257,5 +257,10 @@ CREATE TABLE IF NOT EXISTS price_alert_cooldown (
 
 def migration_008_non_instant_online_inference() -> str:
     """Applied via a Python idempotent migration in `storage/db.py`."""
+    return ""
+
+
+def migration_009_widen_sales_rule() -> str:
+    """Applied via a Python idempotent migration in `storage/db.py` (rebuild `sales` for CHECK)."""
     return ""
 
