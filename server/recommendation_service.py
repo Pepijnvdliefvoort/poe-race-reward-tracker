@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from server.data_service import _get_image_path
 from server.storage_service import ServerStorage
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -253,6 +254,24 @@ def _warnings(*, age_days: float | None, total_results: int, price_is_last_known
     return warnings
 
 
+def _mode_to_is_aa(mode: Any) -> bool | None:
+    if mode == "aa":
+        return True
+    if mode == "normal":
+        return False
+    return None
+
+
+def _recommendation_image_path(row: dict[str, Any]) -> str | None:
+    base_name = str(row.get("base_item_name") or "").strip()
+    mode = str(row.get("mode") or "").strip()
+    resolved = _get_image_path(base_name, _mode_to_is_aa(mode))
+    if resolved:
+        return resolved
+    raw = str(row.get("icon_path") or "").strip()
+    return raw or None
+
+
 def _portfolio_targets(risk: str) -> dict[str, float]:
     return {
         "safe": {"deploy": 0.60, "position": 0.22, "min_score": 48},
@@ -424,7 +443,7 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
                 "itemName": str(latest.get("display_name") or latest.get("base_item_name") or ""),
                 "baseItemName": str(latest.get("base_item_name") or ""),
                 "mode": str(latest.get("mode") or ""),
-                "imagePath": latest.get("icon_path"),
+                "imagePath": _recommendation_image_path(latest),
                 "queryId": str(latest.get("query_id") or ""),
                 "league": str(latest.get("league") or "Standard"),
                 "priceMirror": round(price, 2),
