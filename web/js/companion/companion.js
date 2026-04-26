@@ -13,9 +13,11 @@ const submitBtn = document.getElementById("companionSubmit");
 const statusEl = document.getElementById("companionStatus");
 const resultsEl = document.getElementById("companionResults");
 
+const PREFERENCES_STORAGE_KEY = "companion.preferences.v1";
+
 const CATEGORY_HELP = {
   "Best fit": "High overall score for your wealth and risk profile.",
-  Liquid: "Stronger inferred sales and enough listings to enter or exit more easily.",
+  Liquid: "Stronger inferred sale activity, meaning there is clearer evidence of demand.",
   Speculative: "Higher-risk pick because of thin supply, large trend movement, or speculative settings.",
   "Value watch": "Recent price is down enough that it may be worth monitoring.",
   Watchlist: "Decent candidate, but without a stronger specific signal.",
@@ -40,6 +42,13 @@ function formatPercent(value) {
   return `${sign}${n.toFixed(1)}%`;
 }
 
+function formatMirrorDelta(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "n/a";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} mirror${Math.abs(n) === 1 ? "" : "s"}`;
+}
+
 function setStatus(message, tone = "") {
   if (!statusEl) return;
   statusEl.textContent = message;
@@ -51,6 +60,65 @@ function setLoading(isLoading) {
     submitBtn.disabled = isLoading;
     submitBtn.textContent = isLoading ? "Estimating..." : "Estimate";
   }
+}
+
+function selectHasValue(select, value) {
+  return Array.from(select.options).some((option) => option.value === value);
+}
+
+function readStoredPreferences() {
+  try {
+    const raw = window.localStorage.getItem(PREFERENCES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storePreferences() {
+  if (!wealthInput || !currencySelect || !riskSelect || !modeSelect) return;
+
+  try {
+    window.localStorage.setItem(
+      PREFERENCES_STORAGE_KEY,
+      JSON.stringify({
+        wealth: wealthInput.value,
+        currency: currencySelect.value,
+        risk: riskSelect.value,
+        mode: modeSelect.value,
+      }),
+    );
+  } catch {
+    // Storage may be disabled; preferences are a convenience only.
+  }
+}
+
+function restorePreferences() {
+  if (!wealthInput || !currencySelect || !riskSelect || !modeSelect) return;
+
+  const preferences = readStoredPreferences();
+  if (!preferences || typeof preferences !== "object") return;
+
+  if (typeof preferences.wealth === "string" && preferences.wealth.trim() !== "") {
+    wealthInput.value = preferences.wealth;
+  }
+  if (typeof preferences.currency === "string" && selectHasValue(currencySelect, preferences.currency)) {
+    currencySelect.value = preferences.currency;
+  }
+  if (typeof preferences.risk === "string" && selectHasValue(riskSelect, preferences.risk)) {
+    riskSelect.value = preferences.risk;
+  }
+  if (typeof preferences.mode === "string" && selectHasValue(modeSelect, preferences.mode)) {
+    modeSelect.value = preferences.mode;
+  }
+}
+
+function initPreferenceStorage() {
+  restorePreferences();
+  wealthInput?.addEventListener("input", storePreferences);
+  currencySelect?.addEventListener("change", storePreferences);
+  riskSelect?.addEventListener("change", storePreferences);
+  modeSelect?.addEventListener("change", storePreferences);
 }
 
 function openCompanion() {
@@ -174,6 +242,21 @@ function createLabelHelp() {
   return details;
 }
 
+function createOutlookBlock(title, lines, tone = "") {
+  const block = document.createElement("div");
+  block.className = tone ? `companion-outlook companion-outlook-${tone}` : "companion-outlook";
+
+  const heading = document.createElement("strong");
+  heading.className = "companion-outlook-title";
+  heading.textContent = title;
+
+  const text = document.createElement("p");
+  text.textContent = lines.filter(Boolean).join(" ");
+
+  block.append(heading, text);
+  return block;
+}
+
 function renderRecommendation(rec, options = {}) {
   const { portfolio = false } = options;
   const card = document.createElement("article");
@@ -213,12 +296,12 @@ function renderRecommendation(rec, options = {}) {
       createMetric("Position", formatMirror(rec.portfolioAllocationMirror)),
       createMetric("Share", rec.portfolioShare == null ? "n/a" : `${Math.round(Number(rec.portfolioShare) * 100)}%`),
       createMetric("Score", `${rec.score ?? 0}`),
-      createMetric("Price", formatMirror(rec.priceMirror)),
+      createMetric("Entry", formatMirror(rec.priceMirror)),
     );
   } else {
     metrics.append(
       createMetric("Score", `${rec.score ?? 0}`),
-      createMetric("Price", formatMirror(rec.priceMirror)),
+      createMetric("Entry", formatMirror(rec.priceMirror)),
       createMetric("Allocation", formatMirror(rec.suggestedAllocationMirror)),
       createMetric("30d trend", rec.trendPct30d == null ? "n/a" : formatPercent(rec.trendPct30d)),
       createMetric("Est. sold", `~${rec.inferredSales30d ?? 0}`),
@@ -234,6 +317,37 @@ function renderRecommendation(rec, options = {}) {
   }
 
   body.append(headingRow, metrics, reasons);
+
+  if (rec.flip) {
+    const flip = rec.flip;
+    const flipLines = flip.viable
+      ? [
+          `Buy at ${formatMirror(flip.buyPriceMirror)}, then relist for ${formatMirror(flip.relistPriceMirror)}.`,
+          `That is about ${formatMirrorDelta(flip.expectedProfitMirror)} gross profit (${formatPercent(flip.expectedProfitPct)}).`,
+          flip.sellCondition,
+        ]
+      : [
+          flip.reason || "No clean immediate flip gap was found in the latest whole-mirror ladder.",
+          flip.nextMarketPriceMirror ? `Next listing: ${formatMirror(flip.nextMarketPriceMirror)}.` : "",
+        ];
+    body.appendChild(createOutlookBlock(flip.viable ? "Immediate flip" : "No clean flip", flipLines, flip.viable ? "good" : "muted"));
+  }
+
+  if (rec.hold30d) {
+    const hold = rec.hold30d;
+    body.appendChild(
+      createOutlookBlock(
+        "30-day hold",
+        [
+          `Expected price: ${formatMirror(hold.expectedPriceMirror)}.`,
+          `Expected return: ${formatMirrorDelta(hold.expectedProfitMirror)} (${formatPercent(hold.expectedReturnPct)}).`,
+          hold.sellTiming,
+          hold.cycleNote,
+        ],
+        Number(hold.expectedProfitMirror) > 0 ? "good" : "muted",
+      ),
+    );
+  }
 
   if (portfolio && rec.portfolioReason) {
     const portfolioReason = document.createElement("p");
@@ -264,7 +378,7 @@ function renderPortfolio(payload) {
   const summary = document.createElement("div");
   summary.className = "companion-summary companion-message companion-message-bot";
   const noteText = Array.isArray(portfolio.notes) && portfolio.notes.length ? ` ${portfolio.notes.join(" ")}` : "";
-  summary.textContent = `I built a portfolio plan for ${formatMirror(payload.wealthMirror)}. It deploys ${formatMirror(portfolio.deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(portfolio.cashReserveMirror)} liquid. ${RISK_HELP[payload.risk] || RISK_HELP.balanced}${noteText}`;
+  summary.textContent = `I built a portfolio plan for ${formatMirror(payload.wealthMirror)}. It deploys ${formatMirror(portfolio.deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(portfolio.cashReserveMirror)} liquid. The ranking favors inferred demand, trend, and real whole-mirror ladder gaps; listing count is only risk context. ${RISK_HELP[payload.risk] || RISK_HELP.balanced}${noteText}`;
   resultsEl.appendChild(summary);
   resultsEl.appendChild(createLabelHelp());
 
@@ -295,7 +409,7 @@ function renderResults(payload) {
 
   const summary = document.createElement("div");
   summary.className = "companion-summary companion-message companion-message-bot";
-  summary.textContent = `I found ${recommendations.length} ranked estimate${recommendations.length === 1 ? "" : "s"} for a ${formatMirror(payload.wealthMirror)} budget. ${RISK_HELP[payload.risk] || RISK_HELP.balanced}`;
+  summary.textContent = `I found ${recommendations.length} ranked estimate${recommendations.length === 1 ? "" : "s"} for a ${formatMirror(payload.wealthMirror)} budget. The ranking now favors inferred sale activity, price trend, and real whole-mirror ladder gaps; raw listing count is used as risk context, not as a reason to buy. ${RISK_HELP[payload.risk] || RISK_HELP.balanced}`;
   resultsEl.appendChild(summary);
   resultsEl.appendChild(createLabelHelp());
 
@@ -315,6 +429,7 @@ async function submitCompanion(event) {
     wealthInput.focus();
     return;
   }
+  storePreferences();
 
   setLoading(true);
   setStatus("Checking market data...", "");
@@ -350,6 +465,7 @@ async function submitCompanion(event) {
 
 export function initCompanion() {
   if (!form || !widget) return;
+  initPreferenceStorage();
   form.addEventListener("submit", submitCompanion);
   toggleBtn?.addEventListener("click", toggleCompanion);
   closeBtn?.addEventListener("click", closeCompanion);

@@ -17,6 +17,7 @@ VALID_MODES = {"ranked", "portfolio"}
 STALE_PRICE_DAYS = 90
 RECENT_WINDOW_DAYS = 30
 MAX_RECOMMENDATIONS = 8
+MIN_FLIP_PROFIT_MIRRORS = 1.0
 
 
 class RecommendationInputError(ValueError):
@@ -82,6 +83,7 @@ def _load_variant_history(storage: ServerStorage) -> dict[int, list[dict[str, An
               v.mode,
               v.sort_order,
               i.icon_path,
+              ip.id AS item_poll_id,
               pr.league,
               pr.cycle_number,
               pr.started_at_utc,
@@ -111,6 +113,44 @@ def _load_variant_history(storage: ServerStorage) -> dict[int, list[dict[str, An
     for row in rows:
         grouped[int(row["variant_id"])].append(dict(row))
     return grouped
+
+
+def _load_latest_listing_ladders(storage: ServerStorage, item_poll_ids: list[int]) -> dict[int, list[float]]:
+    ids = sorted({int(v) for v in item_poll_ids if int(v) > 0})
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    con = storage.connect()
+    try:
+        rows = con.execute(
+            f"""
+            SELECT ip.item_variant_id, ls.amount, ls.currency, ls.is_instant_buyout
+            FROM listing_snapshots ls
+            JOIN item_polls ip ON ip.id = ls.item_poll_id
+            WHERE ls.item_poll_id IN ({placeholders})
+            ORDER BY ip.item_variant_id ASC, ls.rank ASC
+            """,
+            ids,
+        ).fetchall()
+    finally:
+        con.close()
+
+    ladders: dict[int, list[float]] = defaultdict(list)
+    for row in rows:
+        if int(row["is_instant_buyout"] or 0) != 1:
+            continue
+        currency = str(row["currency"] or "").strip().lower()
+        if currency not in {"mirror", "mirrors", "mirror of kalandra"}:
+            continue
+        amount = _finite_positive(row["amount"])
+        if amount is None:
+            continue
+        # These markets normally trade in whole mirrors; ignore fractional/other-currency rows
+        # for flip-profit simulation so we do not invent an impossible relist price.
+        if abs(amount - round(amount)) > 1e-6:
+            continue
+        ladders[int(row["item_variant_id"])].append(float(round(amount)))
+    return dict(ladders)
 
 
 def _row_price(row: dict[str, Any]) -> float | None:
@@ -183,24 +223,51 @@ def _fit_score(price: float, wealth_mirror: float, risk: str) -> tuple[float, fl
 
 def _trend_score(trend: float | None, risk: str) -> float:
     if trend is None:
-        return 0.45
+        return 0.28
     if risk == "safe":
-        return _clamp(1.0 - abs(trend) / 35.0)
+        # Stable is useful, but it should not outrank actual demand or a clean ladder gap.
+        return _clamp(0.62 - abs(trend) / 70.0)
     if risk == "balanced":
-        if -18.0 <= trend <= 22.0:
-            return 0.82
+        if -8.0 <= trend <= 8.0:
+            return 0.42
+        if 8.0 < trend <= 25.0:
+            return _clamp(0.5 + trend / 70.0)
         if trend < -18.0:
-            return _clamp(0.64 + min(abs(trend), 45.0) / 180.0)
-        return _clamp(0.7 - (trend - 22.0) / 90.0)
+            return _clamp(0.42 + min(abs(trend), 45.0) / 180.0)
+        return _clamp(0.62 - (trend - 25.0) / 100.0)
     if trend < 0:
-        return _clamp(0.58 + min(abs(trend), 60.0) / 75.0)
-    return _clamp(0.48 + min(trend, 55.0) / 90.0)
+        return _clamp(0.36 + min(abs(trend), 60.0) / 95.0)
+    return _clamp(0.38 + min(trend, 55.0) / 75.0)
 
 
-def _category(score: float, risk: str, sales_30d: int, trend: float | None, total_results: int) -> str:
-    if risk == "speculative" or (trend is not None and abs(trend) >= 25) or total_results < 5:
+def _demand_score(sales_30d: int, trend: float | None) -> float:
+    sales_score = _clamp(sales_30d / 5.0)
+    trend_bonus = 0.0 if trend is None else _clamp(trend / 40.0, 0.0, 0.35)
+    return _clamp(sales_score + trend_bonus)
+
+
+def _market_penalty(*, sales_30d: int, trend: float | None, flip: dict[str, Any], ladder_prices: list[float]) -> float:
+    penalty = 0.0
+    flat_or_unknown = trend is None or abs(trend) < 1.0
+    if sales_30d == 0 and flat_or_unknown and not flip.get("viable"):
+        penalty += 0.34
+    floor_stock = int(flip.get("floorStock") or 0)
+    if floor_stock > 1:
+        penalty += min(0.22, 0.07 * (floor_stock - 1))
+    if len(ladder_prices) < 2:
+        penalty += 0.08
+    return penalty
+
+
+def _category(score: float, risk: str, sales_30d: int, trend: float | None, flip_viable: bool) -> str:
+    flat_or_unknown = trend is None or abs(trend) < 1.0
+    if flip_viable:
+        return "Best fit" if score >= 72 else "Value watch"
+    if sales_30d == 0 and flat_or_unknown:
+        return "Watchlist"
+    if risk == "speculative" or (trend is not None and abs(trend) >= 25):
         return "Speculative"
-    if sales_30d >= 5 and total_results >= 8:
+    if sales_30d >= 5:
         return "Liquid"
     if score >= 72:
         return "Best fit"
@@ -222,10 +289,8 @@ def _reasons(
     reasons.append(f"Uses {ratio * 100:.0f}% of your available wealth.")
     if sales_30d > 0:
         reasons.append(f"About {sales_30d} inferred sale signals in the last {RECENT_WINDOW_DAYS} days.")
-    elif total_results >= 10:
-        reasons.append("Healthy listing depth, but recent sale signals are quiet.")
     else:
-        reasons.append("Thin market, so price movement may be noisy.")
+        reasons.append("No inferred sale signals in the recent window, so demand is unproven.")
 
     if trend is not None:
         if trend <= -10:
@@ -247,11 +312,119 @@ def _warnings(*, age_days: float | None, total_results: int, price_is_last_known
         warnings.append("Price is carried forward from an earlier poll.")
     if age_days is not None and age_days > 1:
         warnings.append(f"Latest usable price is {age_days:.0f} days old.")
-    if total_results < 5:
-        warnings.append("Low listing count can make this market easy to move.")
+    if total_results == 0:
+        warnings.append("No live listings were reported in the latest poll.")
     if ratio > 0.75:
         warnings.append("This would concentrate most of your wealth in one item.")
     return warnings
+
+
+def _whole_mirror_relist_price(next_market_price: float) -> float | None:
+    if next_market_price <= 1:
+        return None
+    candidate = math.floor(next_market_price - 1e-6)
+    if candidate <= 0 or candidate >= next_market_price:
+        return None
+    return float(candidate)
+
+
+def _flip_opportunity(ladder_prices: list[float]) -> dict[str, Any]:
+    prices = sorted(p for p in ladder_prices if p > 0)
+    if len(prices) < 2:
+        return {
+            "viable": False,
+            "floorStock": len(prices),
+            "reason": "Not enough instant whole-mirror listings to estimate a resale gap.",
+        }
+
+    buy_price = prices[0]
+    floor_stock = sum(1 for p in prices if abs(p - buy_price) <= 1e-6)
+    next_after_one = prices[1]
+
+    if floor_stock > 1:
+        return {
+            "viable": False,
+            "buyPriceMirror": buy_price,
+            "floorStock": floor_stock,
+            "nextMarketPriceMirror": next_after_one,
+            "reason": f"There are {floor_stock} instant listings at {buy_price:g} mirror, so buying one does not move the floor.",
+        }
+
+    relist_price = _whole_mirror_relist_price(next_after_one)
+    if relist_price is None or relist_price <= buy_price:
+        return {
+            "viable": False,
+            "buyPriceMirror": buy_price,
+            "floorStock": floor_stock,
+            "nextMarketPriceMirror": next_after_one,
+            "reason": "The next listing is too close to create a profitable whole-mirror undercut.",
+        }
+
+    profit = relist_price - buy_price
+    if profit + 1e-6 < MIN_FLIP_PROFIT_MIRRORS:
+        return {
+            "viable": False,
+            "buyPriceMirror": buy_price,
+            "floorStock": floor_stock,
+            "nextMarketPriceMirror": next_after_one,
+            "relistPriceMirror": relist_price,
+            "expectedProfitMirror": round(profit, 2),
+            "reason": "The gross flip gap is below the 1 mirror minimum profit target.",
+        }
+
+    return {
+        "viable": True,
+        "buyPriceMirror": buy_price,
+        "floorStock": floor_stock,
+        "nextMarketPriceMirror": next_after_one,
+        "relistPriceMirror": relist_price,
+        "expectedProfitMirror": round(profit, 2),
+        "expectedProfitPct": round((profit / buy_price) * 100.0, 1) if buy_price > 0 else None,
+        "sellCondition": f"Relist immediately for {relist_price:g} mirrors, below the next listing at {next_after_one:g}.",
+        "reason": "Buying the floor listing creates a whole-mirror resale gap.",
+    }
+
+
+def _hold_30d_estimate(
+    *,
+    price: float,
+    trend: float | None,
+    sales_30d: int,
+    total_results: int,
+    risk: str,
+) -> dict[str, Any]:
+    trend_component = 0.0 if trend is None else _clamp(trend / 100.0, -0.35, 0.35)
+    risk_multiplier = {"safe": 0.45, "balanced": 0.65, "speculative": 0.9}[risk]
+    liquidity_bonus = min(sales_30d, 8) * 0.006
+    supply_penalty = 0.04 if total_results >= 20 else 0.02 if total_results >= 12 else 0.0
+    expected_return = _clamp((trend_component * risk_multiplier) + liquidity_bonus - supply_penalty, -0.25, 0.35)
+    model_price = max(0.0, price * (1.0 + expected_return))
+    expected_sell_price = float(max(1, math.floor(model_price))) if model_price > 0 else 0.0
+    whole_mirror_profit = expected_sell_price - price
+
+    if whole_mirror_profit > 0:
+        sell_timing = "Hold up to 30 days, then list into strength if demand and sales remain active."
+    elif whole_mirror_profit < 0:
+        sell_timing = "Avoid a 30-day hold unless the ladder tightens or league-merge demand starts to show."
+    else:
+        sell_timing = "Treat this as flat over 30 days; profit depends more on a good entry than passive appreciation."
+
+    if sales_30d >= 5 and expected_return >= 0:
+        cycle_note = "Recent sale signals suggest healthier demand, similar to periods with more Standard activity."
+    elif sales_30d <= 1:
+        cycle_note = "Demand looks quiet; if this is far from a league merge, prices can drift lower while activity is low."
+    else:
+        cycle_note = "This does not know the exact league-merge date, so it uses recent trend and sales as the activity proxy."
+
+    return {
+        "horizonDays": 30,
+        "expectedPriceMirror": round(expected_sell_price, 2),
+        "modelPriceMirror": round(model_price, 2),
+        "expectedProfitMirror": round(whole_mirror_profit, 2),
+        "expectedReturnPct": round((whole_mirror_profit / price) * 100.0, 1) if price > 0 else None,
+        "sellTiming": sell_timing,
+        "cycleNote": f"{cycle_note} The sell estimate is rounded down to a whole-mirror listing price.",
+    }
 
 
 def _mode_to_is_aa(mode: Any) -> bool | None:
@@ -393,10 +566,12 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
 
     now = _utc_now()
     histories = _load_variant_history(storage)
+    latest_poll_ids = [int(rows[-1]["item_poll_id"]) for rows in histories.values() if rows and rows[-1].get("item_poll_id")]
+    listing_ladders = _load_latest_listing_ladders(storage, latest_poll_ids)
     weights = {
-        "safe": {"fit": 0.35, "liquidity": 0.35, "supply": 0.20, "trend": 0.10},
-        "balanced": {"fit": 0.30, "liquidity": 0.25, "supply": 0.15, "trend": 0.30},
-        "speculative": {"fit": 0.25, "liquidity": 0.15, "supply": 0.10, "trend": 0.50},
+        "safe": {"fit": 0.30, "demand": 0.35, "trend": 0.20, "flip": 0.15},
+        "balanced": {"fit": 0.25, "demand": 0.30, "trend": 0.25, "flip": 0.20},
+        "speculative": {"fit": 0.20, "demand": 0.20, "trend": 0.35, "flip": 0.25},
     }[risk]
 
     recommendations: list[dict[str, Any]] = []
@@ -412,31 +587,57 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
         if age_days is not None and age_days > STALE_PRICE_DAYS:
             skipped["stale"] += 1
             continue
-        if price > wealth_mirror * 0.98:
-            skipped["unaffordable"] += 1
-            continue
 
         total_results = int(latest.get("total_results") or 0)
         used_results = int(latest.get("used_results") or 0)
         sales_30d = _recent_sales(rows, now)
         trend = _trend_pct(rows, price, now)
-        fit_score, ratio = _fit_score(price, wealth_mirror, risk)
-        liquidity_score = _clamp((sales_30d / 8.0) * 0.75 + (total_results / 24.0) * 0.25)
-        supply_score = _clamp(total_results / 18.0)
+        variant_id = int(latest.get("variant_id") or 0)
+        ladder_prices = listing_ladders.get(variant_id, [])
+        ladder_floor = min(ladder_prices) if ladder_prices else None
+        entry_price = ladder_floor if ladder_floor is not None else price
+        if entry_price > wealth_mirror * 0.98:
+            skipped["unaffordable"] += 1
+            continue
+
+        flip = _flip_opportunity(ladder_prices)
+        hold_30d = _hold_30d_estimate(
+            price=entry_price,
+            trend=trend,
+            sales_30d=sales_30d,
+            total_results=total_results,
+            risk=risk,
+        )
+        fit_score, ratio = _fit_score(entry_price, wealth_mirror, risk)
+        demand_score = _demand_score(sales_30d, trend)
         trend_score = _trend_score(trend, risk)
+        flip_score = 1.0 if flip.get("viable") else 0.0
+        market_penalty = _market_penalty(sales_30d=sales_30d, trend=trend, flip=flip, ladder_prices=ladder_prices)
         score = (
             fit_score * weights["fit"]
-            + liquidity_score * weights["liquidity"]
-            + supply_score * weights["supply"]
+            + demand_score * weights["demand"]
             + trend_score * weights["trend"]
+            + flip_score * weights["flip"]
+            - market_penalty
         )
+        score = _clamp(score)
         score_100 = round(score * 100)
 
         target_allocation = {"safe": 0.35, "balanced": 0.55, "speculative": 0.75}[risk] * wealth_mirror
-        units = max(1, int(target_allocation // price))
-        max_units = max(1, int((wealth_mirror * 0.95) // price))
+        units = max(1, int(target_allocation // entry_price))
+        max_units = max(1, int((wealth_mirror * 0.95) // entry_price))
         units = min(units, max_units)
-        allocation_mirror = round(units * price, 2)
+        allocation_mirror = round(units * entry_price, 2)
+        reasons = _reasons(
+            ratio=ratio,
+            trend=trend,
+            sales_30d=sales_30d,
+            total_results=total_results,
+            used_results=used_results,
+            price_is_last_known=price_is_last_known,
+        )
+        if ladder_floor is not None:
+            reasons.append("Entry price uses the latest instant whole-mirror listing ladder.")
 
         recommendations.append(
             {
@@ -446,26 +647,22 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
                 "imagePath": _recommendation_image_path(latest),
                 "queryId": str(latest.get("query_id") or ""),
                 "league": str(latest.get("league") or "Standard"),
-                "priceMirror": round(price, 2),
+                "priceMirror": round(entry_price, 2),
+                "pricingSource": "instant whole-mirror ladder" if ladder_floor is not None else "latest price history",
                 "priceIsLastKnown": price_is_last_known,
                 "wealthShare": round(ratio, 3),
                 "suggestedUnits": units,
                 "suggestedAllocationMirror": allocation_mirror,
                 "score": score_100,
-                "category": _category(score_100, risk, sales_30d, trend, total_results),
+                "category": _category(score_100, risk, sales_30d, trend, bool(flip.get("viable"))),
                 "trendPct30d": round(trend, 1) if trend is not None else None,
                 "inferredSales30d": sales_30d,
                 "totalListings": total_results,
                 "usedListings": used_results,
                 "latestPollAt": str(latest.get("requested_at_utc") or ""),
-                "reasons": _reasons(
-                    ratio=ratio,
-                    trend=trend,
-                    sales_30d=sales_30d,
-                    total_results=total_results,
-                    used_results=used_results,
-                    price_is_last_known=price_is_last_known,
-                ),
+                "flip": flip,
+                "hold30d": hold_30d,
+                "reasons": reasons[:5],
                 "warnings": _warnings(
                     age_days=age_days,
                     total_results=total_results,
