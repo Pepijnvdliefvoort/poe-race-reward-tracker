@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from html import escape
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -44,6 +45,18 @@ from .stats_service import system_stats_payload
 from server.storage_service import ServerStorage
 
 _ADMIN_UNAUTHORIZED_HTML = WEB_DIR / "admin-unauthorized.html"
+_ERROR_HTML = WEB_DIR / "error.html"
+_ERROR_COPY: dict[int, tuple[str, str]] = {
+    400: ("Bad request", "The request could not be understood."),
+    401: ("Access denied", "You don't have permission to view this page."),
+    403: ("Forbidden", "You don't have permission to view this resource."),
+    404: ("Page not found", "The page or resource you requested does not exist."),
+    405: ("Method not allowed", "This route does not support the requested HTTP method."),
+    410: ("Gone", "This resource is no longer available."),
+    429: ("Too many requests", "Too many failed attempts. Try again later."),
+    500: ("Server error", "Something went wrong on the server."),
+    502: ("Bad gateway", "The upstream service did not return a usable response."),
+}
 
 
 def create_server(host: str, port: int) -> ThreadingHTTPServer:
@@ -56,6 +69,43 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _client_ip(self) -> str:
         return get_client_ip(self.headers.get("X-Forwarded-For"), self.client_address[0])
+
+    def _send_error_page(
+        self,
+        status_code: int,
+        *,
+        title: str | None = None,
+        message: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
+        default_title, default_message = _ERROR_COPY.get(status_code, ("Request failed", "The request failed."))
+        page_title = title or default_title
+        page_message = message or default_message
+        if _ERROR_HTML.is_file():
+            html = _ERROR_HTML.read_text(encoding="utf-8")
+            html = html.replace("{{status_code}}", escape(str(status_code)))
+            html = html.replace("{{title}}", escape(page_title))
+            html = html.replace("{{message}}", escape(page_message))
+            body = html.encode("utf-8")
+        else:
+            fallback = (
+                "<!DOCTYPE html><html><head><meta charset=utf-8>"
+                f"<title>{escape(str(status_code))}</title></head><body>"
+                f"<h1>{escape(page_title)}</h1><p>{escape(page_message)}</p></body></html>"
+            )
+            body = fallback.encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
+        """Render SimpleHTTPRequestHandler fallback errors with the app error page."""
+        self._send_error_page(code)
 
     def _reject_if_admin_ip_locked(self, *, want_json: bool) -> bool:
         if not admin_security_enabled():
@@ -77,18 +127,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return True
-        html = (
-            "<!DOCTYPE html><html><head><meta charset=utf-8><title>429</title></head>"
-            "<body><p>Too many failed authentication attempts. Try again later.</p></body></html>"
+        self._send_error_page(
+            429,
+            message="Too many failed authentication attempts. Try again later.",
+            extra_headers={"Retry-After": str(retry_after)},
         )
-        body = html.encode("utf-8")
-        self.send_response(429)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Retry-After", str(retry_after))
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
         return True
 
     def _note_failed_admin_auth_if_applicable(
@@ -540,6 +583,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+
+        if parsed.path in {"/error", "/error.html"}:
+            try:
+                status_code = int(params.get("status", ["404"])[0])
+            except ValueError:
+                status_code = 404
+            if status_code not in _ERROR_COPY:
+                status_code = 404
+            self._send_error_page(status_code)
             return
 
         if parsed.path == "/admin.html":
