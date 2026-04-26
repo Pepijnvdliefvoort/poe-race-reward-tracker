@@ -39,6 +39,7 @@ from .data_service import (
     save_config,
 )
 from .db_admin_service import db_overview, er_schema, list_tables, preview_table, run_query, table_details
+from .recommendation_service import RecommendationInputError, recommend_investments
 
 from storage.db import Database
 from .stats_service import system_stats_payload
@@ -613,6 +614,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+        if parsed.path == "/api/companion/auth":
+            if admin_security_enabled():
+                if self._reject_if_admin_ip_locked(want_json=True):
+                    return
+                authorized = admin_authorized(auth_header, token_param, cookie_header)
+                if authorized:
+                    self._note_admin_auth_success()
+            else:
+                authorized = True
+            payload = {"ok": True, "authenticated": authorized}
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if parsed.path == "/api/stats":
             # Moved to /api/admin/stats (admin-protected).
             body = json.dumps({"error": "Not found"}).encode("utf-8")
@@ -835,6 +855,48 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             body = json.dumps({"error": "Unknown admin endpoint"}).encode("utf-8")
             self.send_response(404)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if parsed.path == "/api/companion/recommend":
+            if admin_security_enabled():
+                if self._reject_if_admin_ip_locked(want_json=True):
+                    return
+                if not admin_authorized(auth_header, token_param, cookie_header):
+                    self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
+                    body = json.dumps({"ok": False, "error": "Forbidden"}).encode("utf-8")
+                    self.send_response(403)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self._note_admin_auth_success()
+
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length)
+            try:
+                data = json.loads(raw or b"{}")
+            except Exception:
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            try:
+                payload = recommend_investments(data, root_dir=ROOT_DIR)
+                status = 200
+            except RecommendationInputError as exc:
+                payload = {"ok": False, "error": str(exc)}
+                status = 400
+            except Exception as exc:  # noqa: BLE001
+                payload = {"ok": False, "error": str(exc)}
+                status = 500
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

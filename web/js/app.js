@@ -2,6 +2,7 @@ import { REFRESH_MS } from "./core/state.js";
 import { initTheme, toggleTheme } from "./ui/theme.js";
 import { refresh } from "./ui/renderer.js";
 import { registerFilterEventListeners, registerKeyboardShortcuts, syncFilterControlsFromState } from "./ui/filterUI.js";
+import { initCompanion } from "./companion/companion.js";
 
 /**
  * Main application entry point.
@@ -24,6 +25,7 @@ registerKeyboardShortcuts();
 
 initFiltersDrawer();
 initBackToTopButton();
+initCompanion();
 
 // Start data refresh cycle
 refresh();

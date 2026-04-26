@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="./css/variables.css" />
     <link rel="stylesheet" href="./css/layout.css" />
     <link rel="stylesheet" href="./css/filters.css" />
+    <link rel="stylesheet" href="./css/companion.css" />
     <link rel="stylesheet" href="./css/animations.css" />
     <link rel="stylesheet" href="./css/cards.css" />
     <link rel="stylesheet" href="./css/footer.css" />
@@ -81,6 +82,67 @@
     >
       ↑ Top
     </button>
+
+    <div id="companionWidget" class="companion-widget companion-widget-collapsed" hidden>
+      <button
+        type="button"
+        id="companionToggle"
+        class="companion-launcher"
+        aria-controls="companionPanel"
+        aria-expanded="false"
+      >
+        <span class="companion-launcher-mark" aria-hidden="true">IC</span>
+        <span class="companion-launcher-text">Investment Companion</span>
+      </button>
+      <section id="companionPanel" class="companion-panel" aria-labelledby="companionTitle" role="dialog" hidden>
+        <button type="button" id="companionResize" class="companion-resize" aria-label="Resize companion window" title="Resize"></button>
+        <header class="companion-header">
+          <div>
+            <p class="eyebrow">Investment Companion</p>
+            <h2 id="companionTitle">Find investment fits</h2>
+          </div>
+          <button type="button" id="companionClose" class="companion-close" aria-label="Close companion">&times;</button>
+        </header>
+        <div class="companion-thread">
+          <p id="companionStatus" class="companion-status" aria-live="polite">
+            Results are estimates from inferred market data, not guaranteed returns.
+          </p>
+          <div class="companion-message companion-message-bot">
+            Enter your wealth and I will rank market opportunities from price, trend, supply, and inferred sale signals.
+          </div>
+          <form id="companionForm" class="companion-form">
+            <div class="filter-group">
+              <label for="companionWealth">Wealth</label>
+              <input type="number" id="companionWealth" min="0" step="0.1" placeholder="12" inputmode="decimal" required />
+            </div>
+            <div class="filter-group">
+              <label for="companionCurrency">Currency</label>
+              <select id="companionCurrency">
+                <option value="mirror">Mirrors</option>
+                <option value="divine">Divines</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="companionRisk">Risk</label>
+              <select id="companionRisk">
+                <option value="safe">Safe</option>
+                <option value="balanced" selected>Balanced</option>
+                <option value="speculative">Speculative</option>
+              </select>
+            </div>
+            <div class="filter-group companion-mode-group">
+              <label for="companionMode">Mode</label>
+              <select id="companionMode">
+                <option value="ranked" selected>Ranked picks</option>
+                <option value="portfolio">Portfolio plan</option>
+              </select>
+            </div>
+            <button type="submit" id="companionSubmit" class="companion-submit">Estimate</button>
+          </form>
+          <div id="companionResults" class="companion-results" hidden></div>
+        </div>
+      </section>
+    </div>
 
     <div id="filtersOverlay" class="filters-overlay" aria-hidden="true">
       <aside class="filters-drawer" role="dialog" aria-modal="true" aria-labelledby="filtersDrawerTitle">
