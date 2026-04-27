@@ -213,13 +213,19 @@ function makeExpandedConfig(view) {
             if (scale.id !== "x" || !scale.ticks) return;
             const seen = new Set();
             for (const t of scale.ticks) {
-              if (t.value == null) continue;
+              // Chart.js internals expect tick labels to be strings (or string arrays).
+              // Some versions/plugins can produce non-string labels; normalize to avoid
+              // `startsWith` crashes inside the UMD bundle.
+              if (!t || t.value == null) continue;
               const d = new Date(t.value);
               const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
               if (seen.has(key)) {
                 t.label = "";
               } else {
                 seen.add(key);
+                if (t.label != null && typeof t.label !== "string") {
+                  t.label = String(t.label);
+                }
               }
             }
           },
