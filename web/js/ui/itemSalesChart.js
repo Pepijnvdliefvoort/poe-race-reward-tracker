@@ -75,7 +75,13 @@ function buildViewModel(item, now) {
   let xMax = now;
   if (spanMs === Infinity) {
     if (points.length) {
-      xMin = Math.min(...points.map((p) => p.x));
+      // Avoid `Math.min(...bigArray)` which can overflow the call stack.
+      let minX = Infinity;
+      for (let i = 0; i < points.length; i += 1) {
+        const v = points[i].x;
+        if (v < minX) minX = v;
+      }
+      xMin = minX;
     } else {
       xMax = now;
       xMin = now - 90 * 24 * 60 * 60 * 1000;
@@ -84,8 +90,13 @@ function buildViewModel(item, now) {
     xMin = now - spanMs;
   }
   if (points.length) {
-    const tMin = Math.min(...points.map((p) => p.x));
-    const tMax = Math.max(...points.map((p) => p.x));
+    let tMin = Infinity;
+    let tMax = -Infinity;
+    for (let i = 0; i < points.length; i += 1) {
+      const v = points[i].x;
+      if (v < tMin) tMin = v;
+      if (v > tMax) tMax = v;
+    }
     if (spanMs === Infinity) {
       const pad = Math.max(1, (tMax - tMin) * 0.04, 3 * 60 * 1000);
       xMin = tMin - pad;
@@ -98,9 +109,13 @@ function buildViewModel(item, now) {
   let yMin = 0;
   let yMax = 1;
   if (points.length) {
-    const pr = points.map((p) => p.y);
-    const pMin = Math.min(...pr);
-    const pMax = Math.max(...pr);
+    let pMin = Infinity;
+    let pMax = -Infinity;
+    for (let i = 0; i < points.length; i += 1) {
+      const v = points[i].y;
+      if (v < pMin) pMin = v;
+      if (v > pMax) pMax = v;
+    }
     // Keep a bit of vertical padding while allowing decimal-valued points.
     const baseMin = Math.max(0, Math.floor(pMin));
     const baseMax = Math.max(baseMin + 1, Math.ceil(pMax));
@@ -459,6 +474,14 @@ function closeSalesPop(entry) {
   if (!entry._salesOpen) return;
   entry._salesOpen = false;
   unmountSalesPop(entry);
+  // The expanded popover is portaled into/out of <body>. Keeping the same Chart.js instance
+  // across unmount/remount can confuse internal observers/layout and can surface as
+  // `t.startsWith is not a function` / stack overflows on the *second* open.
+  // Recreate the expanded chart each time to keep Chart.js in a clean state.
+  if (entry.salesChartExpanded) {
+    entry.salesChartExpanded.destroy();
+    entry.salesChartExpanded = null;
+  }
   if (entry._salesKeydown) {
     document.removeEventListener("keydown", entry._salesKeydown, true);
     entry._salesKeydown = null;
