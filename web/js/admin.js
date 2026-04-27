@@ -1725,10 +1725,9 @@ function setupDeleteSalesTool() {
   const input = document.getElementById("adminSalesItemInput");
   const list = document.getElementById("adminSalesItemList");
   const preview = document.getElementById("adminSalesPreview");
-  const btn = document.getElementById("adminDeleteSalesBtn");
-  const resetBtn = document.getElementById("adminResetInferenceBtn");
+  const btn = document.getElementById("adminWipeVariantBtn");
   const hint = document.getElementById("adminSalesDeleteHint");
-  if (!input || !list || !preview || !btn || !resetBtn || !hint) return;
+  if (!input || !list || !preview || !btn || !hint) return;
 
   const setHint = (text, isWarn = false) => {
     hint.textContent = text || "";
@@ -1750,14 +1749,12 @@ function setupDeleteSalesTool() {
     if (!v) {
       preview.textContent = "Select an item variant.";
       btn.disabled = true;
-      resetBtn.disabled = true;
       return;
     }
     const count = Number(v.salesCount) || 0;
     const label = fmt(v);
     preview.textContent = `${label} · recorded sales: ${count}`;
     btn.disabled = false;
-    resetBtn.disabled = false;
   };
 
   const selectFromInput = () => {
@@ -1774,66 +1771,51 @@ function setupDeleteSalesTool() {
 
   btn.addEventListener("click", async () => {
     if (!selected) return;
-    const msg = `Delete recorded sales for:\n\n${selected.displayName}\n\nThis cannot be undone.\n\nContinue?`;
+    const msg =
+      `Delete sales + fingerprint state for:\n\n${selected.displayName}\n\n` +
+      `This will remove:\n` +
+      `- sales rows\n` +
+      `- listing snapshot fingerprints (used for inference)\n` +
+      `- inference events/state fingerprints\n` +
+      `- inferred sale counters (“Est. sold”) for this variant\n\n` +
+      `This cannot be undone.\n\nContinue?`;
     const ok = window.confirm(msg);
     if (!ok) return;
 
     btn.disabled = true;
     setHint("Deleting…");
     try {
-      const payload = await fetchJsonWithInit("/api/admin/sales/delete", {
+      const payload = await fetchJsonWithInit("/api/admin/market/wipe-variant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scope: "variant", variantId: selected.variantId }),
       });
       if (!payload?.ok) {
-        setHint(payload?.error ? `Delete sales: ${payload.error}` : "Delete sales failed", true);
+        setHint(payload?.error ? `Delete item data: ${payload.error}` : "Delete item data failed", true);
         return;
       }
-      const n = payload?.deleted ?? 0;
-      setHint(`Deleted ${n} sale row(s).`);
+      const salesN = payload?.deleted?.sales ?? payload?.deletedSales ?? 0;
+      const listingsN = payload?.deleted?.listingSnapshots ?? 0;
+      const eventsN = payload?.deleted?.inferenceEvents ?? 0;
+      const pendingN = payload?.deleted?.inferencePending ?? 0;
+      const signalsN = payload?.deleted?.inferenceSignals ?? 0;
+      const pollsN = payload?.updated?.pollsReset ?? payload?.pollsUpdated ?? 0;
+      setHint(
+        `Deleted sales ${salesN}, listings ${listingsN}, events ${eventsN}, pending ${pendingN}, signals ${signalsN}. Reset polls ${pollsN}.`,
+      );
       // Refresh counts in UI so the preview stays accurate.
       await loadVariants();
       selectFromInput();
     } catch (e) {
-      setHint(adminEndpointErrorMessage(e, "Delete sales"), true);
+      setHint(adminEndpointErrorMessage(e, "Delete item data"), true);
     } finally {
       btn.disabled = false;
-    }
-  });
-
-  resetBtn.addEventListener("click", async () => {
-    if (!selected) return;
-    const ok = window.confirm(
-      `Reset inferred sale counters (used by “Est. sold”) for:\n\n${selected.displayName}\n\nThis keeps price history but will make “Est. sold” drop to 0 for this item.\n\nContinue?`,
-    );
-    if (!ok) return;
-
-    resetBtn.disabled = true;
-    setHint("Resetting…");
-    try {
-      const payload = await fetchJsonWithInit("/api/admin/inference/reset-counters", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ variantId: selected.variantId }),
-      });
-      if (!payload?.ok) {
-        setHint(payload?.error ? `Reset est sold: ${payload.error}` : "Reset est sold failed", true);
-        return;
-      }
-      const n = payload?.pollsUpdated ?? 0;
-      setHint(`Reset inferred counters for ${n} poll row(s).`);
-    } catch (e) {
-      setHint(adminEndpointErrorMessage(e, "Reset est sold"), true);
-    } finally {
-      resetBtn.disabled = false;
     }
   });
 
   async function loadVariants() {
     preview.textContent = "Loading…";
     btn.disabled = true;
-    resetBtn.disabled = true;
     setHint("");
     try {
       const payload = await fetchJson("/api/admin/market/variants-sales");

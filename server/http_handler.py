@@ -1011,6 +1011,136 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            if parsed.path == "/api/admin/market/wipe-variant":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    data = json.loads(raw or b"{}")
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+
+                scope = str(data.get("scope") or "variant").strip().lower()
+                vid_raw = data.get("variantId")
+                try:
+                    variant_id = int(vid_raw)
+                except Exception:
+                    variant_id = 0
+
+                if variant_id <= 0:
+                    body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                try:
+                    Database(ROOT_DIR).ensure_initialized()
+                except Exception:
+                    pass
+
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    if scope == "item":
+                        row = con.execute("SELECT item_id FROM item_variants WHERE id = ?", (variant_id,)).fetchone()
+                        if not row:
+                            body = json.dumps({"ok": False, "error": "Variant not found"}).encode("utf-8")
+                            self.send_response(404)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            self.send_header("Cache-Control", "no-store")
+                            self.send_header("Content-Length", str(len(body)))
+                            self.end_headers()
+                            self.wfile.write(body)
+                            return
+                        item_id = int(row["item_id"])
+                        ids = con.execute("SELECT id FROM item_variants WHERE item_id = ?", (item_id,)).fetchall()
+                        variant_ids = [int(r["id"]) for r in ids]
+                    else:
+                        variant_ids = [variant_id]
+
+                    deleted_sales = 0
+                    deleted_listing_snapshots = 0
+                    deleted_inference_events = 0
+                    deleted_inf_pending = 0
+                    deleted_inf_signals = 0
+                    polls_reset = 0
+
+                    for vid in variant_ids:
+                        # Polls for this variant (used to delete per-poll fingerprint tables).
+                        poll_rows = con.execute("SELECT id FROM item_polls WHERE item_variant_id = ?", (vid,)).fetchall()
+                        poll_ids = [int(r["id"]) for r in poll_rows]
+
+                        if poll_ids:
+                            qmarks = ",".join(["?"] * len(poll_ids))
+                            cur = con.execute(f"DELETE FROM listing_snapshots WHERE item_poll_id IN ({qmarks})", poll_ids)
+                            deleted_listing_snapshots += int(cur.rowcount or 0)
+                            cur = con.execute(f"DELETE FROM inference_events WHERE item_poll_id IN ({qmarks})", poll_ids)
+                            deleted_inference_events += int(cur.rowcount or 0)
+
+                        # Delete recorded sales for this variant.
+                        cur = con.execute("DELETE FROM sales WHERE item_variant_id = ?", (vid,))
+                        deleted_sales += int(cur.rowcount or 0)
+
+                        # Clear persisted inference fingerprint state for this variant.
+                        cur = con.execute("DELETE FROM inference_state_pending WHERE item_variant_id = ?", (vid,))
+                        deleted_inf_pending += int(cur.rowcount or 0)
+                        cur = con.execute("DELETE FROM inference_state_signals WHERE item_variant_id = ?", (vid,))
+                        deleted_inf_signals += int(cur.rowcount or 0)
+
+                        # Reset inferred counters (used by “Est. sold”) but keep price history.
+                        row = con.execute("SELECT COUNT(*) AS n FROM item_polls WHERE item_variant_id = ?", (vid,)).fetchone()
+                        polls = int(row["n"] or 0) if row else 0
+                        polls_reset += polls
+                        con.execute(
+                            """
+                            UPDATE item_polls
+                            SET
+                              inf_confirmed_transfer = 0,
+                              inf_likely_instant_sale = 0,
+                              inf_likely_non_instant_online = 0,
+                              inf_relist_same_seller = 0,
+                              inf_non_instant_removed = 0,
+                              inf_reprice_same_seller = 0,
+                              inf_multi_seller_same_fingerprint = 0,
+                              inf_new_listing_rows = 0
+                            WHERE item_variant_id = ?
+                            """,
+                            (vid,),
+                        )
+
+                    con.commit()
+                finally:
+                    con.close()
+
+                body = json.dumps(
+                    {
+                        "ok": True,
+                        "scope": scope,
+                        "variantIds": variant_ids,
+                        "deleted": {
+                            "sales": deleted_sales,
+                            "listingSnapshots": deleted_listing_snapshots,
+                            "inferenceEvents": deleted_inference_events,
+                            "inferencePending": deleted_inf_pending,
+                            "inferenceSignals": deleted_inf_signals,
+                        },
+                        "updated": {"pollsReset": polls_reset},
+                    },
+                    allow_nan=False,
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             if parsed.path == "/api/admin/restart-poller":
                 try:
                     payload = restart_poller()
