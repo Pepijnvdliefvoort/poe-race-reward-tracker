@@ -141,6 +141,30 @@ def load_inference_truncation_safe_margin_pct(storage: StorageService) -> float:
     return max(0.0, min(50.0, float(raw)))
 
 
+def load_trade_search_status_option(storage: StorageService) -> str:
+    """
+    Trade search `query.status.option`.
+
+    The official trade site supports multiple "player status / trade method" modes. The meaning of
+    these options has historically shifted and differs across trade experiences, so we keep it
+    configurable via app_config.
+
+    Config key: app_config.market.trade_status_option
+    Common values: "online", "onlineleague", "available", "securable"
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        # Default: include both instant-buyout and in-person results (per trade site's "Any online items").
+        raw = str(data.get("trade_status_option", "available")).strip().lower()
+    except Exception:
+        raw = "available"
+
+    allowed = {"online", "onlineleague", "available", "securable"}
+    if raw not in allowed:
+        return "available"
+    return raw
+
+
 def load_alert_config() -> AlertConfig:
     webhook_url = load_discord_webhook_url_from_env()
     defaults = AlertConfig(
@@ -660,6 +684,15 @@ def load_item_specs(items_file: Path) -> list[ItemSpec]:
 
 
 def build_search_payload(item: ItemSpec, price_currency: str | None = None) -> dict[str, Any]:
+    # Configurable so users can choose whether to include/exclude certain trade modes.
+    # Default: online-only (excludes offline sellers).
+    try:
+        root_dir = Path(__file__).resolve().parents[1]
+        storage = StorageService(root_dir=root_dir)
+        status_option = load_trade_search_status_option(storage)
+    except Exception:
+        status_option = "online"
+
     name_option: dict[str, Any] = {"option": item.name}
     # name_option["discriminator"] = "legacy"
 
@@ -672,7 +705,7 @@ def build_search_payload(item: ItemSpec, price_currency: str | None = None) -> d
         misc_filters["alternate_art"] = {"option": "false"}
 
     query: dict[str, Any] = {
-        "status": {"option": "available"},
+        "status": {"option": status_option},
         "name": name_option,
         "stats": [{"type": "and", "filters": [], "disabled": False}],
         "filters": {
