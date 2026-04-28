@@ -139,12 +139,19 @@ def _mirror_equivalent(amount: float, currency: str, divines_per_mirror: float) 
 
 
 def _is_instant_buyout(listing: dict[str, Any], price: dict[str, Any] | None) -> bool:
-    # "Instant buyout" (securable) vs in-person listings cannot be reliably inferred from "~b/o"/"~price"
-    # alone. In practice, PoE trade returns a `hideout_token` for securable listings; use that signal.
-    #
-    # This intentionally ignores `price.type` and `note` to avoid misclassifying in-person "~b/o" listings
-    # (fixed-price buyouts) as instant.
-    return bool(listing.get("hideout_token"))
+    """
+    Heuristic for "instant-buyout-like" listings.
+
+    We prefer `hideout_token` (securable) when available, but also fall back to the same fixed-price
+    signals used by the listing preview (`~b/o` / `price.type` contains `b/o`). This keeps the
+    inference rule selection aligned with what we store in `listing_snapshots.is_instant_buyout`.
+    """
+    if bool(listing.get("hideout_token")):
+        return True
+
+    note = str(listing.get("note") or "").lower()
+    ptype = str(price.get("type") or "").lower() if isinstance(price, dict) else ""
+    return ("b/o" in ptype) or ("~b/o" in note)
 
 
 def extract_listing_seller_name(entry: dict[str, Any]) -> str:
