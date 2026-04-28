@@ -1842,7 +1842,7 @@ def run_cycle(
                         pct_drop >= required_drop_pct
                         and alert_config.webhook_url
                         and meets_floor_depth
-                        and (baseline <= 10.0 or resale_opportunity is not None)
+                        and (baseline <= 3.0 or resale_opportunity is not None)
                     ):
                         last_alert = alert_state.get(item_key)
                         suppress_for_cooldown = False
