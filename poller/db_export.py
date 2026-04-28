@@ -144,7 +144,7 @@ def maybe_export_db_to_discord(
 
         size_mb = zip_path.stat().st_size / (1024 * 1024)
         ts = int(now_utc.timestamp())
-        content = f"Daily DB export at <t:{ts}:F> (<t:{ts}:R>), `{zip_path.name}` ({size_mb:.2f} MiB)."
+        content = f"Daily DB export at <t:{ts}:F>, `{zip_path.name}` ({size_mb:.2f} MiB)."
         with zip_path.open("rb") as fh:
             resp = session.post(
                 webhook_url,
@@ -208,7 +208,7 @@ def export_db_to_discord_now(
     size_bytes = int(zip_path.stat().st_size)
     size_mb = size_bytes / (1024 * 1024)
     ts = int(now_utc.timestamp())
-    content = f"Manual DB export at <t:{ts}:F> (<t:{ts}:R>), `{zip_path.name}` ({size_mb:.2f} MiB)."
+    content = f"Manual DB export at <t:{ts}:F>, `{zip_path.name}` ({size_mb:.2f} MiB)."
     with zip_path.open("rb") as fh:
         resp = session.post(
             webhook_url,
