@@ -438,21 +438,17 @@ function openSalesPop(entry) {
   entry._salesOpen = true;
   registerHalfMirrorGridPlugin();
   mountSalesPop(entry);
-  if (!entry.salesChartExpanded) {
-    const canvas = entry.salesChartPopCanvas;
-    entry.salesChartExpanded = new globalThis.Chart(canvas.getContext("2d"), makeExpandedConfig(v));
-  } else {
-    const ec = entry.salesChartExpanded;
-    ec.data.datasets[0].data = v.points;
-    ec.options.scales.x.min = v.xMin;
-    ec.options.scales.x.max = v.xMax;
-    ec.options.scales.y.min = v.yMin;
-    ec.options.scales.y.max = v.yMax;
-    const ySpan = v.yMax - v.yMin;
-    ec.options.plugins = ec.options.plugins || {};
-    ec.options.plugins.halfMirrorGrid = { enabled: ySpan <= 4, color: HALF_GRID_COLOR };
-    ec.update();
+  // Chart.js v4 options are wrapped in proxies. In some cases (notably when re-parenting the canvas
+  // into/out of <body> and then mutating deep option objects during refresh), those proxies can get
+  // into a recursive `set` loop ("Maximum call stack size exceeded" at `index.umd.ts:50`).
+  //
+  // To keep Chart.js in a clean state, always recreate the expanded chart on open.
+  if (entry.salesChartExpanded) {
+    entry.salesChartExpanded.destroy();
+    entry.salesChartExpanded = null;
   }
+  const canvas = entry.salesChartPopCanvas;
+  entry.salesChartExpanded = new globalThis.Chart(canvas.getContext("2d"), makeExpandedConfig(v));
   requestAnimationFrame(() => {
     if (entry.salesChartExpanded) {
       entry.salesChartExpanded.resize();
@@ -545,18 +541,21 @@ export function applyPendingSalesChartUpdate(cardEntry) {
   }
 
   if (cardEntry.salesChartExpanded) {
-    const ec = cardEntry.salesChartExpanded;
-    ec.data.datasets[0].data = v.points;
-    ec.options.scales.x.min = v.xMin;
-    ec.options.scales.x.max = v.xMax;
-    ec.options.scales.y.min = v.yMin;
-    ec.options.scales.y.max = v.yMax;
-    const ySpan = v.yMax - v.yMin;
-    ec.options.plugins = ec.options.plugins || {};
-    ec.options.plugins.halfMirrorGrid = { enabled: ySpan <= 4, color: HALF_GRID_COLOR };
-    ec.update();
-    if (cardEntry._salesOpen) {
-      requestAnimationFrame(() => ec.resize());
+    // See note in `openSalesPop`: avoid mutating deep options on an existing expanded chart
+    // while it's being portaled and refreshed. Recreate instead.
+    const wasOpen = !!cardEntry._salesOpen;
+    try {
+      cardEntry.salesChartExpanded.destroy();
+    } catch {
+      // ignore
+    }
+    cardEntry.salesChartExpanded = null;
+    if (wasOpen && cardEntry.salesChartPopCanvas) {
+      cardEntry.salesChartExpanded = new globalThis.Chart(
+        cardEntry.salesChartPopCanvas.getContext("2d"),
+        makeExpandedConfig(v),
+      );
+      requestAnimationFrame(() => cardEntry.salesChartExpanded?.resize?.());
     }
   }
 

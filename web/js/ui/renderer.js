@@ -204,20 +204,47 @@ export async function refresh() {
         }
 
         const payload = await response.json();
-        render(payload);
+        // If something throws deep inside rendering (e.g. Chart.js internal recursion),
+        // capture a readable stack for the status bar and console.
+        try {
+            render(payload);
+        } catch (e) {
+            const err = e instanceof Error ? e : new Error(String(e));
+            globalThis.__pmfLastRenderError = { message: err.message, stack: err.stack || "" };
+            // eslint-disable-next-line no-console
+            console.error("[render] failed", err);
+            throw err;
+        }
 
-        // Find latest timestamp from all points for status display
-        const latestTs = (payload.items || [])
-            .flatMap((item) => item.points || [])
-            .map((point) => point.time)
-            .filter(Boolean)
-            .reduce((max, t) => Math.max(max, t), 0);
+        // Find latest timestamp from all points for status display.
+        // Avoid `flatMap`/`map` chains: some environments/polyfills can be surprisingly costly,
+        // and large data sets can trigger stack overflows in non-native implementations.
+        let latestTs = 0;
+        const items = payload?.items;
+        if (Array.isArray(items)) {
+            for (let i = 0; i < items.length; i += 1) {
+                const pts = items[i]?.points;
+                if (!Array.isArray(pts)) continue;
+                for (let j = 0; j < pts.length; j += 1) {
+                    const t = pts[j]?.time;
+                    if (typeof t === "number" && Number.isFinite(t) && t > latestTs) {
+                        latestTs = t;
+                    }
+                }
+            }
+        }
 
         const timeLabel = latestTs ? formatTime(latestTs, true) : formatTime(Date.now(), true);
         const ageMs = latestTs ? Date.now() - latestTs : 0;
         const stale = latestTs && ageMs > 60 * 30 * 1000;
         setStatus(stale ? "warn" : "ok", stale ? `Stale ${timeLabel}` : `Live ${timeLabel}`);
     } catch (error) {
-        setStatus("error", `Error: ${error.message}`);
+        const err = error instanceof Error ? error : new Error(String(error));
+        globalThis.__pmfLastRefreshError = { message: err.message, stack: err.stack || "" };
+        // eslint-disable-next-line no-console
+        console.error("[refresh] failed", err);
+        const stackLine = String(err.stack || "").split("\n").slice(0, 2).join(" · ");
+        const msg = err.message || "Unknown error";
+        setStatus("error", stackLine ? `Error: ${msg} (${stackLine})` : `Error: ${msg}`);
     }
 }
