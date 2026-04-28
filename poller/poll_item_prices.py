@@ -39,9 +39,6 @@ DEFAULT_INFERENCE_LISTINGS_FETCH_CAP = TRADE_SEARCH_RESULT_MAX
 DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
-RESALE_PRICE_STEPS: tuple[tuple[float | None, float], ...] = (
-    (None, 1.0),
-)
 PRICE_EPSILON = 1e-6
 CSV_HEADER: list[str] = []  # legacy (no longer written)
 
@@ -153,6 +150,89 @@ def load_inference_truncation_safe_margin_pct(storage: StorageService) -> float:
     if not math.isfinite(raw):
         raw = 6.0
     return max(0.0, min(50.0, float(raw)))
+
+
+@dataclass(frozen=True)
+class FlipConfig:
+    """
+    Config for whether a cheapest listing is "flip-worthy" enough to notify.
+
+    Note: this poller evaluates opportunities on mirror-equivalent prices.
+    """
+
+    min_profit_mirrors: float
+    misprice_override_enabled: bool
+    misprice_override_max_buy_divines: float
+    misprice_override_min_next_mirrors: float
+    always_notify_if_buy_currency_exalted: bool
+
+
+def load_flip_config(storage: StorageService) -> FlipConfig:
+    """
+    Config key: app_config.market.*
+
+    Primary (clearer) keys:
+    - notify_flip_min_profit_mirrors (default 1.0)
+    - notify_always_if_cheap_enabled (default True)
+    - notify_always_if_cheap_max_buy_divines (default 200.0)
+    - notify_always_if_cheap_if_next_price_at_least_mirrors (default 0.5)
+    - notify_always_if_buy_currency_exalted (default True)
+
+    Legacy keys (still supported for backward compatibility):
+    - flip_min_profit_mirrors
+    - flip_misprice_override_enabled
+    - flip_misprice_override_max_buy_divines
+    - flip_misprice_override_min_next_mirrors
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+    except Exception:
+        data = {}
+
+    def _f(key: str, default: float) -> float:
+        try:
+            v = float(data.get(key, default))
+        except Exception:
+            v = float(default)
+        if not math.isfinite(v):
+            v = float(default)
+        return v
+
+    def _b(key: str, default: bool) -> bool:
+        try:
+            return bool(data.get(key, default))
+        except Exception:
+            return bool(default)
+
+    def _f2(primary: str, legacy: str, default: float) -> float:
+        if primary in data:
+            return _f(primary, default)
+        return _f(legacy, default)
+
+    def _b2(primary: str, legacy: str, default: bool) -> bool:
+        if primary in data:
+            return _b(primary, default)
+        return _b(legacy, default)
+
+    min_profit = max(0.0, _f2("notify_flip_min_profit_mirrors", "flip_min_profit_mirrors", MIN_RESALE_PROFIT_MIRRORS))
+    override_enabled = _b2("notify_always_if_cheap_enabled", "flip_misprice_override_enabled", True)
+    max_buy_div = max(0.0, _f2("notify_always_if_cheap_max_buy_divines", "flip_misprice_override_max_buy_divines", 200.0))
+    min_next = max(
+        0.0,
+        _f2(
+            "notify_always_if_cheap_if_next_price_at_least_mirrors",
+            "flip_misprice_override_min_next_mirrors",
+            0.5,
+        ),
+    )
+    always_ex = _b("notify_always_if_buy_currency_exalted", True)
+    return FlipConfig(
+        min_profit_mirrors=float(min_profit),
+        misprice_override_enabled=bool(override_enabled),
+        misprice_override_max_buy_divines=float(max_buy_div),
+        misprice_override_min_next_mirrors=float(min_next),
+        always_notify_if_buy_currency_exalted=bool(always_ex),
+    )
 
 
 def load_trade_search_status_option(storage: StorageService) -> str:
@@ -1020,6 +1100,43 @@ def normalize_price_currency(price: dict[str, Any]) -> tuple[str, float] | None:
     return None
 
 
+def find_cheapest_supported_listing_price(
+    listings: list[dict[str, Any]],
+    *,
+    divines_per_mirror: float,
+) -> tuple[str, float, float] | None:
+    """
+    Return (currency, amount, mirror_equiv) for the cheapest listing among `listings`
+    where currency is one of: mirror|divine|exalted.
+    """
+    dpm = (
+        float(divines_per_mirror)
+        if isinstance(divines_per_mirror, (int, float))
+        and math.isfinite(float(divines_per_mirror))
+        and float(divines_per_mirror) > 0
+        else DIVINES_PER_MIRROR
+    )
+
+    best: tuple[str, float, float] | None = None
+    best_m: float | None = None
+    for entry in listings:
+        listing = entry.get("listing") if isinstance(entry, dict) else None
+        price = listing.get("price") if isinstance(listing, dict) else None
+        if not isinstance(price, dict):
+            continue
+        normalized = normalize_price_currency(price)
+        if normalized is None:
+            continue
+        currency, amount = normalized
+        mirror_equiv = to_mirror_equivalent(float(amount), str(currency), dpm)
+        if not (isinstance(mirror_equiv, (int, float)) and math.isfinite(float(mirror_equiv)) and mirror_equiv > 0):
+            continue
+        if best_m is None or mirror_equiv < best_m:
+            best_m = float(mirror_equiv)
+            best = (str(currency), float(amount), float(mirror_equiv))
+    return best
+
+
 def extract_listing_prices(listings: list[dict[str, Any]]) -> tuple[list[float], list[float], int]:
     mirror_prices: list[float] = []
     divine_prices: list[float] = []
@@ -1342,31 +1459,44 @@ def count_prices_within_band(prices: list[float], anchor: float, band_pct: float
     return sum(1 for price in prices if price <= ceiling)
 
 
-def find_best_relist_price(limit_price: float) -> float | None:
+def find_best_relist_price(limit_price: float, *, divines_per_mirror: float) -> float | None:
     """Return the highest allowed relist price that still undercuts the next live listing."""
     if limit_price <= 0:
         return None
 
-    best_price: float | None = None
     target_limit = limit_price - PRICE_EPSILON
+    if target_limit <= 0:
+        return None
 
-    for max_price, step in RESALE_PRICE_STEPS:
-        band_limit = target_limit if max_price is None else min(target_limit, max_price)
-        if band_limit <= 0:
-            continue
+    # For very high-priced items, a coarse mirror step is fine.
+    # For "around 1 mirror" markets, we need a fine step (effectively: 1 divine in mirror units)
+    # otherwise undercutting a "1 mirror" next listing yields 0 and blocks all flip notifications.
+    if limit_price >= 5.0:
+        step_mirrors = 1.0
+    else:
+        dpm = (
+            float(divines_per_mirror)
+            if isinstance(divines_per_mirror, (int, float))
+            and math.isfinite(float(divines_per_mirror))
+            and float(divines_per_mirror) > 0
+            else DIVINES_PER_MIRROR
+        )
+        step_mirrors = max(1.0 / dpm, 0.000001)
 
-        units = math.floor(band_limit / step)
-        candidate = round(units * step, 6)
-        if candidate <= 0 or candidate >= limit_price:
-            continue
-
-        if best_price is None or candidate > best_price:
-            best_price = candidate
-
-    return best_price
+    units = math.floor(target_limit / step_mirrors)
+    candidate = round(units * step_mirrors, 6)
+    if candidate <= 0 or candidate >= limit_price:
+        return None
+    return candidate
 
 
-def find_resale_opportunity(prices: list[float]) -> ResaleOpportunity | None:
+def find_resale_opportunity(
+    prices: list[float],
+    *,
+    divines_per_mirror: float,
+    cfg: FlipConfig,
+    cheapest_raw: tuple[str, float, float] | None = None,
+) -> ResaleOpportunity | None:
     """Check whether the cheapest listing can be flipped while staying cheapest on the live ladder."""
     sorted_prices = sorted(price for price in prices if price > 0)
     if len(sorted_prices) < 2:
@@ -1374,12 +1504,41 @@ def find_resale_opportunity(prices: list[float]) -> ResaleOpportunity | None:
 
     buy_price = sorted_prices[0]
     next_market_price = sorted_prices[1]
-    relist_price = find_best_relist_price(next_market_price)
+    relist_price = find_best_relist_price(next_market_price, divines_per_mirror=float(divines_per_mirror))
     if relist_price is None or relist_price <= buy_price + PRICE_EPSILON:
         return None
 
     expected_profit = relist_price - buy_price
-    if expected_profit + PRICE_EPSILON < MIN_RESALE_PROFIT_MIRRORS:
+    min_profit = float(cfg.min_profit_mirrors)
+
+    # Misprice override:
+    # If the market is mirror-tier but the cheapest ask is "a few ex / very low div", still notify.
+    override = False
+    if cfg.misprice_override_enabled:
+        dpm = (
+            float(divines_per_mirror)
+            if isinstance(divines_per_mirror, (int, float))
+            and math.isfinite(float(divines_per_mirror))
+            and float(divines_per_mirror) > 0
+            else DIVINES_PER_MIRROR
+        )
+        buy_divines = buy_price * dpm
+        if next_market_price >= float(cfg.misprice_override_min_next_mirrors) and buy_divines <= float(
+            cfg.misprice_override_max_buy_divines
+        ):
+            override = True
+
+    if (
+        not override
+        and cfg.always_notify_if_buy_currency_exalted
+        and cheapest_raw is not None
+        and str(cheapest_raw[0]) == "exalted"
+        and next_market_price >= float(cfg.misprice_override_min_next_mirrors)
+    ):
+        # Treat "listed in exalts" as a strong misprice signal; bypass the min-profit gate.
+        override = True
+
+    if not override and expected_profit + PRICE_EPSILON < min_profit:
         return None
 
     return ResaleOpportunity(
@@ -1731,7 +1890,13 @@ def run_cycle(
         mirror_prices = raw_mirror_prices + converted + divine_only_converted
 
         low_mirror, high_mirror, median_mirror = summarize_prices(mirror_prices)
-        resale_opportunity = find_resale_opportunity(mirror_prices)
+        cheapest_raw = find_cheapest_supported_listing_price(listings, divines_per_mirror=float(divines_per_mirror))
+        resale_opportunity = find_resale_opportunity(
+            mirror_prices,
+            divines_per_mirror=float(divines_per_mirror),
+            cfg=load_flip_config(storage),
+            cheapest_raw=cheapest_raw,
+        )
         used_results = len(mirror_prices)
 
         low_divine, high_divine, median_divine = summarize_prices(divine_only_converted)
@@ -1842,7 +2007,7 @@ def run_cycle(
                         pct_drop >= required_drop_pct
                         and alert_config.webhook_url
                         and meets_floor_depth
-                        and (baseline <= 2.0 or resale_opportunity is not None)
+                        and resale_opportunity is not None
                     ):
                         last_alert = alert_state.get(item_key)
                         suppress_for_cooldown = False
