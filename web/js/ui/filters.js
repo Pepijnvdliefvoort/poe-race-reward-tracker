@@ -22,6 +22,13 @@ export function getFilteredAndSortedItems(items) {
     // Apply price range filter
     if (isPriceRangeActive()) {
         filtered = filtered.filter((item) => {
+            // Always keep the next item in the poll cycle so the UI can show the
+            // green "next in line" border even when the item has 0 live listings
+            // (it may still have a carried-forward last-known price that would
+            // otherwise be filtered out by the range).
+            if (item.itemName === state.nextInLineItemName) {
+                return true;
+            }
             const price = getAvailableLowestPrice(item);
             if (price == null) {
                 // Keep "no data" items out of price-range filtering, except when they are
