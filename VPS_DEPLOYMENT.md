@@ -145,6 +145,7 @@ This repo includes:
 	- `VPS_SSH_KEY` = private SSH key content for that VPS user
 	- `DISCORD_WEBHOOK_URL` = your Discord webhook URL for price alerts
 	- `DISCORD_WEBHOOK_URL_SALES` (optional) = separate webhook for estimated-sale signal updates
+	- `DISCORD_WEBHOOK_URL_DB_EXPORT` (optional) = webhook used by the admin “Export DB” action
 
 ### Generate an SSH key for deploy (if you do not already have one)
 
@@ -165,7 +166,7 @@ Paste the contents of `vps_deploy_key` (private key) into `VPS_SSH_KEY` in GitHu
 ### How it works
 
 - On every push to `main` or `master`, GitHub Actions connects to your VPS over SSH.
-- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL_SALES` (if provided), restarts services, and reloads Caddy.
+	- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL_SALES` / `DISCORD_WEBHOOK_URL_DB_EXPORT` (if provided), restarts services, and reloads Caddy.
 
 `config.json` is intentionally untracked. Keep a server-local copy at `/opt/poe-market-flips/config.json` (for example by copying `config.example.json` once and editing values).
 
@@ -181,7 +182,7 @@ cp /tmp/poe-config.json.backup config.json
 
 Webhook secret notes:
 
-- If `DISCORD_WEBHOOK_URL` or `DISCORD_WEBHOOK_URL_SALES` is present in GitHub Secrets, it is synced on each deploy.
+- If `DISCORD_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL_SALES`, or `DISCORD_WEBHOOK_URL_DB_EXPORT` is present in GitHub Secrets, it is synced on each deploy.
 - If a value is missing, deploy keeps any existing matching line in `/etc/poe-market-flips/secrets.env` unchanged.
 
 ### First test

@@ -137,6 +137,10 @@ Optional separate webhook when inferred estimated sales change on a poll (confir
 
 - `DISCORD_WEBHOOK_URL_SALES`
 
+Optional separate webhook for the admin DB export button:
+
+- `DISCORD_WEBHOOK_URL_DB_EXPORT`
+
 Optional `app_config.market` key `sales_discord_window_days` (default `90`) sets the rolling window for the total in that message (sum of per-poll signals, same idea as the chart est. sold line).
 
 ## Notes
