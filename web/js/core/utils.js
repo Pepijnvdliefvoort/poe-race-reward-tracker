@@ -9,6 +9,21 @@ export function formatNumber(value) {
 }
 
 /**
+ * Mirror-friendly formatting:
+ * - >= 2 mirrors: whole numbers (no decimals)
+ * - < 2 mirrors: up to 2 decimals (trim trailing .00)
+ */
+export function formatMirror(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "n/a";
+  }
+  if (Math.abs(value) >= 5) {
+    return value.toFixed(0);
+  }
+  return value.toFixed(2).replace(/\.00$/, "");
+}
+
+/**
  * Format Unix epoch milliseconds (UTC-based) to local time string.
  * Input: epoch milliseconds from backend (always UTC-based)
  * Output: formatted time string in browser's local timezone via toLocaleTimeString()

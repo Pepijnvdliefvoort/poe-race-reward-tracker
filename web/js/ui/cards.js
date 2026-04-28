@@ -14,7 +14,8 @@ import {
   getDisplayLowestMirror,
   isShowingLastKnownMirrorPrice,
 } from "../domain/pricing.js";
-import { formatNumber, formatTime, getChartSeriesWithPrediction } from "../core/utils.js";
+import { getTrendDirection, getTrendPercentage } from "../domain/trends.js";
+import { formatMirror, formatNumber, formatTime, getChartSeriesWithPrediction } from "../core/utils.js";
 import { stopListingsPopover, wireListingsPopover } from "../cards/listingsPopover.js";
 import {
     applyPendingSalesChartUpdate,
@@ -176,7 +177,7 @@ function createChart(canvas) {
               }
 
               const tag = ctx.datasetIndex === 1 ? "Pred" : "Price";
-              return `${tag}: ${Math.round(y)} mirrors`;
+              return `${tag}: ${formatMirror(y)} mirror${Math.abs(y) === 1 ? "" : "s"}`;
             },
           },
           enabled: true,
@@ -531,7 +532,6 @@ export function updateCard(item, onFavoriteToggle) {
   const rawPoints = (item.points || []).filter((p) => p.time >= cutoff);
   const { actual, predicted } = getChartSeriesWithPrediction(rawPoints, MAX_ACTUAL_POINTS, PREDICTION_POINTS);
   const chartPoints = [...actual, ...predicted];
-  const sparkValues = actual.map((p) => p.y);
 
   card.classList.toggle("next-in-line", item.itemName === state.nextInLineItemName);
   const isFavorited = state.favoriteItems.has(item.itemName);
@@ -547,15 +547,15 @@ export function updateCard(item, onFavoriteToggle) {
   const totalCount = chartPoints.length;
   const actualSeries = new Array(totalCount).fill(null);
   for (let i = 0; i < actualCount; i += 1) {
-    actualSeries[i] = actual[i].y != null ? Math.round(actual[i].y) : null;
+    actualSeries[i] = actual[i].y != null ? actual[i].y : null;
   }
 
   const predictionSeries = new Array(totalCount).fill(null);
   if (predicted.length > 0 && actualCount > 0) {
     const lastActualIndex = actualCount - 1;
-    predictionSeries[lastActualIndex] = actual[lastActualIndex].y != null ? Math.round(actual[lastActualIndex].y) : null;
+    predictionSeries[lastActualIndex] = actual[lastActualIndex].y != null ? actual[lastActualIndex].y : null;
     for (let j = 0; j < predicted.length; j += 1) {
-      predictionSeries[actualCount + j] = predicted[j].y != null ? Math.round(predicted[j].y) : null;
+      predictionSeries[actualCount + j] = predicted[j].y != null ? predicted[j].y : null;
     }
   }
 
@@ -615,9 +615,9 @@ export function updateCard(item, onFavoriteToggle) {
   const staleSuffix = priceIsLastKnown ? "" : "";
   const priceText =
     low != null && high != null
-      ? `Prices: ${formatNumber(low)} to ${formatNumber(high)} mirror${staleSuffix}`
+      ? `Prices: ${formatMirror(low)} to ${formatMirror(high)} mirror${staleSuffix}`
       : low != null
-        ? `Price: ${formatNumber(low)} mirror${staleSuffix}`
+        ? `Price: ${formatMirror(low)} mirror${staleSuffix}`
         : "Price: n/a";
   priceBox.textContent = priceText;
 
@@ -635,22 +635,18 @@ export function updateCard(item, onFavoriteToggle) {
   let trendSymbol = "-";
   let trendClass = "flat";
   let trendPercentage = "";
-  const valid = sparkValues.filter((v) => v != null && !Number.isNaN(v)).map((v) => Math.round(v));
-  if (valid.length >= 2) {
-    const first = valid[0];
-    const last = valid[valid.length - 1];
-    const percentageChange = ((last - first) / first) * 100;
-    const roundedPercentage = Math.round(percentageChange);
-    if (Math.abs(roundedPercentage) >= 1) {
-      trendPercentage = `${roundedPercentage >= 0 ? "+" : ""}${roundedPercentage}% `;
-    }
-    if (last > first) {
-      trendSymbol = "▲";
-      trendClass = "up";
-    } else if (last < first) {
-      trendSymbol = "▼";
-      trendClass = "down";
-    }
+  const pct = getTrendPercentage(item);
+  const roundedPct = Math.round(pct);
+  const direction = getTrendDirection(item);
+  if (Math.abs(roundedPct) >= 1) {
+    trendPercentage = `${roundedPct >= 0 ? "+" : ""}${roundedPct}% `;
+  }
+  if (direction === "up") {
+    trendSymbol = "▲";
+    trendClass = "up";
+  } else if (direction === "down") {
+    trendSymbol = "▼";
+    trendClass = "down";
   }
 
   trend.className = `trend ${trendClass}`;

@@ -334,7 +334,7 @@ async function fetchListingsPreview(queryId) {
     Number.isFinite(cached.fetchedAt) &&
     Date.now() - cached.fetchedAt < LISTINGS_PREVIEW_CACHE_TTL_MS
   ) {
-    return cached.payload ?? null;
+    return cached?.payload ?? null;
   }
 
   if (listingsPreviewInFlight.has(queryId)) {
@@ -349,6 +349,9 @@ async function fetchListingsPreview(queryId) {
       return response.json();
     })
     .then((payload) => {
+      if (!payload || typeof payload !== "object") {
+        return null;
+      }
       const source = typeof payload?.source === "string" ? payload.source : "";
       const isRetryableMiss = source === "cache-miss" || source === "cache-not-found" || source === "cache-read-error";
       if (!isRetryableMiss) {
