@@ -1,13 +1,23 @@
 {
-  "alert_cooldown_cycles": 5,
-  "alert_enabled": true,
-  "alert_floor_band_pct": 6,
-  "alert_history_cycles": 3,
-  "alert_low_liquidity_extra_drop_pct": 22,
+  "alert_enabled": false,
+  "alert_threshold_pct": 30.0,
+  "alert_history_cycles": 10,
+  "alert_min_total_results": 10,
   "alert_min_floor_listings": 2,
-  "alert_min_total_results": 8,
-  "alert_threshold_pct": 28,
+  "alert_floor_band_pct": 7.5,
+  "alert_low_liquidity_extra_drop_pct": 20.0,
+  "alert_cooldown_cycles": 6,
+
   "inference_listings_fetch_cap": 100,
-  "inference_truncation_safe_margin_pct": 6,
+  "inference_truncation_safe_margin_pct": 6.0,
+  "inference_sale_baseline_history_cycles": 10,
+  "inference_sale_unlist_if_above_baseline_pct": 30.0,
+
+  "notify_flip_min_profit_mirrors": 1.0,
+  "notify_always_if_cheap_enabled": true,
+  "notify_always_if_cheap_max_buy_divines": 10.0,
+  "notify_always_if_cheap_if_next_price_at_least_mirrors": 1.0,
+  "notify_always_if_buy_currency_exalted": true,
+
   "sales_discord_window_days": 90
 }

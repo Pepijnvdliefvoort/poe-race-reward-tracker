@@ -271,6 +271,31 @@ def _as_float(x: Any) -> float | None:
     return None
 
 
+def _priced_too_high_vs_baseline(
+    mirror_equiv: Any,
+    *,
+    baseline_mirror: float | None,
+    max_above_baseline_pct: float,
+) -> bool:
+    """
+    Guardrail: a vanished listing priced far above baseline is more likely an unlisting
+    than a "someone bought it", because buyers usually take the cheapest listing.
+    """
+    if baseline_mirror is None:
+        return False
+    base = float(baseline_mirror)
+    if not math.isfinite(base) or base <= 0:
+        return False
+    m = _as_float(mirror_equiv)
+    if m is None or m <= 0:
+        return False
+    pct = float(max_above_baseline_pct)
+    if not math.isfinite(pct):
+        pct = 0.0
+    pct = max(0.0, pct)
+    return m > base * (1.0 + (pct / 100.0))
+
+
 def safe_to_infer_vanish(
     mirror_equiv: Any,
     *,
@@ -368,6 +393,8 @@ def evaluate_listing_transition(
     pending_instant: list[dict[str, Any]],
     pending_online: list[dict[str, Any]] | None = None,
     seller_online_probe: dict[str, bool] | None = None,
+    baseline_mirror: float | None = None,
+    sale_max_above_baseline_pct: float = 30.0,
     snapshot_truncated: bool = False,
     truncation_cutoff_mirror: float | None = None,
     truncation_safe_margin_pct: float = 6.0,
@@ -468,19 +495,39 @@ def evaluate_listing_transition(
                     truncation_cutoff_mirror=truncation_cutoff_mirror,
                     truncation_safe_margin_pct=truncation_safe_margin_pct,
                 ):
-                    result.likely_instant_sale += 1
-                    events.append(
-                        {
-                            "rule": "likely_instant_sale",
-                            "itemKey": item_key,
-                            "fingerprint": fp,
-                            "seller": seller,
-                            "mirrorEquiv": mirror_eq,
-                            "priceAmount": price_amount,
-                            "priceCurrency": price_currency,
-                            "cycle": cycle,
-                        }
-                    )
+                    if _priced_too_high_vs_baseline(
+                        mirror_eq,
+                        baseline_mirror=baseline_mirror,
+                        max_above_baseline_pct=sale_max_above_baseline_pct,
+                    ):
+                        events.append(
+                            {
+                                "rule": "unlisted_above_baseline",
+                                "itemKey": item_key,
+                                "fingerprint": fp,
+                                "seller": seller,
+                                "mirrorEquiv": mirror_eq,
+                                "priceAmount": price_amount,
+                                "priceCurrency": price_currency,
+                                "baselineMirror": baseline_mirror,
+                                "maxAboveBaselinePct": sale_max_above_baseline_pct,
+                                "cycle": cycle,
+                            }
+                        )
+                    else:
+                        result.likely_instant_sale += 1
+                        events.append(
+                            {
+                                "rule": "likely_instant_sale",
+                                "itemKey": item_key,
+                                "fingerprint": fp,
+                                "seller": seller,
+                                "mirrorEquiv": mirror_eq,
+                                "priceAmount": price_amount,
+                                "priceCurrency": price_currency,
+                                "cycle": cycle,
+                            }
+                        )
             continue
         new_pending_instant.append(pend)
 
@@ -549,29 +596,50 @@ def evaluate_listing_transition(
             else:
                 was_online = bool(meta.get("sellerOnline"))
             if was_online:
-                result.likely_non_instant_online += 1
-                events.append(
-                    {
-                        "rule": "likely_non_instant_online_sale",
-                        "itemKey": item_key,
-                        "fingerprint": fp,
-                        "seller": seller,
-                        "mirrorEquiv": mirror_eq,
-                        "priceAmount": price_amount,
-                        "priceCurrency": price_currency,
-                        "cycle": cycle,
-                    }
-                )
-                new_pending_online.append(
-                    {
-                        "fingerprint": fp,
-                        "seller": seller,
-                        "removed_cycle": cycle,
-                        "mirrorEquiv": mirror_eq,
-                        "priceAmount": price_amount,
-                        "priceCurrency": price_currency,
-                    }
-                )
+                if _priced_too_high_vs_baseline(
+                    mirror_eq,
+                    baseline_mirror=baseline_mirror,
+                    max_above_baseline_pct=sale_max_above_baseline_pct,
+                ):
+                    result.non_instant_removed += 1
+                    events.append(
+                        {
+                            "rule": "unlisted_above_baseline",
+                            "itemKey": item_key,
+                            "fingerprint": fp,
+                            "seller": seller,
+                            "mirrorEquiv": mirror_eq,
+                            "priceAmount": price_amount,
+                            "priceCurrency": price_currency,
+                            "baselineMirror": baseline_mirror,
+                            "maxAboveBaselinePct": sale_max_above_baseline_pct,
+                            "cycle": cycle,
+                        }
+                    )
+                else:
+                    result.likely_non_instant_online += 1
+                    events.append(
+                        {
+                            "rule": "likely_non_instant_online_sale",
+                            "itemKey": item_key,
+                            "fingerprint": fp,
+                            "seller": seller,
+                            "mirrorEquiv": mirror_eq,
+                            "priceAmount": price_amount,
+                            "priceCurrency": price_currency,
+                            "cycle": cycle,
+                        }
+                    )
+                    new_pending_online.append(
+                        {
+                            "fingerprint": fp,
+                            "seller": seller,
+                            "removed_cycle": cycle,
+                            "mirrorEquiv": mirror_eq,
+                            "priceAmount": price_amount,
+                            "priceCurrency": price_currency,
+                        }
+                    )
             else:
                 result.non_instant_removed += 1
                 events.append(
@@ -588,42 +656,62 @@ def evaluate_listing_transition(
                 )
             continue
 
-        result.likely_instant_sale += 1
-        events.append(
-            {
-                "rule": "likely_instant_sale",
-                "itemKey": item_key,
-                "fingerprint": fp,
-                "seller": seller,
-                "mirrorEquiv": mirror_eq,
-                "priceAmount": price_amount,
-                "priceCurrency": price_currency,
-                "cycle": cycle,
-            }
-        )
-        new_pending_instant.append(
-            {
-                "fingerprint": fp,
-                "seller": seller,
-                "removed_cycle": cycle,
-                "countedImmediate": True,
-                "mirrorEquiv": mirror_eq,
-                "priceAmount": price_amount,
-                "priceCurrency": price_currency,
-            }
-        )
-        events.append(
-            {
-                "rule": "instant_listing_removed_pending",
-                "itemKey": item_key,
-                "fingerprint": fp,
-                "seller": seller,
-                "mirrorEquiv": mirror_eq,
-                "priceAmount": price_amount,
-                "priceCurrency": price_currency,
-                "cycle": cycle,
-            }
-        )
+        if _priced_too_high_vs_baseline(
+            mirror_eq,
+            baseline_mirror=baseline_mirror,
+            max_above_baseline_pct=sale_max_above_baseline_pct,
+        ):
+            events.append(
+                {
+                    "rule": "unlisted_above_baseline",
+                    "itemKey": item_key,
+                    "fingerprint": fp,
+                    "seller": seller,
+                    "mirrorEquiv": mirror_eq,
+                    "priceAmount": price_amount,
+                    "priceCurrency": price_currency,
+                    "baselineMirror": baseline_mirror,
+                    "maxAboveBaselinePct": sale_max_above_baseline_pct,
+                    "cycle": cycle,
+                }
+            )
+        else:
+            result.likely_instant_sale += 1
+            events.append(
+                {
+                    "rule": "likely_instant_sale",
+                    "itemKey": item_key,
+                    "fingerprint": fp,
+                    "seller": seller,
+                    "mirrorEquiv": mirror_eq,
+                    "priceAmount": price_amount,
+                    "priceCurrency": price_currency,
+                    "cycle": cycle,
+                }
+            )
+            new_pending_instant.append(
+                {
+                    "fingerprint": fp,
+                    "seller": seller,
+                    "removed_cycle": cycle,
+                    "countedImmediate": True,
+                    "mirrorEquiv": mirror_eq,
+                    "priceAmount": price_amount,
+                    "priceCurrency": price_currency,
+                }
+            )
+            events.append(
+                {
+                    "rule": "instant_listing_removed_pending",
+                    "itemKey": item_key,
+                    "fingerprint": fp,
+                    "seller": seller,
+                    "mirrorEquiv": mirror_eq,
+                    "priceAmount": price_amount,
+                    "priceCurrency": price_currency,
+                    "cycle": cycle,
+                }
+            )
 
     # --- Rule 5: same listing identity, price moved (reprice / note change) ---
     for fp, seller in prev_keys & curr_keys:
@@ -734,6 +822,8 @@ def run_inference_for_item(
         pending_instant=pending,
         pending_online=pending_online,
         seller_online_probe=None,
+        baseline_mirror=None,
+        sale_max_above_baseline_pct=30.0,
         snapshot_truncated=False,
         truncation_cutoff_mirror=None,
     )

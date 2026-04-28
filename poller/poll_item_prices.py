@@ -15,6 +15,7 @@ import requests
 
 from .sale_inference_engine import (
     evaluate_listing_transition,
+    fingerprint_trade_item,
     listing_signals_from_fetch,
     non_instant_vanished_seller_accounts_for_online_probe,
 )
@@ -152,6 +153,38 @@ def load_inference_truncation_safe_margin_pct(storage: StorageService) -> float:
     return max(0.0, min(50.0, float(raw)))
 
 
+def load_inference_sale_baseline_history_cycles(storage: StorageService) -> int:
+    """
+    How many past per-cycle median prices (mirror-equivalent) to use as the "baseline"
+    for sale-vs-unlisting inference.
+
+    Config key: app_config.market.inference_sale_baseline_history_cycles (default 10)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = int(float(data.get("inference_sale_baseline_history_cycles", 10)))
+    except Exception:
+        raw = 10
+    return max(1, min(200, int(raw)))
+
+
+def load_inference_sale_unlist_if_above_baseline_pct(storage: StorageService) -> float:
+    """
+    If a vanished listing was priced more than this percent above baseline, treat it
+    as an unlisting rather than an inferred sale.
+
+    Config key: app_config.market.inference_sale_unlist_if_above_baseline_pct (default 30.0)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = float(data.get("inference_sale_unlist_if_above_baseline_pct", 30.0))
+    except Exception:
+        raw = 30.0
+    if not math.isfinite(raw):
+        raw = 30.0
+    return max(0.0, min(1000.0, float(raw)))
+
+
 @dataclass(frozen=True)
 class FlipConfig:
     """
@@ -174,8 +207,8 @@ def load_flip_config(storage: StorageService) -> FlipConfig:
     Primary (clearer) keys:
     - notify_flip_min_profit_mirrors (default 1.0)
     - notify_always_if_cheap_enabled (default True)
-    - notify_always_if_cheap_max_buy_divines (default 200.0)
-    - notify_always_if_cheap_if_next_price_at_least_mirrors (default 0.5)
+    - notify_always_if_cheap_max_buy_divines (default 10.0)
+    - notify_always_if_cheap_if_next_price_at_least_mirrors (default 1.0)
     - notify_always_if_buy_currency_exalted (default True)
 
     Legacy keys (still supported for backward compatibility):
@@ -216,13 +249,13 @@ def load_flip_config(storage: StorageService) -> FlipConfig:
 
     min_profit = max(0.0, _f2("notify_flip_min_profit_mirrors", "flip_min_profit_mirrors", MIN_RESALE_PROFIT_MIRRORS))
     override_enabled = _b2("notify_always_if_cheap_enabled", "flip_misprice_override_enabled", True)
-    max_buy_div = max(0.0, _f2("notify_always_if_cheap_max_buy_divines", "flip_misprice_override_max_buy_divines", 200.0))
+    max_buy_div = max(0.0, _f2("notify_always_if_cheap_max_buy_divines", "flip_misprice_override_max_buy_divines", 10.0))
     min_next = max(
         0.0,
         _f2(
             "notify_always_if_cheap_if_next_price_at_least_mirrors",
             "flip_misprice_override_min_next_mirrors",
-            0.5,
+            1.0,
         ),
     )
     always_ex = _b("notify_always_if_buy_currency_exalted", True)
@@ -1038,6 +1071,32 @@ def fetch_top_listings(
     return _fetch_listing_entries_batched(session, rate_limiter, query_id, top_ids)
 
 
+def _dedupe_listings_for_display(listings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Best-effort dedupe when we merge multiple fetches (regular ladder + divines-only fallback).
+    Trade fetch payloads don't always include a stable ID, so we use a conservative key.
+    """
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for entry in listings or []:
+        if not isinstance(entry, dict):
+            continue
+        listing = entry.get("listing") if isinstance(entry.get("listing"), dict) else {}
+        price = listing.get("price") if isinstance(listing.get("price"), dict) else {}
+        norm = normalize_price_currency(price) if isinstance(price, dict) else None
+        if norm is None:
+            continue
+        cur, amt = norm
+        indexed = listing.get("indexed") if isinstance(listing.get("indexed"), str) else ""
+        seller = extract_listing_seller_name(entry)
+        key = (str(seller), f"{cur}:{float(amt):.6f}", str(indexed))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(entry)
+    return out
+
+
 def fetch_listings_for_inference(
     session: requests.Session,
     rate_limiter: AdaptiveRateLimiter,
@@ -1276,12 +1335,40 @@ def _format_listing_preview_price(price: dict[str, Any] | None) -> tuple[str, fl
 
 def build_listing_preview_entries(
     listings: list[dict[str, Any]],
+    divines_per_mirror: float,
     max_entries: int | None = None,
 ) -> list[dict[str, Any]]:
     preview_rows: list[dict[str, Any]] = []
 
-    for entry in listings:
-        if max_entries is not None and len(preview_rows) >= max_entries:
+    dpm = (
+        float(divines_per_mirror)
+        if isinstance(divines_per_mirror, (int, float))
+        and math.isfinite(float(divines_per_mirror))
+        and float(divines_per_mirror) > 0
+        else DIVINES_PER_MIRROR
+    )
+
+    # Normalize + compute comparable value so mixed currencies can be sorted correctly.
+    enriched: list[tuple[float, int, dict[str, Any]]] = []
+    for idx, entry in enumerate(listings or []):
+        if not isinstance(entry, dict):
+            continue
+        listing = entry.get("listing") if isinstance(entry.get("listing"), dict) else None
+        price = listing.get("price") if isinstance(listing, dict) and isinstance(listing.get("price"), dict) else None
+        normalized = normalize_price_currency(price) if isinstance(price, dict) else None
+        if normalized is None:
+            continue
+        currency, amount = normalized
+        mirror_equiv = to_mirror_equivalent(float(amount), str(currency), dpm)
+        if not (isinstance(mirror_equiv, (int, float)) and math.isfinite(float(mirror_equiv)) and mirror_equiv > 0):
+            continue
+        enriched.append((float(mirror_equiv), int(idx), entry))
+
+    # Sort by real value; keep fetch order as a tie-breaker.
+    enriched.sort(key=lambda t: (t[0], t[1]))
+
+    for _m, _idx, entry in enriched:
+        if max_entries is not None and len(preview_rows) >= int(max_entries):
             break
 
         listing = entry.get("listing") if isinstance(entry, dict) else None
@@ -1297,6 +1384,9 @@ def build_listing_preview_entries(
 
         indexed = listing.get("indexed") if isinstance(listing.get("indexed"), str) else None
 
+        item_data = entry.get("item") if isinstance(entry.get("item"), dict) else None
+        fp = fingerprint_trade_item(item_data)
+
         preview_rows.append(
             {
                 "priceText": price_text,
@@ -1306,6 +1396,7 @@ def build_listing_preview_entries(
                 "sellerName": extract_listing_seller_name(entry),
                 "posted": extract_listing_posted_time(entry),
                 "indexed": indexed,
+                "fingerprint": fp,
             }
         )
 
@@ -1367,7 +1458,16 @@ def build_top_listing_summary(
 ) -> str | None:
     summary_lines: list[str] = []
 
-    for entry in listings:
+    dpm = (
+        float(divines_per_mirror)
+        if isinstance(divines_per_mirror, (int, float))
+        and math.isfinite(float(divines_per_mirror))
+        and float(divines_per_mirror) > 0
+        else DIVINES_PER_MIRROR
+    )
+
+    enriched: list[tuple[float, int, dict[str, Any], str, float]] = []
+    for idx, entry in enumerate(listings or []):
         listing = entry.get("listing") if isinstance(entry, dict) else None
         price = listing.get("price") if isinstance(listing, dict) else None
         if not isinstance(price, dict):
@@ -1378,6 +1478,14 @@ def build_top_listing_summary(
             continue
 
         currency, amount = normalized
+        mirror_equiv = to_mirror_equivalent(float(amount), str(currency), dpm)
+        if not (isinstance(mirror_equiv, (int, float)) and math.isfinite(float(mirror_equiv)) and mirror_equiv > 0):
+            continue
+        enriched.append((float(mirror_equiv), int(idx), entry, str(currency), float(amount)))
+
+    enriched.sort(key=lambda t: (t[0], t[1]))
+
+    for _m, _idx, entry, currency, amount in enriched:
         seller_name = extract_listing_seller_name(entry)
         posted_time = extract_listing_posted_time(entry)
         price_text = format_listing_summary_price(currency, amount, divines_per_mirror)
@@ -1797,13 +1905,8 @@ def run_cycle(
             result_ids,
             cap=effective_inference_cap,
         )
-        cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
-        top_listing_summary = build_top_listing_summary(listings, divines_per_mirror)
-        listing_preview_rows = build_listing_preview_entries(listings)
         inference_signals = listing_signals_from_fetch(listings_inference, divines_per_mirror)
-        for idx, row in enumerate(listing_preview_rows):
-            if idx < len(inference_signals):
-                row["fingerprint"] = inference_signals[idx]["fingerprint"]
+        cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
 
         prev_signals, pending_inst, pending_on = ([], [], [])
         if variant_id:
@@ -1836,6 +1939,15 @@ def run_cycle(
             if online_guess is not None:
                 seller_online_probe[acct] = online_guess
 
+        baseline_mirror_for_inference: float | None = None
+        if price_history is not None:
+            hist = price_history.get(item_key) or []
+            if isinstance(hist, list):
+                lookback = load_inference_sale_baseline_history_cycles(storage)
+                window = [float(x) for x in hist[-lookback:] if isinstance(x, (int, float)) and math.isfinite(float(x)) and float(x) > 0]
+                if window:
+                    baseline_mirror_for_inference = float(statistics.median(window))
+
         inf, new_pending_inst, new_pending_on, curr_signals = evaluate_listing_transition(
             item_key=item_key,
             cycle=cycle,
@@ -1844,6 +1956,8 @@ def run_cycle(
             pending_instant=pending_inst,
             pending_online=pending_on,
             seller_online_probe=seller_online_probe,
+            baseline_mirror=baseline_mirror_for_inference,
+            sale_max_above_baseline_pct=load_inference_sale_unlist_if_above_baseline_pct(storage),
             snapshot_truncated=snap_trunc,
             truncation_cutoff_mirror=trunc_cutoff,
             truncation_safe_margin_pct=float(truncation_margin_pct),
@@ -1870,6 +1984,7 @@ def run_cycle(
         # divine-priced listings due to the site's internal conversion rate. In that case, run an
         # additional search restricted to divines-only, then convert those prices into mirrors.
         divine_only_converted: list[float] = []
+        divine_only_listings: list[dict[str, Any]] = []
         first_price = find_first_priced_listing(listings)
         if first_price is not None:
             first_currency, first_amount = first_price
@@ -1881,11 +1996,17 @@ def run_cycle(
                     price_currency="divine",
                     status_option_override=status_override,
                 )
-                divine_only_listings = fetch_top_listings(
-                    session, rate_limiter, divine_query_id, divine_only_ids
-                )
+                divine_only_listings = fetch_top_listings(session, rate_limiter, divine_query_id, divine_only_ids)
                 _, divine_only_prices_raw, _ = extract_listing_prices(divine_only_listings)
                 divine_only_converted = [p / divines_per_mirror for p in divine_only_prices_raw]
+
+        listings_for_display = _dedupe_listings_for_display(listings + divine_only_listings)
+        top_listing_summary = build_top_listing_summary(listings_for_display, divines_per_mirror)
+        listing_preview_rows = build_listing_preview_entries(
+            listings_for_display,
+            divines_per_mirror=float(divines_per_mirror),
+            max_entries=TOP_IDS_LIMIT,
+        )
 
         mirror_prices = raw_mirror_prices + converted + divine_only_converted
 
@@ -2153,6 +2274,28 @@ def main() -> None:
             "warn",
             "Alerts are enabled but no Discord webhook secret is set. "
             "Set DISCORD_WEBHOOK_URL (or POE_DISCORD_WEBHOOK_URL).",
+        )
+
+    # Other optional Discord webhooks (warn once at startup if missing).
+    sales_webhook_url, sales_webhook_dedicated = load_discord_sales_webhook_url_from_env()
+    if not sales_webhook_url:
+        log_line(
+            "warn",
+            "Estimated-sales Discord notifications are disabled (no webhook secret set). "
+            "Set DISCORD_WEBHOOK_URL_SALES (preferred) or DISCORD_WEBHOOK_URL / POE_DISCORD_WEBHOOK_URL.",
+        )
+    elif not sales_webhook_dedicated:
+        log_line(
+            "warn",
+            "DISCORD_WEBHOOK_URL_SALES is not set; estimated-sales notifications will use the main alert webhook. "
+            "Set DISCORD_WEBHOOK_URL_SALES for a separate channel.",
+        )
+
+    if not load_discord_db_export_webhook_url_from_env():
+        log_line(
+            "warn",
+            "DB export uploads are disabled (no webhook secret set). "
+            "Set DISCORD_WEBHOOK_URL_DB_EXPORT (or POE_DISCORD_WEBHOOK_URL_DB_EXPORT).",
         )
 
     while cfg.max_cycles is None or cycles_done < cfg.max_cycles:
