@@ -209,8 +209,18 @@ function linearFitSlope(points) {
   return (n * sumTY - sumT * sumY) / denom; // mirrors per hour
 }
 
+function quantizeMirrorForChart(value) {
+  // Keep chart values consistent with `formatMirror()`:
+  // - >= 5 mirrors: whole numbers
+  // - < 5 mirrors: keep up to 2 decimals
+  if (value == null || Number.isNaN(value)) return null;
+  if (Math.abs(value) >= 5) return Math.round(value);
+  return Math.round(value * 100) / 100;
+}
+
 export function getChartSeriesWithPrediction(points, maxActualPoints, predictionPoints = 1) {
-  const actual = getCondensedChartPoints(points, maxActualPoints);
+  const actualRaw = getCondensedChartPoints(points, maxActualPoints);
+  const actual = actualRaw.map((p) => ({ x: p.x, y: quantizeMirrorForChart(p.y) }));
   if (!actual.length || predictionPoints <= 0) {
     return { actual, predicted: [] };
   }
@@ -224,8 +234,8 @@ export function getChartSeriesWithPrediction(points, maxActualPoints, prediction
   const predicted = [];
   for (let i = 1; i <= predictionPoints; i += 1) {
     const x = last.x + stepMs * i;
-    const y = Math.max(0, last.y + slopePerHour * stepHours * i);
-    predicted.push({ x, y });
+    const yRaw = Math.max(0, last.y + slopePerHour * stepHours * i);
+    predicted.push({ x, y: quantizeMirrorForChart(yRaw) });
   }
 
   return { actual, predicted };

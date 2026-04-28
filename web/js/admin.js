@@ -1689,6 +1689,42 @@ function setupDbDownload() {
   });
 }
 
+function setupRunDbExport() {
+  const btn = document.getElementById("runDbExportBtn");
+  const hint = document.getElementById("adminDataHint");
+  if (!btn) return;
+
+  const setHint = (text, isWarn = false) => {
+    if (!hint) return;
+    hint.textContent = text || "";
+    hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  btn.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "Run the DB export/backup now?\n\nThis will snapshot the SQLite DB and upload it to the configured Discord webhook.\n\nContinue?",
+    );
+    if (!ok) return;
+
+    btn.disabled = true;
+    setHint("Running DB export…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/run-db-export", { method: "POST" });
+      if (!payload?.ok) {
+        setHint(payload?.error ? `DB export: ${payload.error}` : "DB export failed.", true);
+        return;
+      }
+      const name = payload?.file || "export";
+      const sizeMiB = payload?.sizeMiB;
+      setHint(sizeMiB != null ? `DB export uploaded: ${name} (${sizeMiB} MiB).` : `DB export uploaded: ${name}.`);
+    } catch (e) {
+      setHint(adminEndpointErrorMessage(e, "DB export"), true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 function setupClearData() {
   const btn = document.getElementById("clearDataBtn");
   const hint = document.getElementById("adminDataHint");
@@ -2322,6 +2358,7 @@ function setupMapResize() {
 function main() {
   setupCsvDownload();
   setupDbDownload();
+  setupRunDbExport();
   setupClearData();
   setupDeleteSalesTool();
   setupMarketConfigEditor();

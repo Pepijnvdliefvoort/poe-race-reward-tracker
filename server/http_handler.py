@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import requests
 from html import escape
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -42,8 +43,10 @@ from .db_admin_service import db_overview, er_schema, list_tables, preview_table
 from .recommendation_service import RecommendationInputError, recommend_investments
 
 from storage.db import Database
+from storage.service import StorageService
 from .stats_service import system_stats_payload
 from server.storage_service import ServerStorage
+from poller.db_export import DbExportConfig, export_db_to_discord_now
 
 _ADMIN_UNAUTHORIZED_HTML = WEB_DIR / "admin-unauthorized.html"
 _ERROR_HTML = WEB_DIR / "error.html"
@@ -62,6 +65,14 @@ _ERROR_COPY: dict[int, tuple[str, str]] = {
 
 def create_server(host: str, port: int) -> ThreadingHTTPServer:
     return ThreadingHTTPServer((host, port), DashboardHandler)
+
+
+def _load_discord_db_export_webhook_url_from_env() -> str:
+    for env_name in ("DISCORD_WEBHOOK_URL_DB_EXPORT", "POE_DISCORD_WEBHOOK_URL_DB_EXPORT"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -1164,6 +1175,51 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/admin/stop-poller":
                 try:
                     payload = stop_poller()
+                    body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                    self.send_response(200 if payload.get("ok") else 500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except Exception as exc:  # noqa: BLE001
+                    body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/run-db-export":
+                webhook_url = _load_discord_db_export_webhook_url_from_env()
+                if not webhook_url:
+                    body = json.dumps(
+                        {
+                            "ok": False,
+                            "error": "DB export webhook is not configured. Set DISCORD_WEBHOOK_URL_DB_EXPORT.",
+                        },
+                        allow_nan=False,
+                    ).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                try:
+                    storage = StorageService(root_dir=ROOT_DIR)
+                    storage.ensure_initialized()
+                    with requests.Session() as session:
+                        payload = export_db_to_discord_now(
+                            storage=storage,
+                            session=session,
+                            cfg=DbExportConfig(webhook_url=webhook_url, tz_offset_minutes=120, schedule_hour=12, schedule_minute=0),
+                            log=lambda *_args, **_kwargs: None,
+                        )
                     body = json.dumps(payload, allow_nan=False).encode("utf-8")
                     self.send_response(200 if payload.get("ok") else 500)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
