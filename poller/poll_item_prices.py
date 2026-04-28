@@ -697,15 +697,24 @@ def load_item_specs(items_file: Path) -> list[ItemSpec]:
     return specs
 
 
-def build_search_payload(item: ItemSpec, price_currency: str | None = None) -> dict[str, Any]:
+def build_search_payload(
+    item: ItemSpec,
+    price_currency: str | None = None,
+    *,
+    status_option_override: str | None = None,
+) -> dict[str, Any]:
     # Configurable so users can choose whether to include/exclude certain trade modes.
     # Default: online-only (excludes offline sellers).
-    try:
-        root_dir = Path(__file__).resolve().parents[1]
-        storage = StorageService(root_dir=root_dir)
-        status_option = load_trade_search_status_option(storage)
-    except Exception:
-        status_option = "online"
+    if status_option_override is not None:
+        status_option = str(status_option_override).strip().lower()
+    else:
+        try:
+            root_dir = Path(__file__).resolve().parents[1]
+            storage = StorageService(root_dir=root_dir)
+            status_option = load_trade_search_status_option(storage)
+        except Exception:
+            # Fail-safe: prefer "available" so offline sellers don't look like sales.
+            status_option = "available"
 
     name_option: dict[str, Any] = {"option": item.name}
     # name_option["discriminator"] = "legacy"
@@ -753,9 +762,15 @@ def search_item(
     rate_limiter: AdaptiveRateLimiter,
     item: ItemSpec,
     price_currency: str | None = None,
+    *,
+    status_option_override: str | None = None,
 ) -> tuple[str, list[str], int]:
     url = f"{BASE_URL}/search/{DEFAULT_LEAGUE}"
-    payload = build_search_payload(item, price_currency=price_currency)
+    payload = build_search_payload(
+        item,
+        price_currency=price_currency,
+        status_option_override=status_option_override,
+    )
 
     rate_limiter.wait_before_request()
     response = session.post(url, data=json.dumps(payload), timeout=30.0)
@@ -1591,7 +1606,19 @@ def run_cycle(
 
     for index, item in enumerate(specs, start=1):
         request_timestamp_utc = datetime.now(timezone.utc).isoformat()
-        query_id, result_ids, total_results = search_item(session, rate_limiter, item)
+        item_key = f"{item.name}::{item_mode_token(item)}"
+        variant_id = int(variant_ids_by_key.get(item_key) or 0)
+
+        # For the first-ever poll of an item variant, force "available" so offline listings
+        # don't look like vanished/sold listings in the inference engine.
+        status_override = "available" if not storage.has_any_item_polls(variant_id=variant_id) else None
+
+        query_id, result_ids, total_results = search_item(
+            session,
+            rate_limiter,
+            item,
+            status_option_override=status_override,
+        )
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
 
         result_id_count = len([x for x in result_ids if isinstance(x, str)])
@@ -1619,8 +1646,6 @@ def run_cycle(
             if idx < len(inference_signals):
                 row["fingerprint"] = inference_signals[idx]["fingerprint"]
 
-        item_key = f"{item.name}::{item_mode_token(item)}"
-        variant_id = int(variant_ids_by_key.get(item_key) or 0)
         prev_signals, pending_inst, pending_on = ([], [], [])
         if variant_id:
             prev_signals, pending_inst, pending_on = storage.load_inference_state(variant_id=variant_id)
@@ -1691,7 +1716,11 @@ def run_cycle(
             first_currency, first_amount = first_price
             if first_currency == "mirror" and abs(first_amount - 1.0) <= 1e-9:
                 divine_query_id, divine_only_ids, _ = search_item(
-                    session, rate_limiter, item, price_currency="divine"
+                    session,
+                    rate_limiter,
+                    item,
+                    price_currency="divine",
+                    status_option_override=status_override,
                 )
                 divine_only_listings = fetch_top_listings(
                     session, rate_limiter, divine_query_id, divine_only_ids

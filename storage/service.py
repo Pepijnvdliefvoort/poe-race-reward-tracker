@@ -117,6 +117,21 @@ class StorageService:
         finally:
             con.close()
 
+    def has_any_item_polls(self, *, variant_id: int) -> bool:
+        """Whether we have ever stored an `item_polls` row for this variant."""
+        if int(variant_id) <= 0:
+            return False
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            row = con.execute(
+                "SELECT 1 AS one FROM item_polls WHERE item_variant_id = ? LIMIT 1",
+                (int(variant_id),),
+            ).fetchone()
+            return bool(row)
+        finally:
+            con.close()
+
     def load_price_alert_cooldown_rows(self) -> list[tuple[int, int, float]]:
         """
         Rows (item_variant_id, last_alert_cycle, last_alert_low_mirror) for price-drop Discord cooldown.
