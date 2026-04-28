@@ -76,8 +76,19 @@ async function fetchJsonWithInit(path, init) {
     err.status = 429;
     throw err;
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  // Admin endpoints often return a JSON `{ ok: false, error: "..." }` payload even on non-2xx.
+  // Prefer surfacing that payload to the UI instead of throwing a generic `HTTP NNN`.
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (_e) {
+    data = null;
+  }
+  if (!res.ok) {
+    if (data && typeof data === "object") return data;
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return data;
 }
 
 /** Human-readable hint for admin API failures (403 / 429). */

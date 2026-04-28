@@ -179,7 +179,25 @@ def export_db_to_discord_now(
             files={"file": (zip_path.name, fh, "application/zip")},
             timeout=90.0,
         )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as exc:
+        # Discord often returns a useful JSON/body (e.g. file too large / invalid webhook).
+        # Bubble that up so the admin UI can display a meaningful failure reason.
+        text = ""
+        try:
+            text = (resp.text or "").strip()
+        except Exception:  # noqa: BLE001
+            text = ""
+        if len(text) > 800:
+            text = text[:800] + "…"
+        status = getattr(resp, "status_code", None)
+        return {
+            "ok": False,
+            "error": f"Discord upload failed (HTTP {status}): {text}" if text else f"Discord upload failed (HTTP {status}).",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"Discord upload failed: {exc}"}
 
     storage.set_config(
         key="db_export",
