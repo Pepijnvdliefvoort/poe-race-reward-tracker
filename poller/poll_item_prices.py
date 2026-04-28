@@ -765,11 +765,18 @@ def search_item(
 
 
 def build_account_search_payload(account_name: str) -> dict[str, Any]:
-    """Minimal trade search JSON: filter by seller account (for online probe after a listing vanishes)."""
+    """
+    Minimal trade search JSON: filter by seller account (for "is the seller online in this league?"
+    probe after a non-instant listing vanishes).
+
+    Important: PoE trade "online" status is not strictly tied to a specific league. Using
+    ``onlineleague`` prevents false positives where the account is online elsewhere (e.g. playing a
+    different league) while still having listings in Standard.
+    """
     acct = (account_name or "").strip()
     return {
         "query": {
-            "status": {"option": "any"},
+            "status": {"option": "onlineleague"},
             "stats": [{"type": "and", "filters": []}],
             "filters": {
                 "trade_filters": {
