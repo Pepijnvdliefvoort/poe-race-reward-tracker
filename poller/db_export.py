@@ -59,11 +59,44 @@ def _snapshot_sqlite_db(src_db_path: Path, dst_db_path: Path) -> None:
             src.close()
 
 
+def _compact_sqlite_db(src_db_path: Path, dst_db_path: Path) -> bool:
+    """
+    Compact a snapshot DB to reduce size (helpful for Discord attachment limits).
+
+    Uses `VACUUM INTO` (SQLite >= 3.27). If unavailable/fails, returns False.
+    """
+    dst_db_path.parent.mkdir(parents=True, exist_ok=True)
+    if dst_db_path.exists():
+        dst_db_path.unlink()
+
+    conn = sqlite3.connect(str(src_db_path), timeout=60.0)
+    try:
+        conn.execute("PRAGMA busy_timeout = 60000;")
+        conn.execute("VACUUM INTO ?;", (str(dst_db_path),))
+        return True
+    except Exception:
+        try:
+            if dst_db_path.exists():
+                dst_db_path.unlink()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
 def _zip_file(src_path: Path, zip_path: Path) -> None:
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     if zip_path.exists():
         zip_path.unlink()
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    # Prefer stronger compression to fit Discord webhook attachment limits.
+    # LZMA is slower but usually produces smaller archives for SQLite databases.
+    compression = getattr(zipfile, "ZIP_LZMA", zipfile.ZIP_DEFLATED)
+    compresslevel = 9 if compression == zipfile.ZIP_DEFLATED else None
+    kwargs: dict = {"compression": compression}
+    if compresslevel is not None:
+        kwargs["compresslevel"] = compresslevel
+    with zipfile.ZipFile(zip_path, "w", **kwargs) as zf:
         zf.write(src_path, arcname=src_path.name)
 
 
@@ -99,11 +132,15 @@ def maybe_export_db_to_discord(
     exports_dir = root_dir / "storage" / "exports"
     stamp = now_utc.strftime("%Y%m%d")
     snapshot_path = exports_dir / f"market.{stamp}.db"
+    compacted_path = exports_dir / f"market.{stamp}.compact.db"
     zip_path = exports_dir / f"market.{stamp}.db.zip"
 
     try:
         _snapshot_sqlite_db(storage.db_path, snapshot_path)
-        _zip_file(snapshot_path, zip_path)
+        use_path = snapshot_path
+        if _compact_sqlite_db(snapshot_path, compacted_path):
+            use_path = compacted_path
+        _zip_file(use_path, zip_path)
 
         size_mb = zip_path.stat().st_size / (1024 * 1024)
         content = (
@@ -161,10 +198,14 @@ def export_db_to_discord_now(
     exports_dir = root_dir / "storage" / "exports"
     stamp = now_utc.strftime("%Y%m%d")
     snapshot_path = exports_dir / f"market.{stamp}.db"
+    compacted_path = exports_dir / f"market.{stamp}.compact.db"
     zip_path = exports_dir / f"market.{stamp}.db.zip"
 
     _snapshot_sqlite_db(storage.db_path, snapshot_path)
-    _zip_file(snapshot_path, zip_path)
+    use_path = snapshot_path
+    if _compact_sqlite_db(snapshot_path, compacted_path):
+        use_path = compacted_path
+    _zip_file(use_path, zip_path)
 
     size_bytes = int(zip_path.stat().st_size)
     size_mb = size_bytes / (1024 * 1024)
