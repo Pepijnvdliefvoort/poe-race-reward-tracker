@@ -142,10 +142,15 @@ def _is_instant_buyout(listing: dict[str, Any], price: dict[str, Any] | None) ->
     """
     Heuristic for "instant-buyout-like" listings.
 
-    We prefer `hideout_token` (securable) when available, but also fall back to the same fixed-price
-    signals used by the listing preview (`~b/o` / `price.type` contains `b/o`). This keeps the
-    inference rule selection aligned with what we store in `listing_snapshots.is_instant_buyout`.
+    Primary rule (deterministic for psapi listings):
+    - `whisper_token` present  => non-instant (manual whisper flow)
+    - `hideout_token` present  => instant (hideout invite / securable flow)
+
+    Fallback rule:
+    - If neither token is present, fall back to fixed-price signals (`~b/o` / `price.type` contains `b/o`).
     """
+    if bool(listing.get("whisper_token")):
+        return False
     if bool(listing.get("hideout_token")):
         return True
 
