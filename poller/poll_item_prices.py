@@ -22,6 +22,7 @@ from .sale_inference_engine import (
 from server.sales_discord_notify import send_estimated_sales_change_notification
 
 from storage.service import StorageService, VariantSpec
+from .db_export import DbExportConfig, maybe_export_db_to_discord
 
 BASE_URL = "https://www.pathofexile.com/api/trade"
 DEFAULT_LEAGUE = "Standard"
@@ -112,6 +113,19 @@ def load_discord_sales_webhook_url_from_env() -> tuple[str, bool]:
     if sales:
         return sales, True
     return load_discord_webhook_url_from_env(), False
+
+
+def load_discord_db_export_webhook_url_from_env() -> str:
+    """
+    Webhook URL for daily DB export uploads.
+
+    This is intentionally separate from alerts, so you can point it to a private channel.
+    """
+    for env_name in ("DISCORD_WEBHOOK_URL_DB_EXPORT", "POE_DISCORD_WEBHOOK_URL_DB_EXPORT"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def load_sales_discord_window_days(storage: StorageService) -> int:
@@ -1927,6 +1941,7 @@ def main() -> None:
     alert_state = seed_price_alert_cooldown_from_db(storage, variant_ids_by_key)
     log_line("cycle", f"Loaded {len(alert_state)} persisted price-alert cooldown entries.")
     logged_sales_webhook_cfg = False
+    logged_db_export_webhook_cfg = False
     log_line(
         "cycle",
         "Alert config: "
@@ -1959,6 +1974,7 @@ def main() -> None:
         alert_config = load_alert_config()
         sales_webhook_url, sales_webhook_dedicated = load_discord_sales_webhook_url_from_env()
         sales_window_days = load_sales_discord_window_days(storage)
+        db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
         if sales_webhook_url and not logged_sales_webhook_cfg:
             msg = f"Sales Discord webhook active; est.-sold window={sales_window_days}d"
             if not sales_webhook_dedicated:
@@ -1967,6 +1983,9 @@ def main() -> None:
                 )
             log_line("cycle", msg)
             logged_sales_webhook_cfg = True
+        if db_export_webhook_url and not logged_db_export_webhook_cfg:
+            log_line("cycle", "DB export webhook active; will upload a DB snapshot once every 24h.")
+            logged_db_export_webhook_cfg = True
 
         try:
             divines_per_mirror = run_cycle(
@@ -1984,6 +2003,19 @@ def main() -> None:
             log_line("error", f"Request error during cycle {cycle}: {exc}")
         except Exception as exc:  # noqa: BLE001
             log_line("error", f"Unexpected error during cycle {cycle}: {exc}")
+
+        if db_export_webhook_url:
+            maybe_export_db_to_discord(
+                storage=storage,
+                session=session,
+                cfg=DbExportConfig(
+                    webhook_url=db_export_webhook_url,
+                    tz_offset_minutes=120,  # GMT+2
+                    schedule_hour=12,
+                    schedule_minute=0,
+                ),
+                log=log_line,
+            )
 
         if cfg.max_cycles is not None and cycles_done >= cfg.max_cycles:
             log_line("cycle", f"Reached max-cycles ({cfg.max_cycles}). Stopping.")
