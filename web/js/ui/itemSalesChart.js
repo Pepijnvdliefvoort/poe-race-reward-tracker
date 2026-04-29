@@ -70,7 +70,8 @@ function buildViewModel(item, now) {
     if (spanMs === Infinity) return true;
     return s.time >= now - spanMs;
   });
-  const points = inWindow.map((s) => ({ x: s.time, y: Number(s.price) }));
+  // Keep a pointer to the originating sale row for tooltip formatting.
+  const points = inWindow.map((s) => ({ x: s.time, y: Number(s.price), sale: s }));
   let xMin;
   let xMax = now;
   if (spanMs === Infinity) {
@@ -134,6 +135,32 @@ function formatMirrorValue(v) {
   // Prefer integers, but allow decimals when present.
   if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
   return n.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+function formatDivineValue(v) {
+  if (v == null || Number.isNaN(v)) return "";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
+  return n.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+function isMirrorCurrency(currency) {
+  if (!currency) return false;
+  const c = String(currency).trim().toLowerCase();
+  return c === "mirror" || c === "mirrors" || c.includes("mirror of kalandra");
+}
+
+function isDivineCurrency(currency) {
+  if (!currency) return false;
+  const c = String(currency).trim().toLowerCase();
+  return c === "divine" || c === "divines" || c.includes("divine orb");
+}
+
+function isExaltedCurrency(currency) {
+  if (!currency) return false;
+  const c = String(currency).trim().toLowerCase();
+  return c === "exalted" || c === "exalt" || c.includes("exalted orb");
 }
 
 function makeMiniConfig(view) {
@@ -214,6 +241,28 @@ function makeExpandedConfig(view) {
               const y = ctx.parsed.y;
               const x = ctx.parsed.x;
               if (y == null || x == null) return "";
+              const point = ctx.dataset?.data?.[ctx.dataIndex] ?? ctx.raw;
+              const sale = point?.sale;
+              const currency = sale?.priceCurrency;
+              if (sale && !isMirrorCurrency(currency)) {
+                const amt = Number(sale?.priceAmount);
+                if (Number.isFinite(amt) && amt > 0) {
+                  if (isDivineCurrency(currency)) {
+                    return `${formatDivineValue(amt)} div · ${new Date(x).toLocaleString()}`;
+                  }
+                  if (isExaltedCurrency(currency)) {
+                    const div = amt / 60;
+                    return `${formatDivineValue(div)} div · ${new Date(x).toLocaleString()}`;
+                  }
+                }
+                const dpm = Number(sale?.divinesPerMirror);
+                if (Number.isFinite(dpm) && dpm > 0) {
+                  const m = Number(sale?.mirrorEquiv);
+                  const mirror = Number.isFinite(m) ? m : Number(y);
+                  const divEquiv = mirror * dpm;
+                  return `${formatDivineValue(divEquiv)} div · ${new Date(x).toLocaleString()}`;
+                }
+              }
               return `${formatMirrorValue(y)} mirror · ${new Date(x).toLocaleString()}`;
             },
           },

@@ -218,12 +218,20 @@ class ServerStorage:
                     placeholders = ",".join("?" * len(vids))
                     sale_rows = con.execute(
                         f"""
-                        SELECT item_variant_id, occurred_at_utc, mirror_equiv
-                        FROM sales
-                        WHERE item_variant_id IN ({placeholders})
+                        SELECT
+                          s.item_variant_id,
+                          s.occurred_at_utc,
+                          s.mirror_equiv,
+                          s.price_amount,
+                          s.price_currency,
+                          pr.divines_per_mirror
+                        FROM sales s
+                        JOIN item_polls ip ON ip.id = s.item_poll_id
+                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                        WHERE s.item_variant_id IN ({placeholders})
                           AND reverted_at_utc IS NULL
                           AND mirror_equiv IS NOT NULL
-                        ORDER BY item_variant_id ASC, occurred_at_utc ASC
+                        ORDER BY s.item_variant_id ASC, s.occurred_at_utc ASC
                         """,
                         vids,
                     ).fetchall()
@@ -239,9 +247,32 @@ class ServerStorage:
                             m = float(sr["mirror_equiv"] or 0.0)
                         except (TypeError, ValueError):
                             m = 0.0
+                        amt = sr["price_amount"]
+                        try:
+                            amount = float(amt) if amt is not None else None
+                        except (TypeError, ValueError):
+                            amount = None
+                        cur_raw = sr["price_currency"]
+                        currency = str(cur_raw).strip().lower() if isinstance(cur_raw, str) and cur_raw.strip() else None
+                        dpm_raw = sr["divines_per_mirror"]
+                        try:
+                            divines_per_mirror = float(dpm_raw) if dpm_raw is not None else None
+                        except (TypeError, ValueError):
+                            divines_per_mirror = None
                         sales_by_variant_id.setdefault(vid, []).append(
                             # Keep decimal mirror prices (e.g. 0.37 mirrors) so points land correctly.
-                            {"time": t_ms, "price": round(m, 2)}
+                            {
+                                "time": t_ms,
+                                # `price` is the chart Y value (kept compact for stable axes/ticks).
+                                "price": round(m, 2),
+                                # Keep an unrounded-ish mirror-equiv for accurate tooltip conversions.
+                                "mirrorEquiv": round(m, 6),
+                                "priceAmount": round(amount, 4) if amount is not None else None,
+                                "priceCurrency": currency,
+                                "divinesPerMirror": round(divines_per_mirror, 4)
+                                if divines_per_mirror is not None
+                                else None,
+                            }
                         )
 
             for variant_key, variant_id in variant_ids_by_key.items():
