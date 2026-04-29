@@ -354,7 +354,7 @@ class ServerStorage:
         finally:
             con.close()
 
-    def fetch_listing_preview(self, query_id: str) -> dict[str, Any]:
+    def fetch_listing_preview(self, query_id: str, *, limit: int | None = 20) -> dict[str, Any]:
         cleaned = (query_id or "").strip()
         if not cleaned:
             raise ValueError("queryId is required")
@@ -365,7 +365,7 @@ class ServerStorage:
             if not row:
                 return {"queryId": cleaned, "league": "Standard", "totalResults": 0, "listings": [], "source": "db-not-found"}
             item_poll_id = int(row["id"])
-            snap_rows = polls.listing_snapshot_rows(item_poll_id=item_poll_id)
+            snap_rows = polls.listing_snapshot_rows(item_poll_id=item_poll_id, limit=limit)
             listings = []
             for r in snap_rows:
                 listings.append(
@@ -387,6 +387,170 @@ class ServerStorage:
                 "listings": listings,
                 "updatedAt": str(row["requested_at_utc"] or ""),
                 "source": "db",
+            }
+        finally:
+            con.close()
+
+    def fetch_account_compare(
+        self,
+        *,
+        accounts: list[str],
+        mode: str = "all",
+        currency: str = "mirror",
+        instant_only: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Compare market-lowest listings vs lowest listings for given seller accounts.
+
+        Data source is `listing_snapshots` for the latest poll of each item variant.
+        This is a public, unauthenticated endpoint intended for quick self-checks.
+        """
+        cleaned_accounts: list[str] = []
+        seen = set()
+        for a in accounts or []:
+            s = str(a or "").strip()
+            if not s:
+                continue
+            if s in seen:
+                continue
+            seen.add(s)
+            cleaned_accounts.append(s)
+        # Keep query size reasonable.
+        cleaned_accounts = cleaned_accounts[:6]
+
+        mode_norm = str(mode or "all").strip().lower()
+        if mode_norm not in {"all", "diff"}:
+            mode_norm = "all"
+
+        cur_norm = str(currency or "mirror").strip().lower()
+        if cur_norm not in {"mirror"}:
+            cur_norm = "mirror"
+
+        con = self.connect()
+        con.row_factory = sqlite3.Row
+        try:
+            # Base rows: every variant, plus latest poll metadata (queryId + updatedAt).
+            variants = con.execute(
+                """
+                WITH latest_poll AS (
+                  SELECT item_variant_id, MAX(id) AS item_poll_id
+                  FROM item_polls
+                  GROUP BY item_variant_id
+                )
+                SELECT
+                  v.id AS variant_id,
+                  i.name AS item_name,
+                  v.display_name,
+                  v.mode,
+                  v.sort_order,
+                  ip.query_id,
+                  ip.requested_at_utc AS updated_at_utc
+                FROM item_variants v
+                JOIN items i ON i.id = v.item_id
+                LEFT JOIN latest_poll lp ON lp.item_variant_id = v.id
+                LEFT JOIN item_polls ip ON ip.id = lp.item_poll_id
+                ORDER BY v.sort_order ASC, v.display_name ASC
+                """
+            ).fetchall()
+
+            # Market mins for latest poll per variant (mirror-only).
+            market_rows = con.execute(
+                """
+                WITH latest_poll AS (
+                  SELECT item_variant_id, MAX(id) AS item_poll_id
+                  FROM item_polls
+                  GROUP BY item_variant_id
+                )
+                SELECT
+                  ip.item_variant_id AS variant_id,
+                  MIN(ls.amount) AS market_min
+                FROM latest_poll lp
+                JOIN item_polls ip ON ip.id = lp.item_poll_id
+                JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
+                WHERE ls.currency = ?
+                  AND ls.amount IS NOT NULL
+                  AND ls.amount > 0
+                  AND (? = 0 OR ls.is_instant_buyout = 1)
+                GROUP BY ip.item_variant_id
+                """,
+                (cur_norm, 1 if instant_only else 0),
+            ).fetchall()
+            market_min_by_variant = {int(r["variant_id"]): (float(r["market_min"]) if r["market_min"] is not None else None) for r in market_rows}
+
+            account_min_by_variant: dict[int, dict[str, float]] = {}
+            if cleaned_accounts:
+                placeholders = ",".join("?" for _ in cleaned_accounts)
+                sql = f"""
+                WITH latest_poll AS (
+                  SELECT item_variant_id, MAX(id) AS item_poll_id
+                  FROM item_polls
+                  GROUP BY item_variant_id
+                )
+                SELECT
+                  ip.item_variant_id AS variant_id,
+                  ls.seller_name,
+                  MIN(ls.amount) AS account_min
+                FROM latest_poll lp
+                JOIN item_polls ip ON ip.id = lp.item_poll_id
+                JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
+                WHERE ls.currency = ?
+                  AND ls.amount IS NOT NULL
+                  AND ls.amount > 0
+                  AND (? = 0 OR ls.is_instant_buyout = 1)
+                  AND ls.seller_name IN ({placeholders})
+                GROUP BY ip.item_variant_id, ls.seller_name
+                """
+                params: list[Any] = [cur_norm, 1 if instant_only else 0]
+                params.extend(cleaned_accounts)
+                acct_rows = con.execute(sql, params).fetchall()
+                for r in acct_rows:
+                    vid = int(r["variant_id"])
+                    seller = str(r["seller_name"] or "").strip()
+                    amt = r["account_min"]
+                    if not seller or amt is None:
+                        continue
+                    account_min_by_variant.setdefault(vid, {})[seller] = float(amt)
+
+            def _differs(a: float | None, b: float | None) -> bool:
+                if a is None or b is None:
+                    return False
+                return abs(float(a) - float(b)) > 1e-9
+
+            rows: list[dict[str, Any]] = []
+            for v in variants:
+                vid = int(v["variant_id"])
+                market_min = market_min_by_variant.get(vid)
+                acct_map = account_min_by_variant.get(vid, {})
+
+                if mode_norm == "diff":
+                    # Include only if at least one account has a price and it differs from market.
+                    keep = False
+                    for acct in cleaned_accounts:
+                        keep = keep or _differs(acct_map.get(acct), market_min)
+                    if not keep:
+                        continue
+
+                row = {
+                    "variantId": vid,
+                    "itemName": str(v["item_name"] or ""),
+                    "displayName": str(v["display_name"] or ""),
+                    "mode": str(v["mode"] or ""),
+                    "sortOrder": int(v["sort_order"] or 0),
+                    "queryId": str(v["query_id"] or ""),
+                    "updatedAt": str(v["updated_at_utc"] or ""),
+                    "market": {"currency": cur_norm, "amount": market_min},
+                    "accounts": {acct: acct_map.get(acct) for acct in cleaned_accounts},
+                }
+                rows.append(row)
+
+            return {
+                "ok": True,
+                "generatedAt": _utc_now_iso(),
+                "mode": mode_norm,
+                "currency": cur_norm,
+                "instantOnly": bool(instant_only),
+                "accounts": cleaned_accounts,
+                "rows": rows,
             }
         finally:
             con.close()

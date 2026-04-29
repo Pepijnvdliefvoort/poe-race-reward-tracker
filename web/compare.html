@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Account price compare — PoE Race Rewards</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./css/variables.css" />
+    <link rel="stylesheet" href="./css/layout.css" />
+    <link rel="stylesheet" href="./css/compare.css" />
+    <link rel="stylesheet" href="./css/footer.css" />
+    <script type="module" src="./js/comparePage.js" defer></script>
+  </head>
+  <body class="page-compare">
+    <div class="bg-orb bg-orb-a" aria-hidden="true"></div>
+    <div class="bg-orb bg-orb-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Tools</p>
+        <h1>Account price compare</h1>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-actions">
+          <a
+            href="/"
+            class="filters-menu-btn"
+            title="Back to dashboard"
+            aria-label="Back to dashboard"
+            style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center"
+          >
+            ←
+          </a>
+        </div>
+        <div class="meta" id="meta">
+          <span id="statusDot" class="status-dot ok"></span>
+          <span id="statusText">Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="compare-panel" id="accountComparePanel" aria-label="Account price compare">
+        <div class="compare-head">
+          <div>
+            <p class="eyebrow">Quick check</p>
+            <h2 class="compare-title">Compare vs market floor</h2>
+            <p class="compare-subtitle">
+              See whether your accounts are priced above the current market floor. Uses the latest stored listing snapshots (mirror-only).
+            </p>
+          </div>
+          <div class="compare-controls">
+            <div class="compare-control" aria-label="Accounts">
+              <div class="compare-label">Accounts</div>
+              <div class="compare-accounts">
+                <div id="accountCompareAccountsChips" class="compare-chips" aria-label="Accounts list"></div>
+                <div class="compare-add-row">
+                  <input
+                    id="accountCompareAccountInput"
+                    class="compare-input compare-input--chip"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    placeholder="Add account…"
+                  />
+                  <button id="accountCompareAddAccount" class="compare-btn compare-btn--ghost" type="button">Add</button>
+                </div>
+              </div>
+            </div>
+            <label class="compare-control">
+              <span class="compare-label">View</span>
+              <select id="accountCompareMode" class="compare-select">
+                <option value="all">Show all items</option>
+                <option value="diff">Only show differences</option>
+              </select>
+            </label>
+            <button id="accountCompareRefresh" class="compare-btn" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="compare-meta">
+          <div id="accountCompareSummary" class="compare-summary" aria-live="polite"></div>
+          <div id="accountCompareHint" class="compare-hint" aria-live="polite"></div>
+        </div>
+        <div class="compare-table-wrap">
+          <table class="compare-table" id="accountCompareTable" aria-label="Account compare table">
+            <thead id="accountCompareThead"></thead>
+            <tbody id="accountCompareTbody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        &copy; 2026. Made by
+        <a href="https://www.pathofexile.com/account/view-profile/iNeoxiz-3422" target="_blank" rel="noopener noreferrer">iNeoxiz</a>.
+      </p>
+      <p class="site-footer-note">
+        This product isn't affiliated with or endorsed by Grinding Gear Games in any way.
+      </p>
+    </footer>
+  </body>
+</html>
+

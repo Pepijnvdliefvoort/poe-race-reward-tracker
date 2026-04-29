@@ -87,6 +87,35 @@ main {
   gap: 8px;
 }
 
+.topbar-nav-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--ink);
+  background: rgba(9, 12, 18, 0.45);
+  border: 1px solid var(--line);
+  font-size: 1.15rem;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.topbar-nav-btn:hover {
+  background: var(--line);
+  transform: scale(1.06);
+}
+
+.topbar-nav-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+:root.light-theme .topbar-nav-btn {
+  background: rgba(255, 255, 255, 0.8);
+}
+
 .eyebrow {
   font-size: 0.8rem;
   letter-spacing: 0.18em;

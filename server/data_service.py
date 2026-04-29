@@ -309,8 +309,12 @@ def _calculate_next_poll_time() -> int | None:
         return None
 
 
-def fetch_listing_preview(query_id: str) -> dict[str, Any]:
-    return ServerStorage(ROOT_DIR).fetch_listing_preview(query_id)
+def fetch_listing_preview(query_id: str, *, limit: int | None = 20) -> dict[str, Any]:
+    return ServerStorage(ROOT_DIR).fetch_listing_preview(query_id, limit=limit)
+
+
+def fetch_account_compare(*, accounts: list[str], mode: str = "all") -> dict[str, Any]:
+    return ServerStorage(ROOT_DIR).fetch_account_compare(accounts=accounts, mode=mode)
 
 
 def load_price_data() -> dict[str, Any]:

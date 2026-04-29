@@ -1912,6 +1912,7 @@ def run_cycle(
             item,
             status_option_override=status_override,
         )
+        # Fetch a small slice for fast pricing summaries and UI affordances.
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
 
         result_id_count = len([x for x in result_ids if isinstance(x, str)])
@@ -2030,12 +2031,15 @@ def run_cycle(
             _, divine_only_prices_raw, _ = extract_listing_prices(divine_only_listings)
             divine_only_converted = [p / divines_per_mirror for p in divine_only_prices_raw]
 
-        listings_for_display = _dedupe_listings_for_display(listings + divine_only_listings)
+        # Dedupe for UI preview / storage. Prefer the deeper fetch (`listings_inference`) so we
+        # persist more than TOP_IDS_LIMIT (up to the configured cap).
+        listings_for_display = _dedupe_listings_for_display(listings_inference + divine_only_listings)
         top_listing_summary = build_top_listing_summary(listings_for_display, divines_per_mirror)
         listing_preview_rows = build_listing_preview_entries(
             listings_for_display,
             divines_per_mirror=float(divines_per_mirror),
-            max_entries=TOP_IDS_LIMIT,
+            # Store the whole fetched slice (up to the inference cap / PoE limit).
+            max_entries=effective_inference_cap if effective_inference_cap > 0 else None,
         )
 
         mirror_prices = raw_mirror_prices + converted + divine_only_converted

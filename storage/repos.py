@@ -374,10 +374,20 @@ class PollsRepo:
             (query_id,),
         ).fetchone()
 
-    def listing_snapshot_rows(self, *, item_poll_id: int) -> list[sqlite3.Row]:
+    def listing_snapshot_rows(self, *, item_poll_id: int, limit: int | None = None) -> list[sqlite3.Row]:
+        if limit is None:
+            return self._con.execute(
+                "SELECT * FROM listing_snapshots WHERE item_poll_id = ? ORDER BY rank ASC",
+                (item_poll_id,),
+            ).fetchall()
+
+        lim = int(limit)
+        if lim <= 0:
+            return []
+
         return self._con.execute(
-            "SELECT * FROM listing_snapshots WHERE item_poll_id = ? ORDER BY rank ASC",
-            (item_poll_id,),
+            "SELECT * FROM listing_snapshots WHERE item_poll_id = ? ORDER BY rank ASC LIMIT ?",
+            (item_poll_id, lim),
         ).fetchall()
 
     def clear_market_tables(self) -> None:

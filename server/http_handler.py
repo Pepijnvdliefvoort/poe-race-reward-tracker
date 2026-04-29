@@ -34,6 +34,7 @@ from .admin_service import (
 from .data_service import (
     ROOT_DIR,
     WEB_DIR,
+    fetch_account_compare,
     fetch_listing_preview,
     load_config,
     load_price_data,
@@ -652,6 +653,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/listings":
             params = parse_qs(parsed.query)
             query_id = params.get("queryId", [""])[0].strip()
+            limit_raw = params.get("limit", ["20"])[0].strip()
+            try:
+                limit = int(limit_raw) if limit_raw else 20
+            except ValueError:
+                limit = 20
+            # Keep payloads light for the hover popover.
+            limit = max(1, min(limit, 200))
             if not query_id:
                 body = json.dumps({"error": "Missing queryId parameter"}).encode("utf-8")
                 self.send_response(400)
@@ -663,7 +671,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             try:
-                payload = fetch_listing_preview(query_id)
+                payload = fetch_listing_preview(query_id, limit=limit)
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -674,6 +682,39 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
             except Exception as exc:  # noqa: BLE001
                 body = json.dumps({"error": str(exc)}).encode("utf-8")
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+        if parsed.path == "/api/account-compare":
+            params = parse_qs(parsed.query)
+            accounts_raw = params.get("accounts", [""])[0]
+            mode = params.get("mode", ["all"])[0].strip()
+            # Accept comma- or newline-separated accounts.
+            accounts = []
+            for part in str(accounts_raw or "").replace("\n", ",").split(","):
+                s = part.strip()
+                if s:
+                    accounts.append(s)
+            if not accounts:
+                accounts = ["ABVT#0013", "junglechrist#0894"]
+
+            try:
+                payload = fetch_account_compare(accounts=accounts, mode=mode)
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            except Exception as exc:  # noqa: BLE001
+                body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
                 self.send_response(502)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -731,10 +772,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
 
+        if parsed.path == "/compare.html":
+            loc = "/compare"
+            if parsed.query:
+                loc += f"?{parsed.query}"
+            self.send_response(302)
+            self.send_header("Location", loc)
+            self.end_headers()
+            return
+
         if parsed.path in {"/admin", "/admin/"}:
             self._note_admin_auth_success()
             q = parsed.query
             self.path = "/admin.html" + (f"?{q}" if q else "")
+
+        if parsed.path in {"/compare", "/compare/"}:
+            q = parsed.query
+            self.path = "/compare.html" + (f"?{q}" if q else "")
 
         if parsed.path in {"/admin/db", "/admin/db/"}:
             self._note_admin_auth_success()
