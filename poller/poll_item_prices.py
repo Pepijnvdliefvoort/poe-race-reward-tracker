@@ -489,7 +489,7 @@ def parse_args() -> Config:
         "--poll-interval",
         type=int,
         default=3600,
-        help="Poll interval in seconds; scheduling stays aligned to start-time grid",
+        help="Poll interval in seconds (sleep after each cycle). Use 0 to run back-to-back with no delay.",
     )
     parser.add_argument(
         "--max-cycles",
@@ -509,8 +509,8 @@ def parse_args() -> Config:
 
     args = parser.parse_args()
 
-    if args.poll_interval <= 0:
-        raise SystemExit("--poll-interval must be > 0")
+    if args.poll_interval < 0:
+        raise SystemExit("--poll-interval must be >= 0")
     if args.max_cycles is not None and args.max_cycles <= 0:
         raise SystemExit("--max-cycles must be > 0")
     if args.inference_cap is not None and args.inference_cap < 0:
@@ -2272,9 +2272,10 @@ def main() -> None:
         item_specs.append(ItemSpec(name=name, alternate_art=alt))
 
     log_line("cycle", f"Loaded {len(item_specs)} item(s) from SQLite (bootstrap file: {items_file}).")
-    log_line("cycle", f"Polling every {cfg.poll_interval} seconds aligned to start-time grid. Press Ctrl+C to stop.")
-
-    start_monotonic = time.monotonic()
+    if cfg.poll_interval > 0:
+        log_line("cycle", f"Polling every {cfg.poll_interval} seconds (sleep-after-cycle). Press Ctrl+C to stop.")
+    else:
+        log_line("cycle", "Polling back-to-back with no delay. Press Ctrl+C to stop.")
     # Persist cycle numbers across restarts so DB time series accumulates points.
     cycle = storage.latest_cycle_number(league=DEFAULT_LEAGUE)
     cycles_done = 0
@@ -2388,15 +2389,14 @@ def main() -> None:
             log_line("cycle", f"Reached max-cycles ({cfg.max_cycles}). Stopping.")
             break
 
-        sleep_seconds = seconds_until_next_tick(
-            start_monotonic=start_monotonic,
-            delay_seconds=cfg.poll_interval,
-            now_monotonic=time.monotonic(),
-        )
-        # Console display: use local time for readability (not stored, console-only)
-        next_run = datetime.now().timestamp() + sleep_seconds
-        next_run_text = datetime.fromtimestamp(next_run).strftime("%H:%M:%S")
-        log_line("cycle", f"Cycle {cycle} complete. Sleeping {int(sleep_seconds)}s until {next_run_text}")
-        time.sleep(sleep_seconds)
+        if cfg.poll_interval > 0:
+            sleep_seconds = float(cfg.poll_interval)
+            # Console display: use local time for readability (not stored, console-only)
+            next_run = datetime.now().timestamp() + sleep_seconds
+            next_run_text = datetime.fromtimestamp(next_run).strftime("%H:%M:%S")
+            log_line("cycle", f"Cycle {cycle} complete. Sleeping {int(sleep_seconds)}s until {next_run_text}")
+            time.sleep(sleep_seconds)
+        else:
+            log_line("cycle", f"Cycle {cycle} complete. Starting next cycle immediately.")
 
 
