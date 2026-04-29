@@ -15,7 +15,7 @@
 
   "notify_flip_min_profit_mirrors": 1.0,
   "notify_always_if_cheap_enabled": true,
-  "notify_always_if_cheap_max_buy_divines": 10.0,
+  "notify_always_if_cheap_max_buy_divines": 500.0,
   "notify_always_if_cheap_if_next_price_at_least_mirrors": 1.0,
   "notify_always_if_buy_currency_exalted": true,
 

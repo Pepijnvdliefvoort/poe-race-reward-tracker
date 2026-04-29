@@ -207,7 +207,7 @@ def load_flip_config(storage: StorageService) -> FlipConfig:
     Primary (clearer) keys:
     - notify_flip_min_profit_mirrors (default 1.0)
     - notify_always_if_cheap_enabled (default True)
-    - notify_always_if_cheap_max_buy_divines (default 10.0)
+    - notify_always_if_cheap_max_buy_divines (default 500.0)
     - notify_always_if_cheap_if_next_price_at_least_mirrors (default 1.0)
     - notify_always_if_buy_currency_exalted (default True)
 
@@ -249,7 +249,7 @@ def load_flip_config(storage: StorageService) -> FlipConfig:
 
     min_profit = max(0.0, _f2("notify_flip_min_profit_mirrors", "flip_min_profit_mirrors", MIN_RESALE_PROFIT_MIRRORS))
     override_enabled = _b2("notify_always_if_cheap_enabled", "flip_misprice_override_enabled", True)
-    max_buy_div = max(0.0, _f2("notify_always_if_cheap_max_buy_divines", "flip_misprice_override_max_buy_divines", 10.0))
+    max_buy_div = max(0.0, _f2("notify_always_if_cheap_max_buy_divines", "flip_misprice_override_max_buy_divines", 500.0))
     min_next = max(
         0.0,
         _f2(
@@ -1025,6 +1025,32 @@ def find_first_priced_listing(listings: list[dict[str, Any]]) -> tuple[str, floa
         if normalized is not None:
             return normalized
     return None
+
+
+def has_unit_mirror_listing(
+    listings: list[dict[str, Any]],
+    *,
+    unit_amount: float = 1.0,
+    tol: float = 1e-9,
+) -> bool:
+    """
+    Return True if any listing among `listings` has price approx exactly `1 mirror`.
+
+    This is used to detect a trade-site quirk where the ladder can be "anchored" at 1 mirror,
+    potentially hiding cheaper divine-priced listings.
+    """
+    for entry in listings:
+        listing = entry.get("listing") if isinstance(entry, dict) else None
+        price = listing.get("price") if isinstance(listing, dict) else None
+        if not isinstance(price, dict):
+            continue
+        normalized = normalize_price_currency(price)
+        if normalized is None:
+            continue
+        currency, amount = normalized
+        if currency == "mirror" and abs(amount - unit_amount) <= tol:
+            return True
+    return False
 
 
 def _fetch_listing_entries_batched(
@@ -1985,20 +2011,24 @@ def run_cycle(
         # additional search restricted to divines-only, then convert those prices into mirrors.
         divine_only_converted: list[float] = []
         divine_only_listings: list[dict[str, Any]] = []
-        first_price = find_first_priced_listing(listings)
-        if first_price is not None:
-            first_currency, first_amount = first_price
-            if first_currency == "mirror" and abs(first_amount - 1.0) <= 1e-9:
-                divine_query_id, divine_only_ids, _ = search_item(
-                    session,
-                    rate_limiter,
-                    item,
-                    price_currency="divine",
-                    status_option_override=status_override,
-                )
-                divine_only_listings = fetch_top_listings(session, rate_limiter, divine_query_id, divine_only_ids)
-                _, divine_only_prices_raw, _ = extract_listing_prices(divine_only_listings)
-                divine_only_converted = [p / divines_per_mirror for p in divine_only_prices_raw]
+        # Trigger the fallback if *any* of the fetched top listings includes a `1 mirror` anchor,
+        # not only when it happens to be the "first priced listing".
+        if has_unit_mirror_listing(listings) and len(divine_prices) <= 1:
+            divine_query_id, divine_only_ids, _ = search_item(
+                session,
+                rate_limiter,
+                item,
+                price_currency="divine",
+                status_option_override=status_override,
+            )
+            divine_only_listings = fetch_top_listings(
+                session,
+                rate_limiter,
+                divine_query_id,
+                divine_only_ids,
+            )
+            _, divine_only_prices_raw, _ = extract_listing_prices(divine_only_listings)
+            divine_only_converted = [p / divines_per_mirror for p in divine_only_prices_raw]
 
         listings_for_display = _dedupe_listings_for_display(listings + divine_only_listings)
         top_listing_summary = build_top_listing_summary(listings_for_display, divines_per_mirror)
