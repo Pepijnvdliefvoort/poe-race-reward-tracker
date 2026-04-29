@@ -13,6 +13,26 @@
   background: transparent;
 }
 
+/*
+  Match dashboard topbar actions (index.html): on ≤1024px, mobile.css gives .filters-menu-btn
+  margin-right: auto so the theme toggle stays flush right beside [⇄][☰]. This page has no menu;
+  the spacer is the same 36px slot + margin-right: auto as ☰.
+*/
+.page-compare .topbar-actions-filters-gap {
+  display: none;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+}
+
+@media (max-width: 1024px) {
+  .page-compare .topbar-actions-filters-gap {
+    display: block;
+    margin-right: auto;
+  }
+}
+
 :root.light-theme .compare-panel {
   background: rgba(255, 255, 255, 0.72);
   border-color: rgba(15, 23, 42, 0.12);

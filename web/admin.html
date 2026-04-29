@@ -13,7 +13,7 @@
     />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <link rel="stylesheet" href="/css/variables.css" />
-    <link rel="stylesheet" href="/css/admin.css?v=20260423-1" />
+    <link rel="stylesheet" href="/css/admin.css?v=20260429-1" />
     <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
     <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -23,14 +23,15 @@
   <body>
     <div class="admin-bg" aria-hidden="true"></div>
     <header class="admin-header">
-      <div>
+      <div class="admin-header-brand">
         <p class="admin-eyebrow">Operations</p>
         <h1>Admin panel</h1>
       </div>
-      <div class="admin-header-actions">
-        <a href="/admin/db" class="admin-btn admin-btn-ghost">DB explorer</a>
-        <a href="/" class="admin-btn admin-btn-ghost">← Dashboard</a>
-      </div>
+      <nav class="admin-header-nav" aria-label="Site navigation">
+        <a href="/admin/db" class="admin-btn">DB explorer</a>
+        <a href="/compare" class="admin-btn">Compare</a>
+        <a href="/" class="admin-btn">Dashboard</a>
+      </nav>
     </header>
 
     <p id="adminAuthHint" class="admin-hint"></p>

@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Account price compare — PoE Race Rewards</title>
+    <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
+    <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -12,8 +14,10 @@
     />
     <link rel="stylesheet" href="./css/variables.css" />
     <link rel="stylesheet" href="./css/layout.css" />
-    <link rel="stylesheet" href="./css/compare.css" />
+    <link rel="stylesheet" href="./css/filters.css" />
     <link rel="stylesheet" href="./css/footer.css" />
+    <link rel="stylesheet" href="./css/mobile.css" />
+    <link rel="stylesheet" href="./css/compare.css" />
     <script type="module" src="./js/comparePage.js" defer></script>
   </head>
   <body class="page-compare">
@@ -29,18 +33,23 @@
         <div class="topbar-actions">
           <a
             href="/"
-            class="filters-menu-btn"
+            class="topbar-nav-btn"
             title="Back to dashboard"
             aria-label="Back to dashboard"
-            style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center"
+            style="text-decoration: none"
           >
-            ←
+            ⇄
           </a>
+          <span class="topbar-actions-filters-gap" aria-hidden="true"></span>
+          <button id="themeToggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+            <span class="theme-icon">🌙</span>
+          </button>
         </div>
         <div class="meta" id="meta">
           <span id="statusDot" class="status-dot ok"></span>
           <span id="statusText">Ready</span>
         </div>
+        <div id="overview"></div>
       </div>
     </header>
 

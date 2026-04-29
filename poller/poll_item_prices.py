@@ -1542,14 +1542,37 @@ def build_top_listing_summary(
     return "\n".join(summary_lines)
 
 
+def normalize_trade_icon_url_for_discord(raw: str | None) -> str | None:
+    """Discord requires absolute http(s) URLs; trade sometimes returns protocol-relative ``//…`` icons."""
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if s.startswith("//"):
+        return "https:" + s
+    return s
+
+
+def _extract_trade_item_icon_url(item_data: Any) -> str | None:
+    if not isinstance(item_data, dict):
+        return None
+    raw = item_data.get("icon")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return normalize_trade_icon_url_for_discord(raw.strip())
+
+
 def find_cheapest_listing_icon(
     listings: list[dict[str, Any]],
     divines_per_mirror: float,
 ) -> str | None:
-    """Return icon URL for the cheapest valid listing, with a best-effort fallback."""
-    cheapest_icon: str | None = None
-    cheapest_price_mirror: float | None = None
-    fallback_icon: str | None = None
+    """Pick the icon from the cheapest priced row that includes ``item.icon``.
+
+    Some payloads omit ``item.icon`` on the floor row only; merging ladder + divines-only and
+    scanning for the cheapest row that still has an icon avoids empty Discord thumbnails.
+    """
+    best_with_icon: tuple[float, str] | None = None
 
     for entry in listings:
         if not isinstance(entry, dict):
@@ -1565,18 +1588,14 @@ def find_cheapest_listing_icon(
         amount_mirror = to_mirror_equivalent(amount, currency, divines_per_mirror)
 
         item_data = entry.get("item")
-        icon_url = item_data.get("icon") if isinstance(item_data, dict) else None
-        if not isinstance(icon_url, str) or not icon_url:
-            icon_url = None
+        icon_url = _extract_trade_item_icon_url(item_data)
+        if icon_url is None:
+            continue
 
-        if icon_url and fallback_icon is None:
-            fallback_icon = icon_url
+        if best_with_icon is None or amount_mirror < best_with_icon[0]:
+            best_with_icon = (amount_mirror, icon_url)
 
-        if cheapest_price_mirror is None or amount_mirror < cheapest_price_mirror:
-            cheapest_price_mirror = amount_mirror
-            cheapest_icon = icon_url
-
-    return cheapest_icon or fallback_icon
+    return None if best_with_icon is None else best_with_icon[1]
 
 
 def summarize_prices(prices: list[float]) -> tuple[float | None, float | None, float | None]:
@@ -1949,7 +1968,6 @@ def run_cycle(
             cap=effective_inference_cap,
         )
         inference_signals = listing_signals_from_fetch(listings_inference, divines_per_mirror)
-        cheapest_icon_url = find_cheapest_listing_icon(listings, divines_per_mirror)
 
         prev_signals, pending_inst, pending_on = ([], [], [])
         if variant_id:
@@ -2050,6 +2068,9 @@ def run_cycle(
         # Dedupe for UI preview / storage. Prefer the deeper fetch (`listings_inference`) so we
         # persist more than TOP_IDS_LIMIT (up to the configured cap).
         listings_for_display = _dedupe_listings_for_display(listings_inference + divine_only_listings)
+        base_for_icon = listings_inference if listings_inference else listings
+        listings_for_icon = _dedupe_listings_for_display(base_for_icon + divine_only_listings)
+        cheapest_icon_url = find_cheapest_listing_icon(listings_for_icon, divines_per_mirror)
         top_listing_summary = build_top_listing_summary(listings_for_display, divines_per_mirror)
         listing_preview_rows = build_listing_preview_entries(
             listings_for_display,

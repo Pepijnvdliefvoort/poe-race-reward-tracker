@@ -35,12 +35,23 @@ body {
 
 .admin-header {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.25rem;
   padding: 1.5rem clamp(1rem, 4vw, 2.5rem);
   border-bottom: 1px solid var(--line);
+}
+
+.admin-header-brand {
+  align-self: flex-start;
+}
+
+.admin-header-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
 }
 
 .admin-eyebrow {
@@ -1522,17 +1533,17 @@ button.admin-db-list-item {
 
 @media (max-width: 768px) {
   .admin-header {
-    flex-direction: column;
-    align-items: stretch;
     gap: 1rem;
     padding-top: max(1rem, env(safe-area-inset-top, 0px));
   }
 
+  .admin-header-nav,
   .admin-header-actions {
     width: 100%;
-    justify-content: stretch;
+    justify-content: flex-start;
   }
 
+  .admin-header-nav .admin-btn,
   .admin-header-actions .admin-btn {
     flex: 1;
     min-height: 44px;
