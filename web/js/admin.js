@@ -109,6 +109,50 @@ let visitorMarkersByIp = {};
 let lastVisitorMapData = null;
 let userFocusedVisitor = false;
 
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function clamp01(x) {
+  return Math.max(0, Math.min(1, x));
+}
+
+function normalizeVisits(visits, minVisits, maxVisits) {
+  // Use log scaling so a single huge IP doesn't flatten the gradient.
+  const v = Math.max(0, Number(visits) || 0);
+  const minV = Math.max(0, Number(minVisits) || 0);
+  const maxV = Math.max(minV, Number(maxVisits) || 0);
+  if (maxV <= minV) return 1;
+
+  const ln = (n) => Math.log(1 + Math.max(0, n));
+  const t = (ln(v) - ln(minV)) / Math.max(1e-9, ln(maxV) - ln(minV));
+  return clamp01(t);
+}
+
+function markerStyleForVisits(visits, minVisits, maxVisits) {
+  const t = normalizeVisits(visits, minVisits, maxVisits);
+
+  // Color ramp (cool -> hot). Keep size constant; adjust color + opacity only.
+  // hue: 200 (blue/cyan) -> 18 (orange/red)
+  // sat: 35% -> 95%
+  // light: 74% -> 48% (low visits are "lighter")
+  const hue = lerp(200, 18, t);
+  const sat = lerp(35, 95, t);
+  const light = lerp(74, 48, t);
+
+  const fillOpacity = lerp(0.25, 0.85, t);
+  const strokeOpacity = lerp(0.35, 0.9, t);
+  const weight = Math.round(lerp(1, 2, t));
+
+  return {
+    radius: 6,
+    color: `hsla(${hue} ${Math.round(sat)}% ${Math.round(light - 10)}% / ${strokeOpacity.toFixed(3)})`,
+    weight,
+    fillColor: `hsl(${hue} ${Math.round(sat)}% ${Math.round(light)}%)`,
+    fillOpacity,
+  };
+}
+
 function formatLocalDateTime(value) {
   if (!value) return "";
   const d = value instanceof Date ? value : new Date(String(value));
@@ -147,14 +191,12 @@ function renderVisitorMap(data) {
 
   // Point-only rendering (no heat scaling).
 
+  const visitCounts = points.map((p) => Number(p?.visits) || 0);
+  const minVisits = visitCounts.length ? Math.min(...visitCounts) : 0;
+  const maxVisits = visitCounts.length ? Math.max(...visitCounts) : 0;
+
   points.forEach((p) => {
-    const m = L.circleMarker([p.lat, p.lng], {
-      radius: 6,
-      color: "#2ab7bf",
-      weight: 2,
-      fillColor: "#ff7a2f",
-      fillOpacity: 0.6,
-    });
+    const m = L.circleMarker([p.lat, p.lng], markerStyleForVisits(p.visits, minVisits, maxVisits));
     const lastSeen = p.lastSeen ? formatLocalDateTime(p.lastSeen) : "";
     m.bindPopup(
       `<strong>${escapeHtml(p.ip)}</strong><br/>Visits: ${p.visits}<br/>${lastSeen ? escapeHtml(lastSeen) : ""}`,
