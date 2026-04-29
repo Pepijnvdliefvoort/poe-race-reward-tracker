@@ -2223,6 +2223,14 @@ def seconds_until_next_tick(start_monotonic: float, delay_seconds: int, now_mono
     return max(0.0, next_tick - now_monotonic)
 
 
+def format_duration_hhmm(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    total_minutes = int(seconds // 60)
+    hh = total_minutes // 60
+    mm = total_minutes % 60
+    return f"{hh:02d}:{mm:02d}"
+
+
 def _install_poller_log_tee() -> None:
     import sys
 
@@ -2332,6 +2340,7 @@ def main() -> None:
     while cfg.max_cycles is None or cycles_done < cfg.max_cycles:
         cycle += 1
         cycles_done += 1
+        cycle_started_monotonic = time.monotonic()
         # Console display: use local time for readability (not stored, console-only)
         cycle_start = datetime.now().strftime("%H:%M:%S")
         print("")
@@ -2389,14 +2398,18 @@ def main() -> None:
             log_line("cycle", f"Reached max-cycles ({cfg.max_cycles}). Stopping.")
             break
 
+        duration_text = format_duration_hhmm(time.monotonic() - cycle_started_monotonic)
         if cfg.poll_interval > 0:
             sleep_seconds = float(cfg.poll_interval)
             # Console display: use local time for readability (not stored, console-only)
             next_run = datetime.now().timestamp() + sleep_seconds
             next_run_text = datetime.fromtimestamp(next_run).strftime("%H:%M:%S")
-            log_line("cycle", f"Cycle {cycle} complete. Sleeping {int(sleep_seconds)}s until {next_run_text}")
+            log_line(
+                "cycle",
+                f"Cycle {cycle} complete in {duration_text}. Sleeping {int(sleep_seconds)}s until {next_run_text}",
+            )
             time.sleep(sleep_seconds)
         else:
-            log_line("cycle", f"Cycle {cycle} complete. Starting next cycle immediately.")
+            log_line("cycle", f"Cycle {cycle} complete in {duration_text}. Starting next cycle immediately.")
 
 

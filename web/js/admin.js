@@ -1291,6 +1291,17 @@ class LogViewer {
 
     const wasNearBottom = this.preEl.scrollHeight - (this.preEl.scrollTop + this.preEl.clientHeight) < 24;
 
+    const parseIsoAssumeUtc = (raw) => {
+      const s = String(raw || "").trim();
+      if (!s) return null;
+      // If the ISO string has no timezone suffix, assume it is UTC.
+      // (Browsers treat "2026-04-29T12:00:00" as local time, which makes UTC logs look "stuck" in UTC.)
+      const hasTz = /([zZ]|[+\-]\d{2}:\d{2})$/.test(s);
+      const normalized = hasTz ? s : `${s}Z`;
+      const d = new Date(normalized);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
     let html = "";
     for (const entry of this.entries) {
       const levelRaw = String(entry?.level || "info").toLowerCase();
@@ -1298,10 +1309,10 @@ class LogViewer {
       const tsRaw = entry?.ts ? String(entry.ts) : "";
       let ts = "";
       if (tsRaw) {
-        const d = new Date(tsRaw);
-        ts = Number.isNaN(d.getTime())
-          ? tsRaw
-          : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const d = parseIsoAssumeUtc(tsRaw);
+        ts = d
+          ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+          : tsRaw;
       }
       const msg = entry?.msg ? String(entry.msg) : "";
       const exc = entry?.exc ? String(entry.exc) : "";
@@ -1907,7 +1918,9 @@ function setupMarketConfigEditor() {
   const formatConfigTimestamp = (value) => {
     // Expected input: ISO-8601 UTC string. Render: dd-MM-yyyy HH:mm
     if (!value) return "";
-    const d = value instanceof Date ? value : new Date(String(value));
+    const raw = value instanceof Date ? value.toISOString() : String(value);
+    const hasTz = /([zZ]|[+\-]\d{2}:\d{2})$/.test(raw.trim());
+    const d = value instanceof Date ? value : new Date(hasTz ? raw : `${raw}Z`);
     if (Number.isNaN(d.getTime())) return String(value);
     const pad2 = (n) => String(n).padStart(2, "0");
     const dd = pad2(d.getDate());
