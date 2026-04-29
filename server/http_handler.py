@@ -79,6 +79,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
+    def handle_one_request(self) -> None:
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            # Client disconnected mid-response (refresh/navigation/proxy timeout).
+            # Treat as a normal cancellation and avoid emitting a traceback.
+            return
+
     def _client_ip(self) -> str:
         return get_client_ip(self.headers.get("X-Forwarded-For"), self.client_address[0])
 

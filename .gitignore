@@ -40,3 +40,5 @@ listings_cache.json
 config.json
 logs/
 data/market.db
+requests/*
+

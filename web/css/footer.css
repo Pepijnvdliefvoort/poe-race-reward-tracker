@@ -31,6 +31,10 @@ canvas {
   text-align: center;
 }
 
+.site-footer p + p {
+  margin-top: 24px;
+}
+
 .site-footer a {
   color: var(--ink);
   text-decoration-color: rgba(255, 122, 47, 0.8);
