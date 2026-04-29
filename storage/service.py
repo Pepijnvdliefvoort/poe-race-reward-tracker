@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -221,6 +221,7 @@ class StorageService:
         listing_preview_rows: list[dict[str, Any]],
         inference_events: list[dict[str, Any]],
         inference_state: tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]] | None = None,
+        late_relist_window_days: int | None = 30,
     ) -> int:
         """
         Store the poll run + one item poll row + listing snapshots + inference events.
@@ -266,6 +267,91 @@ class StorageService:
                 inf_new_listing_rows=int(inference_counts.get("newListingRows", 0)),
                 fetched_for_inference=int(fetched_for_inference),
             )
+
+            # --- Late relist reconciliation (thin-market friendly) ---
+            # If a (fingerprint, seller) pair reappears within the configured window, revert the
+            # previously inferred sale so it no longer counts toward totals.
+            win_days = int(late_relist_window_days) if late_relist_window_days is not None else 0
+            win_days = max(0, min(3650, win_days))
+            late_relist_events: list[dict[str, Any]] = []
+            if win_days > 0:
+                try:
+                    dt = datetime.fromisoformat(str(requested_at_utc))
+                except Exception:
+                    dt = datetime.now(timezone.utc)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                min_cutoff = (dt - timedelta(days=win_days)).isoformat()
+
+                sales_repo = SalesRepo(con)
+                seen_pairs: set[tuple[str, str]] = set()
+                for r in listing_preview_rows or []:
+                    if not isinstance(r, dict):
+                        continue
+                    fp = str(r.get("fingerprint") or "").strip()
+                    seller = str(r.get("sellerName") or "").strip()
+                    if not fp or not seller:
+                        continue
+                    key = (fp, seller)
+                    if key in seen_pairs:
+                        continue
+                    seen_pairs.add(key)
+
+                    reverted_rule: str | None = None
+                    updated = sales_repo.revert_latest_sale(
+                        item_variant_id=int(variant_id),
+                        rule="likely_instant_sale",
+                        fingerprint=fp,
+                        seller=seller,
+                        min_occurred_at_utc=min_cutoff,
+                        occurred_at_or_before_utc=str(requested_at_utc),
+                        reverted_at_utc=_utc_now_iso(),
+                        reverted_by_item_poll_id=int(item_poll_id),
+                        reverted_reason="relist_same_seller_late",
+                    )
+                    if updated:
+                        reverted_rule = "likely_instant_sale"
+                    else:
+                        updated = sales_repo.revert_latest_sale(
+                            item_variant_id=int(variant_id),
+                            rule="likely_non_instant_online_sale",
+                            fingerprint=fp,
+                            seller=seller,
+                            min_occurred_at_utc=min_cutoff,
+                            occurred_at_or_before_utc=str(requested_at_utc),
+                            reverted_at_utc=_utc_now_iso(),
+                            reverted_by_item_poll_id=int(item_poll_id),
+                            reverted_reason="relist_same_seller_late",
+                        )
+                        if updated:
+                            reverted_rule = "likely_non_instant_online_sale"
+
+                    if updated and reverted_rule:
+                        late_relist_events.append(
+                            {
+                                "rule": "relist_same_seller_late",
+                                "revertsSaleRule": reverted_rule,
+                                "windowDays": int(win_days),
+                                "itemKey": None,
+                                "fingerprint": fp,
+                                "seller": seller,
+                                "cycle": int(cycle_number),
+                            }
+                        )
+
+                if late_relist_events:
+                    # Expose in persisted inference_events and UI.
+                    inference_events = list(inference_events or []) + late_relist_events
+                    # Also bump the per-poll relist count for visibility (does not change sale deltas).
+                    inference_counts = dict(inference_counts or {})
+                    inference_counts["relistSameSeller"] = int(inference_counts.get("relistSameSeller", 0)) + len(
+                        late_relist_events
+                    )
+                    # Keep the DB's item_polls summary consistent with what we expose in payloads.
+                    con.execute(
+                        "UPDATE item_polls SET inf_relist_same_seller = ? WHERE id = ?",
+                        (int(inference_counts["relistSameSeller"]), int(item_poll_id)),
+                    )
 
             polls.replace_listing_snapshots(item_poll_id=item_poll_id, rows=listing_preview_rows)
             polls.replace_inference_events(item_poll_id=item_poll_id, events=inference_events)
@@ -317,6 +403,10 @@ class StorageService:
             if not isinstance(ev, dict):
                 continue
             rule = str(ev.get("rule") or "")
+            if rule == "relist_same_seller_late":
+                # Late relist reconciliation is handled earlier in `write_poll_result` so it can apply
+                # a rolling time window. Keep this rule here only for persistence/visibility.
+                continue
             if rule == "relist_same_seller":
                 seller = str(ev.get("seller") or "").strip()
                 fp = str(ev.get("fingerprint") or "").strip()

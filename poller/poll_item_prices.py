@@ -37,6 +37,7 @@ TRADE_SEARCH_RESULT_MAX = 100
 # /fetch traffic for deep markets; reduces false "vanished" counts from a shallow top-N slice).
 # Pricing and listing hover preview still use TOP_IDS_LIMIT only.
 DEFAULT_INFERENCE_LISTINGS_FETCH_CAP = TRADE_SEARCH_RESULT_MAX
+DEFAULT_LATE_RELIST_WINDOW_DAYS = 30
 DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
@@ -183,6 +184,21 @@ def load_inference_sale_unlist_if_above_baseline_pct(storage: StorageService) ->
     if not math.isfinite(raw):
         raw = 30.0
     return max(0.0, min(1000.0, float(raw)))
+
+
+def load_late_relist_window_days(storage: StorageService) -> int:
+    """
+    How long after an inferred sale we still treat a same-seller reappearance as a relist
+    and revert that sale in the DB.
+
+    Config key: app_config.market.late_relist_window_days (default 30).
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = int(float(data.get("late_relist_window_days", DEFAULT_LATE_RELIST_WINDOW_DAYS)))
+    except Exception:
+        raw = DEFAULT_LATE_RELIST_WINDOW_DAYS
+    return max(0, min(3650, int(raw)))
 
 
 @dataclass(frozen=True)
@@ -2094,6 +2110,7 @@ def run_cycle(
                 listing_preview_rows=listing_preview_rows,
                 inference_events=inf.events,
                 inference_state=(curr_signals, new_pending_inst, new_pending_on),
+                late_relist_window_days=load_late_relist_window_days(storage),
             )
 
             cycle_est = (

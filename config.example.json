@@ -12,6 +12,7 @@
   "inference_truncation_safe_margin_pct": 6.0,
   "inference_sale_baseline_history_cycles": 10,
   "inference_sale_unlist_if_above_baseline_pct": 30.0,
+  "late_relist_window_days": 30,
 
   "notify_flip_min_profit_mirrors": 1.0,
   "notify_always_if_cheap_enabled": true,

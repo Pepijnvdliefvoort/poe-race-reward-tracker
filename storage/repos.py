@@ -598,6 +598,7 @@ class SalesRepo:
         rule: str,
         fingerprint: str,
         seller: str,
+        min_occurred_at_utc: str | None = None,
         occurred_at_or_before_utc: str,
         reverted_at_utc: str,
         reverted_by_item_poll_id: int,
@@ -611,6 +612,7 @@ class SalesRepo:
         r = str(rule)
         if r not in {"likely_instant_sale", "likely_non_instant_online_sale"}:
             return 0
+        min_cutoff = str(min_occurred_at_utc) if isinstance(min_occurred_at_utc, str) and min_occurred_at_utc.strip() else None
         cur = self._con.execute(
             """
             UPDATE sales
@@ -626,6 +628,7 @@ class SalesRepo:
                 AND s.seller = ?
                 AND s.buyer = ''
                 AND s.reverted_at_utc IS NULL
+                AND (? IS NULL OR s.occurred_at_utc >= ?)
                 AND s.occurred_at_utc <= ?
               ORDER BY s.occurred_at_utc DESC, s.id DESC
               LIMIT 1
@@ -639,6 +642,8 @@ class SalesRepo:
                 r,
                 str(fingerprint),
                 str(seller),
+                min_cutoff,
+                min_cutoff,
                 str(occurred_at_or_before_utc),
             ),
         )
