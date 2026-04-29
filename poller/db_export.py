@@ -100,6 +100,32 @@ def _zip_file(src_path: Path, zip_path: Path) -> None:
         zf.write(src_path, arcname=src_path.name)
 
 
+def _discord_webhook_post_file(
+    *,
+    webhook_url: str,
+    content: str,
+    file_path: Path,
+    timeout: float,
+) -> requests.Response:
+    """
+    Post a file attachment to a Discord webhook.
+
+    Important: do NOT reuse the poller's shared requests.Session here, because the poller
+    sets a default `Content-Type: application/json` header for PoE API calls, which breaks
+    Discord multipart uploads (Discord returns HTTP 400 code 50109).
+    """
+    # Keep headers minimal so `requests` can set the correct multipart boundary.
+    headers = {"Accept": "*/*"}
+    with file_path.open("rb") as fh:
+        return requests.post(
+            webhook_url,
+            headers=headers,
+            data={"content": content},
+            files={"file": (file_path.name, fh, "application/zip")},
+            timeout=timeout,
+        )
+
+
 def maybe_export_db_to_discord(
     *,
     storage: StorageService,
@@ -157,13 +183,12 @@ def maybe_export_db_to_discord(
                 ),
             )
             return
-        with zip_path.open("rb") as fh:
-            resp = session.post(
-                webhook_url,
-                data={"content": content},
-                files={"file": (zip_path.name, fh, "application/zip")},
-                timeout=90.0,
-            )
+        resp = _discord_webhook_post_file(
+            webhook_url=webhook_url,
+            content=content,
+            file_path=zip_path,
+            timeout=90.0,
+        )
         try:
             resp.raise_for_status()
         except requests.HTTPError as exc:
@@ -233,13 +258,12 @@ def export_db_to_discord_now(
     size_mb = size_bytes / (1024 * 1024)
     ts = int(now_utc.timestamp())
     content = f"Manual DB export at <t:{ts}:F>, `{zip_path.name}` ({size_mb:.2f} MiB)."
-    with zip_path.open("rb") as fh:
-        resp = session.post(
-            webhook_url,
-            data={"content": content},
-            files={"file": (zip_path.name, fh, "application/zip")},
-            timeout=90.0,
-        )
+    resp = _discord_webhook_post_file(
+        webhook_url=webhook_url,
+        content=content,
+        file_path=zip_path,
+        timeout=90.0,
+    )
     try:
         resp.raise_for_status()
     except requests.HTTPError as exc:
