@@ -422,9 +422,8 @@ class ServerStorage:
         if mode_norm not in {"all", "diff"}:
             mode_norm = "all"
 
-        cur_norm = str(currency or "mirror").strip().lower()
-        if cur_norm not in {"mirror"}:
-            cur_norm = "mirror"
+        # UI displays values in mirror equivalents, matching the main dashboard logic.
+        cur_norm = "mirror"
 
         con = self.connect()
         con.row_factory = sqlite3.Row
@@ -453,7 +452,7 @@ class ServerStorage:
                 """
             ).fetchall()
 
-            # Market mins for latest poll per variant (mirror-only).
+            # Market mins for latest poll per variant (mirror equivalents across currencies).
             market_rows = con.execute(
                 """
                 WITH latest_poll AS (
@@ -463,17 +462,26 @@ class ServerStorage:
                 )
                 SELECT
                   ip.item_variant_id AS variant_id,
-                  MIN(ls.amount) AS market_min
+                  MIN(
+                    CASE
+                      WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
+                      WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
+                        THEN ls.amount / NULLIF(pr.divines_per_mirror, 0)
+                      WHEN LOWER(TRIM(ls.currency)) IN ('exalted', 'exalt', 'exa', 'exalted orb', 'exalted orbs')
+                        THEN (ls.amount / 60.0) / NULLIF(pr.divines_per_mirror, 0)
+                      ELSE NULL
+                    END
+                  ) AS market_min
                 FROM latest_poll lp
                 JOIN item_polls ip ON ip.id = lp.item_poll_id
+                JOIN poll_runs pr ON pr.id = ip.poll_run_id
                 JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
-                WHERE ls.currency = ?
-                  AND ls.amount IS NOT NULL
+                WHERE ls.amount IS NOT NULL
                   AND ls.amount > 0
                   AND (? = 0 OR ls.is_instant_buyout = 1)
                 GROUP BY ip.item_variant_id
                 """,
-                (cur_norm, 1 if instant_only else 0),
+                (1 if instant_only else 0,),
             ).fetchall()
             market_min_by_variant = {int(r["variant_id"]): (float(r["market_min"]) if r["market_min"] is not None else None) for r in market_rows}
 
@@ -489,18 +497,27 @@ class ServerStorage:
                 SELECT
                   ip.item_variant_id AS variant_id,
                   ls.seller_name,
-                  MIN(ls.amount) AS account_min
+                  MIN(
+                    CASE
+                      WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
+                      WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
+                        THEN ls.amount / NULLIF(pr.divines_per_mirror, 0)
+                      WHEN LOWER(TRIM(ls.currency)) IN ('exalted', 'exalt', 'exa', 'exalted orb', 'exalted orbs')
+                        THEN (ls.amount / 60.0) / NULLIF(pr.divines_per_mirror, 0)
+                      ELSE NULL
+                    END
+                  ) AS account_min
                 FROM latest_poll lp
                 JOIN item_polls ip ON ip.id = lp.item_poll_id
+                JOIN poll_runs pr ON pr.id = ip.poll_run_id
                 JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
-                WHERE ls.currency = ?
-                  AND ls.amount IS NOT NULL
+                WHERE ls.amount IS NOT NULL
                   AND ls.amount > 0
                   AND (? = 0 OR ls.is_instant_buyout = 1)
                   AND ls.seller_name IN ({placeholders})
                 GROUP BY ip.item_variant_id, ls.seller_name
                 """
-                params: list[Any] = [cur_norm, 1 if instant_only else 0]
+                params: list[Any] = [1 if instant_only else 0]
                 params.extend(cleaned_accounts)
                 acct_rows = con.execute(sql, params).fetchall()
                 for r in acct_rows:
