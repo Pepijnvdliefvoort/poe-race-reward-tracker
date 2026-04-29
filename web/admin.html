@@ -167,12 +167,19 @@
     <section class="admin-section">
       <div class="admin-section-head admin-section-head-row">
         <div>
-          <h2>Alerting config</h2>
+          <h2>App config</h2>
           <p class="admin-muted">
-            This edits <code>app_config.market</code> (SQLite). Changes affect alerting behavior.
+            This edits <code>app_config.&lt;key&gt;</code> (SQLite). Select a key to edit, then save.
           </p>
         </div>
         <div class="admin-header-actions">
+          <label class="admin-muted" style="display: inline-flex; gap: 8px; align-items: center">
+            <span>Key</span>
+            <select id="marketCfgKey" class="admin-appconfig-input" style="min-width: 160px">
+              <option value="market">market</option>
+              <option value="db_export">db_export</option>
+            </select>
+          </label>
           <span id="marketCfgHint" class="admin-muted admin-marketcfg-status" aria-live="polite"></span>
           <button id="marketCfgSaveBtn" class="admin-btn" type="button">Save</button>
         </div>

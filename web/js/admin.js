@@ -1887,10 +1887,12 @@ function setupDeleteSalesTool() {
 }
 
 function setupMarketConfigEditor() {
-  const KEY = "market";
+  const KEY_DEFAULT = "market";
+  const MARKET_META_KEY = "market";
   const jsonEl = document.getElementById("marketCfgJson");
   const prettyEl = document.getElementById("marketCfgJsonPretty");
   const fieldsEl = document.getElementById("marketCfgFields");
+  const keyEl = document.getElementById("marketCfgKey");
   const saveBtn = document.getElementById("marketCfgSaveBtn");
   const fmtBtn = document.getElementById("marketCfgFormatBtn");
   const reloadBtn = document.getElementById("marketCfgReloadBtn");
@@ -2030,9 +2032,24 @@ function setupMarketConfigEditor() {
     },
   };
 
+  const getSelectedKey = () => {
+    const raw = String(keyEl?.value || "").trim();
+    return raw || KEY_DEFAULT;
+  };
+
   const renderFields = (value) => {
     fieldsEl.innerHTML = "";
     currentParsed = value;
+
+    // The "nice" fields editor is designed for market config only.
+    const selectedKey = getSelectedKey();
+    if (selectedKey !== MARKET_META_KEY) {
+      const note = document.createElement("p");
+      note.className = "admin-muted";
+      note.textContent = "Field editor is available for market only. Use Advanced JSON for this key.";
+      fieldsEl.appendChild(note);
+      return;
+    }
 
     // Only render a nice editor for plain objects (the expected app_config shape).
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -2158,11 +2175,12 @@ function setupMarketConfigEditor() {
     return out;
   };
 
-  const loadMarket = async () => {
+  const loadKey = async () => {
+    const key = getSelectedKey();
     setHint("Loading…");
     reloadBtn.disabled = true;
     try {
-      const payload = await fetchJson(`/api/admin/app-config/get?key=${encodeURIComponent(KEY)}`);
+      const payload = await fetchJson(`/api/admin/app-config/get?key=${encodeURIComponent(key)}`);
       if (!payload?.ok) {
         setHint(payload?.error || "Not found.", true);
         return;
@@ -2175,9 +2193,13 @@ function setupMarketConfigEditor() {
       } catch {
         renderFields(null);
       }
-      setHint(payload?.updated_at_utc ? `Loaded · updated ${formatConfigTimestamp(payload.updated_at_utc)}` : "Loaded.");
+      setHint(
+        payload?.updated_at_utc
+          ? `Loaded ${key} · updated ${formatConfigTimestamp(payload.updated_at_utc)}`
+          : `Loaded ${key}.`,
+      );
     } catch (e) {
-      setHint(adminEndpointErrorMessage(e, "Load market config"), true);
+      setHint(adminEndpointErrorMessage(e, `Load ${key} config`), true);
     } finally {
       reloadBtn.disabled = false;
     }
@@ -2201,6 +2223,7 @@ function setupMarketConfigEditor() {
   };
 
   const saveKey = async () => {
+    const key = getSelectedKey();
     // Prefer the form editor (fields) when possible.
     let raw = "";
     try {
@@ -2233,7 +2256,7 @@ function setupMarketConfigEditor() {
       const payload = await fetchJsonWithInit("/api/admin/app-config/set", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: KEY, value_json: raw }),
+        body: JSON.stringify({ key, value_json: raw }),
       });
       if (!payload?.ok) {
         setHint(payload?.error || "Save failed.", true);
@@ -2249,9 +2272,13 @@ function setupMarketConfigEditor() {
           // ignore
         }
       }
-      setHint(payload?.updated_at_utc ? `Saved · updated ${formatConfigTimestamp(payload.updated_at_utc)}` : "Saved.");
+      setHint(
+        payload?.updated_at_utc
+          ? `Saved ${key} · updated ${formatConfigTimestamp(payload.updated_at_utc)}`
+          : `Saved ${key}.`,
+      );
     } catch (e) {
-      setHint(adminEndpointErrorMessage(e, "Save market config"), true);
+      setHint(adminEndpointErrorMessage(e, `Save ${key} config`), true);
     } finally {
       saveBtn.disabled = false;
     }
@@ -2259,7 +2286,8 @@ function setupMarketConfigEditor() {
 
   saveBtn.addEventListener("click", () => void saveKey());
   fmtBtn.addEventListener("click", () => formatJson());
-  reloadBtn.addEventListener("click", () => void loadMarket());
+  reloadBtn.addEventListener("click", () => void loadKey());
+  keyEl?.addEventListener("change", () => void loadKey());
 
   jsonEl.addEventListener("input", () => {
     syncHighlight();
@@ -2285,7 +2313,7 @@ function setupMarketConfigEditor() {
 
   // Initial paint
   syncHighlight();
-  void loadMarket();
+  void loadKey();
 }
 
 function setupRestartPoller() {
