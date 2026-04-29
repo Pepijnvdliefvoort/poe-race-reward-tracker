@@ -2041,15 +2041,8 @@ function setupMarketConfigEditor() {
     fieldsEl.innerHTML = "";
     currentParsed = value;
 
-    // The "nice" fields editor is designed for market config only.
     const selectedKey = getSelectedKey();
-    if (selectedKey !== MARKET_META_KEY) {
-      const note = document.createElement("p");
-      note.className = "admin-muted";
-      note.textContent = "Field editor is available for market only. Use Advanced JSON for this key.";
-      fieldsEl.appendChild(note);
-      return;
-    }
+    const canUseMeta = selectedKey === MARKET_META_KEY;
 
     // Only render a nice editor for plain objects (the expected app_config shape).
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -2061,10 +2054,12 @@ function setupMarketConfigEditor() {
     }
 
     const keys = Object.keys(value).sort((a, b) => {
-      const aHas = Object.prototype.hasOwnProperty.call(META, a);
-      const bHas = Object.prototype.hasOwnProperty.call(META, b);
-      if (aHas && !bHas) return -1;
-      if (!aHas && bHas) return 1;
+      if (canUseMeta) {
+        const aHas = Object.prototype.hasOwnProperty.call(META, a);
+        const bHas = Object.prototype.hasOwnProperty.call(META, b);
+        if (aHas && !bHas) return -1;
+        if (!aHas && bHas) return 1;
+      }
       return a.localeCompare(b);
     });
     if (!keys.length) {
@@ -2081,7 +2076,7 @@ function setupMarketConfigEditor() {
 
       const labelWrap = document.createElement("div");
       labelWrap.className = "admin-marketcfg-label";
-      const meta = META[k] || null;
+      const meta = canUseMeta ? META[k] || null : null;
       const title = document.createElement("strong");
       title.textContent = meta?.label || k;
       const help = document.createElement("div");
