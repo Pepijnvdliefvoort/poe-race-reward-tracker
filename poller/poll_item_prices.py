@@ -2354,6 +2354,19 @@ def main() -> None:
             log_line("cycle", "DB export webhook active; will upload a DB snapshot once every 24h.")
             logged_db_export_webhook_cfg = True
 
+        if db_export_webhook_url:
+            maybe_export_db_to_discord(
+                storage=storage,
+                session=session,
+                cfg=DbExportConfig(
+                    webhook_url=db_export_webhook_url,
+                    tz_offset_minutes=120,  # GMT+2
+                    schedule_hour=12,
+                    schedule_minute=0,
+                ),
+                log=log_line,
+            )
+
         try:
             divines_per_mirror = run_cycle(
                 session, rate_limiter, item_specs, cycle,
@@ -2370,19 +2383,6 @@ def main() -> None:
             log_line("error", f"Request error during cycle {cycle}: {exc}")
         except Exception as exc:  # noqa: BLE001
             log_line("error", f"Unexpected error during cycle {cycle}: {exc}")
-
-        if db_export_webhook_url:
-            maybe_export_db_to_discord(
-                storage=storage,
-                session=session,
-                cfg=DbExportConfig(
-                    webhook_url=db_export_webhook_url,
-                    tz_offset_minutes=120,  # GMT+2
-                    schedule_hour=12,
-                    schedule_minute=0,
-                ),
-                log=log_line,
-            )
 
         if cfg.max_cycles is not None and cycles_done >= cfg.max_cycles:
             log_line("cycle", f"Reached max-cycles ({cfg.max_cycles}). Stopping.")

@@ -142,17 +142,41 @@ def maybe_export_db_to_discord(
             use_path = compacted_path
         _zip_file(use_path, zip_path)
 
-        size_mb = zip_path.stat().st_size / (1024 * 1024)
+        size_bytes = int(zip_path.stat().st_size)
+        size_mb = size_bytes / (1024 * 1024)
         ts = int(now_utc.timestamp())
         content = f"Daily DB export at <t:{ts}:F>, `{zip_path.name}` ({size_mb:.2f} MiB)."
+        # Discord upload limits vary by server / plan; common default is 25 MiB.
+        # If we exceed it, Discord returns HTTP 400 with a JSON body; preflight for clearer logs.
+        if size_bytes > 25 * 1024 * 1024:
+            log(
+                "warn",
+                (
+                    "DB export zip is too large for typical Discord webhook limits "
+                    f"({size_mb:.2f} MiB > 25.00 MiB): {zip_path}"
+                ),
+            )
+            return
         with zip_path.open("rb") as fh:
             resp = session.post(
                 webhook_url,
                 data={"content": content},
                 files={"file": (zip_path.name, fh, "application/zip")},
-                timeout=60.0,
+                timeout=90.0,
             )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            text = ""
+            try:
+                text = (resp.text or "").strip()
+            except Exception:  # noqa: BLE001
+                text = ""
+            if len(text) > 1200:
+                text = text[:1200] + "…"
+            status = getattr(resp, "status_code", None)
+            suffix = f" Body: {text}" if text else ""
+            raise requests.HTTPError(f"{exc} (HTTP {status}).{suffix}") from exc
 
         storage.set_config(
             key="db_export",
@@ -163,7 +187,7 @@ def maybe_export_db_to_discord(
                 "schedule_hour": int(cfg.schedule_hour),
                 "schedule_minute": int(cfg.schedule_minute),
                 "last_uploaded_file": zip_path.name,
-                "last_uploaded_size_bytes": int(zip_path.stat().st_size),
+                "last_uploaded_size_bytes": size_bytes,
             },
         )
         log("cycle", f"Uploaded daily DB export to Discord: {zip_path.name} ({size_mb:.2f} MiB)")
