@@ -1198,7 +1198,8 @@ def normalize_price_currency(price: dict[str, Any]) -> tuple[str, float] | None:
         return "divine", float(amount)
     if normalized_currency in {"exalted", "exalt", "exa", "exalted orb", "exalted orbs"}:
         return "exalted", float(amount)
-
+    if normalized_currency in {"ancient-reliquary-key", "ancient reliquary key", "ancient reliquary keys", "reliquary key", "reliquary keys"}:
+        return "ancient-reliquary-key", float(amount)
     return None
 
 
@@ -1230,6 +1231,8 @@ def find_cheapest_supported_listing_price(
         if normalized is None:
             continue
         currency, amount = normalized
+        if currency not in {"mirror", "divine", "exalted"}:
+            continue
         mirror_equiv = to_mirror_equivalent(float(amount), str(currency), dpm)
         if not (isinstance(mirror_equiv, (int, float)) and math.isfinite(float(mirror_equiv)) and mirror_equiv > 0):
             continue
@@ -1392,6 +1395,8 @@ def build_listing_preview_entries(
     )
 
     # Normalize + compute comparable value so mixed currencies can be sorted correctly.
+    # Currencies that cannot be converted to mirrors (e.g. ancient reliquary keys) are kept
+    # for UI display but always sorted to the bottom.
     enriched: list[tuple[float, int, dict[str, Any]]] = []
     for idx, entry in enumerate(listings or []):
         if not isinstance(entry, dict):
@@ -1402,10 +1407,14 @@ def build_listing_preview_entries(
         if normalized is None:
             continue
         currency, amount = normalized
-        mirror_equiv = to_mirror_equivalent(float(amount), str(currency), dpm)
-        if not (isinstance(mirror_equiv, (int, float)) and math.isfinite(float(mirror_equiv)) and mirror_equiv > 0):
-            continue
-        enriched.append((float(mirror_equiv), int(idx), entry))
+        if currency == "ancient-reliquary-key":
+            sort_value = 1e30
+        else:
+            mirror_equiv = to_mirror_equivalent(float(amount), str(currency), dpm)
+            if not (isinstance(mirror_equiv, (int, float)) and math.isfinite(float(mirror_equiv)) and mirror_equiv > 0):
+                continue
+            sort_value = float(mirror_equiv)
+        enriched.append((float(sort_value), int(idx), entry))
 
     # Sort by real value; keep fetch order as a tie-breaker.
     enriched.sort(key=lambda t: (t[0], t[1]))
@@ -1523,6 +1532,8 @@ def build_top_listing_summary(
             continue
 
         currency, amount = normalized
+        if currency not in {"mirror", "divine", "exalted"}:
+            continue
         mirror_equiv = to_mirror_equivalent(float(amount), str(currency), dpm)
         if not (isinstance(mirror_equiv, (int, float)) and math.isfinite(float(mirror_equiv)) and mirror_equiv > 0):
             continue
@@ -1588,6 +1599,8 @@ def find_cheapest_listing_icon(
             continue
 
         currency, amount = normalized
+        if currency not in {"mirror", "divine", "exalted"}:
+            continue
         amount_mirror = to_mirror_equivalent(amount, currency, divines_per_mirror)
 
         item_data = entry.get("item")
