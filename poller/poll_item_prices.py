@@ -16,6 +16,7 @@ import requests
 from .sale_inference_engine import (
     evaluate_listing_transition,
     fingerprint_trade_item,
+    is_instant_buyout_listing,
     listing_signals_from_fetch,
     non_instant_vanished_seller_accounts_for_online_probe,
 )
@@ -1420,9 +1421,11 @@ def build_listing_preview_entries(
         price = listing.get("price") if isinstance(listing.get("price"), dict) else None
         price_text, amount, currency = _format_listing_preview_price(price)
 
-        note = str(listing.get("note") or "")
-        buyout_type = str(price.get("type") or "") if isinstance(price, dict) else ""
-        is_instant_buyout = "b/o" in buyout_type.lower() or "~b/o" in note.lower()
+        is_instant_buyout = is_instant_buyout_listing(
+            listing,
+            price,
+            allow_fixed_price_fallback=False,
+        )
 
         indexed = listing.get("indexed") if isinstance(listing.get("indexed"), str) else None
 

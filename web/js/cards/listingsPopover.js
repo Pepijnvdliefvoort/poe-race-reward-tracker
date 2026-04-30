@@ -300,7 +300,7 @@ function renderListingsPreview(entry, payload) {
 
     const buyout = document.createElement("span");
     buyout.className = `buyout-badge ${rowData.isInstantBuyout ? "yes" : "no"}`;
-    buyout.textContent = rowData.isInstantBuyout ? "Instant buyout" : "Negotiable";
+    buyout.textContent = rowData.isInstantBuyout ? "Instant trade" : "In-person trade";
 
     top.append(price, buyout);
 
