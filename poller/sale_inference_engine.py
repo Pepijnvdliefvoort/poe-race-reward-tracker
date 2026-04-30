@@ -138,21 +138,34 @@ def _mirror_equivalent(amount: float, currency: str, divines_per_mirror: float) 
     return float("nan")
 
 
-def _is_instant_buyout(listing: dict[str, Any], price: dict[str, Any] | None) -> bool:
+def _is_instant_buyout(
+    listing: dict[str, Any],
+    price: dict[str, Any] | None,
+    *,
+    allow_fixed_price_fallback: bool,
+) -> bool:
     """
     Heuristic for "instant-buyout-like" listings.
 
-    Token-only rule (deterministic for psapi listings):
+    Preferred rule (deterministic for psapi listings):
     - `whisper_token` present  => non-instant (manual whisper flow)
     - `hideout_token` present  => instant (hideout invite / securable flow)
+
+    Fallback rule:
+    - If neither token is present, fall back to fixed-price signals (`~b/o` / `price.type` contains `b/o`).
+      This keeps inference aligned with the UI preview's `isInstantBuyout` flag.
     """
     if bool(listing.get("whisper_token")):
         return False
     if bool(listing.get("hideout_token")):
         return True
 
-    # If neither token is present, treat as non-instant / ignore for instant-sale inference.
-    return False
+    if not allow_fixed_price_fallback:
+        return False
+
+    note = str(listing.get("note") or "").lower()
+    ptype = str(price.get("type") or "").lower() if isinstance(price, dict) else ""
+    return ("b/o" in ptype) or ("~b/o" in note)
 
 
 def extract_listing_seller_name(entry: dict[str, Any]) -> str:
@@ -182,6 +195,20 @@ def listing_signals_from_fetch(
     divines_per_mirror: float,
 ) -> list[dict[str, Any]]:
     """One row per fetched listing with fields needed for inference + UI."""
+    # Prefer the token-based "securable" signals when available. However, some trade payloads
+    # omit tokens entirely; in that case, fall back to fixed-price heuristics so sale inference
+    # doesn't go dark.
+    saw_any_tokens = False
+    for entry in listings or []:
+        listing = entry.get("listing") if isinstance(entry, dict) else None
+        if not isinstance(listing, dict):
+            continue
+        if bool(listing.get("hideout_token")) or bool(listing.get("whisper_token")):
+            saw_any_tokens = True
+            break
+
+    allow_fixed_price_fallback = not saw_any_tokens
+
     out: list[dict[str, Any]] = []
     for entry in listings:
         if not isinstance(entry, dict):
@@ -193,7 +220,11 @@ def listing_signals_from_fetch(
         price = listing.get("price") if isinstance(listing.get("price"), dict) else None
         fp = fingerprint_trade_item(item if isinstance(item, dict) else None)
         seller = extract_listing_seller_name(entry)
-        instant = _is_instant_buyout(listing, price)
+        instant = _is_instant_buyout(
+            listing,
+            price,
+            allow_fixed_price_fallback=allow_fixed_price_fallback,
+        )
         seller_online = extract_listing_account_online(entry)
         mirror_eq: float | None = None
         price_amount: float | None = None
