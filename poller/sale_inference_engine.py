@@ -148,7 +148,7 @@ def _is_instant_buyout(
     whisper_msg = listing.get("whisper")
     if isinstance(whisper_msg, str) and whisper_msg.strip():
         return False
-    else
+    else:
         return True
 
     # if bool(listing.get("whisper_token")):
