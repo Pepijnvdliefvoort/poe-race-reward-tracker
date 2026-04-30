@@ -133,20 +133,22 @@ function markerStyleForVisits(visits, minVisits, maxVisits) {
   const t = normalizeVisits(visits, minVisits, maxVisits);
 
   // Color ramp (cool -> hot). Keep size constant; adjust color + opacity only.
-  // hue: 200 (blue/cyan) -> 18 (orange/red)
-  // sat: 35% -> 95%
-  // light: 74% -> 48% (low visits are "lighter")
-  const hue = lerp(200, 18, t);
-  const sat = lerp(35, 95, t);
-  const light = lerp(74, 48, t);
+  // Prefer a high-contrast "cold" color so low-visit dots remain visible on the (bluish) basemap.
+  // hue: 140 (green) -> 18 (orange/red)
+  // sat: 70% -> 95%
+  // light: 58% -> 45%
+  const hue = lerp(140, 18, t);
+  const sat = lerp(70, 95, t);
+  const light = lerp(58, 45, t);
 
-  const fillOpacity = lerp(0.25, 0.85, t);
-  const strokeOpacity = lerp(0.35, 0.9, t);
-  const weight = Math.round(lerp(1, 2, t));
+  // Increase minimum opacity/outline so 1-2 visits are still readable.
+  const fillOpacity = lerp(0.55, 0.9, t);
+  const strokeOpacity = lerp(0.85, 0.95, t);
+  const weight = Math.round(lerp(2, 3, t));
 
   return {
-    radius: 6,
-    color: `hsla(${hue} ${Math.round(sat)}% ${Math.round(light - 10)}% / ${strokeOpacity.toFixed(3)})`,
+    radius: 7,
+    color: `hsla(${hue} ${Math.round(sat)}% ${Math.round(light - 18)}% / ${strokeOpacity.toFixed(3)})`,
     weight,
     fillColor: `hsl(${hue} ${Math.round(sat)}% ${Math.round(light)}%)`,
     fillOpacity,

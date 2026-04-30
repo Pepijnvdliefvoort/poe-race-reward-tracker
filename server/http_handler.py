@@ -628,6 +628,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 req_path,
             )
 
+        if req_path in {"/compare", "/compare/"}:
+            record_site_visit(
+                get_client_ip(self.headers.get("X-Forwarded-For"), self.client_address[0]),
+                req_path,
+            )
+
         if parsed.path == "/api/prices":
             payload = load_price_data()
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
