@@ -144,28 +144,24 @@ def _is_instant_buyout(
     *,
     allow_fixed_price_fallback: bool,
 ) -> bool:
-    """
-    Heuristic for "instant-buyout-like" listings.
 
-    Preferred rule (deterministic for psapi listings):
-    - `whisper_token` present  => non-instant (manual whisper flow)
-    - `hideout_token` present  => instant (hideout invite / securable flow)
-
-    Fallback rule:
-    - If neither token is present, fall back to fixed-price signals (`~b/o` / `price.type` contains `b/o`).
-      This keeps inference aligned with the UI preview's `isInstantBuyout` flag.
-    """
-    if bool(listing.get("whisper_token")):
+    whisper_msg = listing.get("whisper")
+    if isinstance(whisper_msg, str) and whisper_msg.strip():
         return False
-    if bool(listing.get("hideout_token")):
+    else
         return True
 
-    if not allow_fixed_price_fallback:
-        return False
+    # if bool(listing.get("whisper_token")):
+    #     return False
+    # if bool(listing.get("hideout_token")):
+    #     return True
 
-    note = str(listing.get("note") or "").lower()
-    ptype = str(price.get("type") or "").lower() if isinstance(price, dict) else ""
-    return ("b/o" in ptype) or ("~b/o" in note)
+    # if not allow_fixed_price_fallback:
+    #     return False
+
+    # note = str(listing.get("note") or "").lower()
+    # ptype = str(price.get("type") or "").lower() if isinstance(price, dict) else ""
+    # return ("b/o" in ptype) or ("~b/o" in note)
 
 
 def extract_listing_seller_name(entry: dict[str, Any]) -> str:
