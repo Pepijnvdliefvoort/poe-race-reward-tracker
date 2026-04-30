@@ -148,15 +148,15 @@ def _is_instant_buyout(
     Classify a listing as instant vs non-instant.
 
     Intentional rule:
-    - If `listing.whisper` is present => non-instant (manual whisper flow)
-    - Otherwise => instant
+    - If `listing.fee` is present (and > 0) => instant
+    - Otherwise => non-instant
 
     Notes:
     - `price` and `allow_fixed_price_fallback` are accepted for backward compatibility with older callers,
       but are intentionally ignored by this rule.
     """
-    whisper_msg = listing.get("whisper")
-    return not (isinstance(whisper_msg, str) and whisper_msg.strip())
+    fee = listing.get("fee")
+    return isinstance(fee, (int, float)) and float(fee) > 0
 
 
 def is_instant_buyout_listing(
