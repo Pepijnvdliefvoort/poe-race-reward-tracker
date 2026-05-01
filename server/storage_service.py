@@ -397,7 +397,7 @@ class ServerStorage:
         accounts: list[str],
         mode: str = "all",
         currency: str = "mirror",
-        instant_only: bool = True,
+        instant_only: bool = False,
     ) -> dict[str, Any]:
         """
         Compare market-lowest listings vs lowest listings for given seller accounts.
@@ -428,6 +428,42 @@ class ServerStorage:
         con = self.connect()
         con.row_factory = sqlite3.Row
         try:
+            # If an account has an instant listing, compare against the instant market floor.
+            # If not, fall back to non-instant floors so users still see meaningful deltas.
+            instant_only_by_account: dict[str, bool] = {}
+            if cleaned_accounts:
+                for acct in cleaned_accounts:
+                    where_seller, seller_params = (None, None)  # type: ignore[assignment]
+                    # Local helper duplicated below; keep in sync.
+                    t = str(acct or "").strip()
+                    if not t:
+                        instant_only_by_account[acct] = bool(instant_only)
+                        continue
+                    if "#" in t:
+                        where_seller, seller_params = "(ls.seller_name = ?)", [t]
+                    else:
+                        where_seller, seller_params = "(ls.seller_name LIKE ?)", [f"{t}#%"]
+                    row = con.execute(
+                        f"""
+                        WITH latest_poll AS (
+                          SELECT item_variant_id, MAX(id) AS item_poll_id
+                          FROM item_polls
+                          GROUP BY item_variant_id
+                        )
+                        SELECT 1
+                        FROM latest_poll lp
+                        JOIN item_polls ip ON ip.id = lp.item_poll_id
+                        JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
+                        WHERE ls.amount IS NOT NULL
+                          AND ls.amount > 0
+                          AND ls.is_instant_buyout = 1
+                          AND {where_seller}
+                        LIMIT 1
+                        """,
+                        seller_params,
+                    ).fetchone()
+                    instant_only_by_account[acct] = True if row else False
+
             # Base rows: every variant, plus latest poll metadata (queryId + updatedAt).
             variants = con.execute(
                 """
@@ -485,48 +521,109 @@ class ServerStorage:
             ).fetchall()
             market_min_by_variant = {int(r["variant_id"]): (float(r["market_min"]) if r["market_min"] is not None else None) for r in market_rows}
 
+            # When an account is already the market floor, compare it to the next cheapest listing
+            # by excluding that seller from the market min calculation.
+            market_min_excluding_account_by_variant: dict[int, dict[str, float | None]] = {}
+            def _seller_match_where(token: str) -> tuple[str, list[Any]]:
+                """
+                Build a WHERE fragment matching a seller token.
+                - If the token includes '#', treat as exact seller name.
+                - Else treat as a prefix for 'Name#1234' style tags.
+                """
+                t = str(token or "").strip()
+                if not t:
+                    return "(1 = 0)", []
+                if "#" in t:
+                    return "(ls.seller_name = ?)", [t]
+                return "(ls.seller_name LIKE ?)", [f"{t}#%"]
+
+            if cleaned_accounts:
+                for acct in cleaned_accounts:
+                    where_seller, seller_params = _seller_match_where(acct)
+                    acct_instant_only = bool(instant_only_by_account.get(acct, instant_only))
+
+                    # Next cheapest listing: min price where seller does NOT match this acct token.
+                    excl_rows = con.execute(
+                        f"""
+                        WITH latest_poll AS (
+                          SELECT item_variant_id, MAX(id) AS item_poll_id
+                          FROM item_polls
+                          GROUP BY item_variant_id
+                        )
+                        SELECT
+                          ip.item_variant_id AS variant_id,
+                          MIN(
+                            CASE
+                              WHEN NOT {where_seller} THEN
+                                CASE
+                                  WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
+                                  WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
+                                    THEN ls.amount / NULLIF(pr.divines_per_mirror, 0)
+                                  WHEN LOWER(TRIM(ls.currency)) IN ('exalted', 'exalt', 'exa', 'exalted orb', 'exalted orbs')
+                                    THEN (ls.amount / 60.0) / NULLIF(pr.divines_per_mirror, 0)
+                                  ELSE NULL
+                                END
+                              ELSE NULL
+                            END
+                          ) AS market_min_excl
+                        FROM latest_poll lp
+                        JOIN item_polls ip ON ip.id = lp.item_poll_id
+                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                        JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
+                        WHERE ls.amount IS NOT NULL
+                          AND ls.amount > 0
+                          AND (? = 0 OR ls.is_instant_buyout = 1)
+                        GROUP BY ip.item_variant_id
+                        """,
+                        [*seller_params, 1 if acct_instant_only else 0],
+                    ).fetchall()
+                    for r in excl_rows:
+                        vid = int(r["variant_id"])
+                        val = r["market_min_excl"]
+                        market_min_excluding_account_by_variant.setdefault(vid, {})[acct] = float(val) if val is not None else None
+
             account_min_by_variant: dict[int, dict[str, float]] = {}
             if cleaned_accounts:
-                placeholders = ",".join("?" for _ in cleaned_accounts)
-                sql = f"""
-                WITH latest_poll AS (
-                  SELECT item_variant_id, MAX(id) AS item_poll_id
-                  FROM item_polls
-                  GROUP BY item_variant_id
-                )
-                SELECT
-                  ip.item_variant_id AS variant_id,
-                  ls.seller_name,
-                  MIN(
-                    CASE
-                      WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
-                      WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
-                        THEN ls.amount / NULLIF(pr.divines_per_mirror, 0)
-                      WHEN LOWER(TRIM(ls.currency)) IN ('exalted', 'exalt', 'exa', 'exalted orb', 'exalted orbs')
-                        THEN (ls.amount / 60.0) / NULLIF(pr.divines_per_mirror, 0)
-                      ELSE NULL
-                    END
-                  ) AS account_min
-                FROM latest_poll lp
-                JOIN item_polls ip ON ip.id = lp.item_poll_id
-                JOIN poll_runs pr ON pr.id = ip.poll_run_id
-                JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
-                WHERE ls.amount IS NOT NULL
-                  AND ls.amount > 0
-                  AND (? = 0 OR ls.is_instant_buyout = 1)
-                  AND ls.seller_name IN ({placeholders})
-                GROUP BY ip.item_variant_id, ls.seller_name
-                """
-                params: list[Any] = [1 if instant_only else 0]
-                params.extend(cleaned_accounts)
-                acct_rows = con.execute(sql, params).fetchall()
-                for r in acct_rows:
-                    vid = int(r["variant_id"])
-                    seller = str(r["seller_name"] or "").strip()
-                    amt = r["account_min"]
-                    if not seller or amt is None:
-                        continue
-                    account_min_by_variant.setdefault(vid, {})[seller] = float(amt)
+                for acct in cleaned_accounts:
+                    where_seller, seller_params = _seller_match_where(acct)
+                    acct_instant_only = bool(instant_only_by_account.get(acct, instant_only))
+                    acct_rows = con.execute(
+                        f"""
+                        WITH latest_poll AS (
+                          SELECT item_variant_id, MAX(id) AS item_poll_id
+                          FROM item_polls
+                          GROUP BY item_variant_id
+                        )
+                        SELECT
+                          ip.item_variant_id AS variant_id,
+                          MIN(
+                            CASE
+                              WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
+                              WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
+                                THEN ls.amount / NULLIF(pr.divines_per_mirror, 0)
+                              WHEN LOWER(TRIM(ls.currency)) IN ('exalted', 'exalt', 'exa', 'exalted orb', 'exalted orbs')
+                                THEN (ls.amount / 60.0) / NULLIF(pr.divines_per_mirror, 0)
+                              ELSE NULL
+                            END
+                          ) AS account_min
+                        FROM latest_poll lp
+                        JOIN item_polls ip ON ip.id = lp.item_poll_id
+                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                        JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
+                        WHERE ls.amount IS NOT NULL
+                          AND ls.amount > 0
+                          AND (? = 0 OR ls.is_instant_buyout = 1)
+                          AND {where_seller}
+                        GROUP BY ip.item_variant_id
+                        """,
+                        [1 if acct_instant_only else 0, *seller_params],
+                    ).fetchall()
+                    for r in acct_rows:
+                        vid = int(r["variant_id"])
+                        amt = r["account_min"]
+                        if amt is None:
+                            continue
+                        account_min_by_variant.setdefault(vid, {})[acct] = float(amt)
 
             def _differs(a: float | None, b: float | None) -> bool:
                 if a is None or b is None:
@@ -537,13 +634,23 @@ class ServerStorage:
             for v in variants:
                 vid = int(v["variant_id"])
                 market_min = market_min_by_variant.get(vid)
+                market_excl = market_min_excluding_account_by_variant.get(vid, {})
                 acct_map = account_min_by_variant.get(vid, {})
 
                 if mode_norm == "diff":
                     # Include only if at least one account has a price and it differs from market.
                     keep = False
                     for acct in cleaned_accounts:
-                        keep = keep or _differs(acct_map.get(acct), market_min)
+                        acct_min = acct_map.get(acct)
+                        if _differs(acct_min, market_min):
+                            keep = True
+                            continue
+                        # Also keep ties-for-cheapest when the "next listing" gap is non-zero
+                        # (i.e. account is cheapest, but can still undercut the next seller).
+                        if acct_min is not None and market_min is not None and abs(float(acct_min) - float(market_min)) <= 1e-9:
+                            excl = market_excl.get(acct)
+                            if excl is not None and float(excl) - float(acct_min) > 1e-9:
+                                keep = True
                     if not keep:
                         continue
 
@@ -555,7 +662,7 @@ class ServerStorage:
                     "sortOrder": int(v["sort_order"] or 0),
                     "queryId": str(v["query_id"] or ""),
                     "updatedAt": str(v["updated_at_utc"] or ""),
-                    "market": {"currency": cur_norm, "amount": market_min},
+                    "market": {"currency": cur_norm, "amount": market_min, "excluding": {acct: market_excl.get(acct) for acct in cleaned_accounts}},
                     "accounts": {acct: acct_map.get(acct) for acct in cleaned_accounts},
                 }
                 rows.append(row)

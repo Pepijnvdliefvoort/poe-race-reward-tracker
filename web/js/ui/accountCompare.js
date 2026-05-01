@@ -123,14 +123,32 @@ function renderBody(tbody, payload) {
   tbody.innerHTML = "";
   const accounts = Array.isArray(payload?.accounts) ? payload.accounts : [];
   const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const EPS = 1e-9;
 
   const normalized = rows.map((r) => {
     const market = r?.market?.amount != null ? Number(r.market.amount) : null;
+    const marketExcl = r?.market?.excluding && typeof r.market.excluding === "object" ? r.market.excluding : {};
     const acct = r?.accounts && typeof r.accounts === "object" ? r.accounts : {};
     const deltas = accounts.map((a) => {
       const v = acct?.[a];
       const amt = v != null ? Number(v) : null;
-      const delta = market != null && amt != null ? amt - market : null;
+      let delta = market != null && amt != null ? amt - market : null;
+
+      // If the account is already the market floor, compare it to the next cheapest listing
+      // (market min excluding that seller) so we can show the real undercut gap.
+      if (
+        market != null &&
+        amt != null &&
+        delta != null &&
+        Number.isFinite(Number(delta)) &&
+        Math.abs(Number(delta)) < EPS
+      ) {
+        const exclRaw = marketExcl?.[a];
+        const excl = exclRaw != null ? Number(exclRaw) : null;
+        if (excl != null && Number.isFinite(excl) && excl - amt > EPS) {
+          delta = amt - excl; // negative => cheaper than next listing
+        }
+      }
       return { account: a, amount: amt, delta };
     });
     // Sort: worst overpriced first, then missing.
