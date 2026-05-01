@@ -97,19 +97,58 @@ def _load_sales_discord_window_days() -> int:
     return max(1, min(3650, raw))
 
 
-def _normalize_trade_icon_url_for_discord(raw: str | None) -> str | None:
-    if not isinstance(raw, str):
-        return None
-    s = raw.strip()
-    if not s:
-        return None
-    if s.startswith("http://") or s.startswith("https://"):
-        return s
-    if s.startswith("//"):
-        return "https:" + s
-    if s.startswith("/"):
-        return "https://web.poecdn.com" + s
-    return "https://web.poecdn.com/" + s
+def _request_base_url(headers: Any) -> str:
+    """Derive absolute base URL from incoming request headers (works behind Caddy proxy)."""
+    host = str(headers.get("Host") or "localhost:8080").strip()
+    proto = str(headers.get("X-Forwarded-Proto") or "").strip().lower()
+    if not proto:
+        proto = "http" if (host.startswith("localhost") or host.startswith("127.")) else "https"
+    return f"{proto}://{host}"
+
+
+import re as _re
+
+_ICON_MAP_CACHE: dict[str, str] | None = None
+
+
+def _build_icon_map() -> dict[str, str]:
+    """Scan web/assets/icons/ once and return normalized-name -> URL mapping."""
+    global _ICON_MAP_CACHE
+    if _ICON_MAP_CACHE is not None:
+        return _ICON_MAP_CACHE
+    icons_dir = WEB_DIR / "assets" / "icons"
+    mapping: dict[str, str] = {}
+    if icons_dir.is_dir():
+        for f in icons_dir.iterdir():
+            if f.suffix.lower() in (".png", ".jpg", ".webp"):
+                key = _re.sub(r"[^a-z0-9]", "", f.stem.lower())
+                mapping[key] = f"/assets/icons/{f.name}"
+    _ICON_MAP_CACHE = mapping
+    return mapping
+
+
+def _resolve_local_item_icon(display_name: str, mode: str) -> str | None:
+    """Return a server-relative URL for the item icon from web/assets/icons/, or None."""
+    icon_map = _build_icon_map()
+    is_aa = str(mode or "").strip() == "aa"
+
+    def _lookup(name: str) -> str | None:
+        base = _re.sub(r"[^a-z0-9]", "", name.lower())
+        if not base:
+            return None
+        if is_aa:
+            return icon_map.get(base + "alt") or icon_map.get(base)
+        return icon_map.get(base) or icon_map.get(base + "alt")
+
+    url = _lookup(str(display_name or ""))
+    if url:
+        return url
+    # Retry after stripping trailing mode words added by the bootstrap logic
+    # (e.g. "Demigod's Beacon Normal" → "Demigod's Beacon").
+    stripped = _re.sub(r"\s+(normal|alternate\s+art|aa)$", "", str(display_name or "").strip(), flags=_re.IGNORECASE)
+    if stripped != str(display_name or "").strip():
+        return _lookup(stripped)
+    return None
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -1220,6 +1259,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                           s.occurred_at_utc,
                           s.reverted_at_utc,
                           v.display_name AS display_name,
+                          v.mode AS mode,
                           i.icon_path AS icon_path
                         FROM sales s
                         JOIN item_variants v ON v.id = s.item_variant_id
@@ -1346,8 +1386,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         inference_events.append(dict(event))
 
                 first = rows[0]
-                icon_path = str(first["icon_path"] or "").strip()
-                image_url = _normalize_trade_icon_url_for_discord(icon_path)
+                _local_icon = _resolve_local_item_icon(
+                    str(first["display_name"] or ""),
+                    str(first["mode"] or ""),
+                )
+                image_url = (_request_base_url(self.headers) + _local_icon) if _local_icon else None
 
                 session = requests.Session()
                 send_estimated_sales_change_notification(

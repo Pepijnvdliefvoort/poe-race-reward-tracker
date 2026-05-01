@@ -1591,7 +1591,7 @@ def build_top_listing_summary(
 
 
 def normalize_trade_icon_url_for_discord(raw: str | None) -> str | None:
-    """Discord requires absolute http(s) URLs; trade sometimes returns protocol-relative ``//…`` icons."""
+    """Kept for compatibility; prefers https, handles protocol-relative URLs."""
     if not isinstance(raw, str):
         return None
     s = raw.strip()
@@ -1601,9 +1601,7 @@ def normalize_trade_icon_url_for_discord(raw: str | None) -> str | None:
         return s
     if s.startswith("//"):
         return "https:" + s
-    if s.startswith("/"):
-        return "https://web.poecdn.com" + s
-    return "https://web.poecdn.com/" + s
+    return None
 
 
 def _extract_trade_item_icon_url(item_data: Any) -> str | None:
@@ -2150,11 +2148,6 @@ def run_cycle(
         # Poll summary is persisted in SQLite (no CSV file).
 
         if variant_id:
-            if cheapest_icon_url:
-                try:
-                    storage.update_variant_icon_path(variant_id=variant_id, icon_path=cheapest_icon_url)
-                except Exception as exc:  # noqa: BLE001
-                    log_line("warn", f"Failed to persist icon for {item.name}: {exc}")
             storage.write_poll_result(
                 cycle_number=cycle,
                 league=DEFAULT_LEAGUE,
