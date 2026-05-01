@@ -330,7 +330,7 @@ function filterMarketTopListings(topListings) {
     : [];
 }
 
-function buildMarketColumnCell(topListings, fallbackAmount) {
+function buildMarketColumnCell(topListings, fallbackAmount, maxN) {
   const wrap = document.createElement("div");
   wrap.className = "compare-market-stack";
   const list = filterMarketTopListings(topListings);
@@ -340,7 +340,8 @@ function buildMarketColumnCell(topListings, fallbackAmount) {
     return wrap;
   }
 
-  const pills = list.slice(0, 5);
+  const limit = Number.isFinite(Number(maxN)) ? Math.min(10, Math.max(1, Math.floor(Number(maxN)))) : 5;
+  const pills = list.slice(0, limit);
 
   const makeMarketPill = (entry) => {
     const pill = document.createElement("span");
@@ -408,7 +409,7 @@ function buildMarketColumnCell(topListings, fallbackAmount) {
   return wrap;
 }
 
-function renderCompareBody(tbody, normalized) {
+function renderCompareBody(tbody, normalized, topN) {
   tbody.innerHTML = "";
 
   for (const row of normalized) {
@@ -427,7 +428,7 @@ function renderCompareBody(tbody, normalized) {
 
     const tdMarket = document.createElement("td");
     tdMarket.className = "compare-td-market";
-    tdMarket.appendChild(buildMarketColumnCell(row.marketTopListings, row.market));
+    tdMarket.appendChild(buildMarketColumnCell(row.marketTopListings, row.market, topN));
     tr.appendChild(tdMarket);
 
     const marketList = filterMarketTopListings(row.marketTopListings);
@@ -683,9 +684,13 @@ export function initAccountCompare() {
     if (!lastPayload?.ok) return;
     const accounts = Array.isArray(lastPayload.accounts) ? lastPayload.accounts : [];
     clampSortState(sortState, accounts);
+    const effectiveTopN = Number.isFinite(Number(lastPayload.topN))
+      ? Number(lastPayload.topN)
+      : (Number.isFinite(Number(sortState.topN)) ? Number(sortState.topN) : 5);
+    sortState.topN = effectiveTopN;
     renderCompareHeader(thead, accounts, sortState);
     const normalized = sortNormalizedRows(buildNormalizedRows(lastPayload), accounts, sortState);
-    renderCompareBody(tbody, normalized);
+    renderCompareBody(tbody, normalized, effectiveTopN);
   };
 
   const toggleSortFromHeader = (th) => {

@@ -755,6 +755,7 @@ class ServerStorage:
                 "mode": mode_norm,
                 "currency": cur_norm,
                 "instantOnly": bool(instant_only),
+                "topN": int(top_n_int),
                 "accounts": cleaned_accounts,
                 "rows": rows,
             }
