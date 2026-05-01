@@ -80,6 +80,27 @@ function formatMirror(v) {
   return n.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
 }
 
+function buildMirrorPriceNode(v) {
+  const wrap = document.createElement("span");
+  wrap.className = "cmp-price-wrap";
+
+  const amountEl = document.createElement("span");
+  amountEl.className = "cmp-price-amount";
+  amountEl.textContent = formatMirror(v);
+
+  const icon = document.createElement("img");
+  icon.className = "cmp-price-icon";
+  icon.src = "/assets/MirrorofKalandra.png";
+  icon.alt = "Mirror of Kalandra";
+  icon.decoding = "async";
+  icon.loading = "lazy";
+  icon.width = 16;
+  icon.height = 16;
+
+  wrap.append(amountEl, icon);
+  return wrap;
+}
+
 function pillClass(delta) {
   if (delta == null) return "cmp-missing";
   const d = Number(delta);
@@ -277,14 +298,15 @@ function buildCellPill({ amount, delta }) {
 
   const price = document.createElement("span");
   price.className = "cmp-price";
-  price.textContent = amount == null ? "—" : `${formatMirror(amount)} m`;
+  if (amount == null) price.textContent = "—";
+  else price.appendChild(buildMirrorPriceNode(amount));
   pill.appendChild(price);
 
   if (amount != null && delta != null && Number.isFinite(Number(delta)) && Math.abs(Number(delta)) > 1e-9) {
     const d = document.createElement("span");
     d.className = "cmp-delta";
     const sign = Number(delta) > 0 ? "+" : "";
-    d.textContent = `${sign}${formatMirror(delta)} m`;
+    d.textContent = `${sign}${formatMirror(delta)}`;
     pill.appendChild(d);
   }
 
@@ -311,11 +333,12 @@ function buildMarketColumnCell(topListings, fallbackAmount) {
 
   const makeMarketPill = (entry) => {
     const pill = document.createElement("span");
-    pill.className = "cmp-pill cmp-eq cmp-pill--market-row";
+    const instant = !!entry?.instantBuyout;
+    pill.className = `cmp-pill cmp-pill--market-row ${instant ? "cmp-market-instant" : "cmp-market-inperson"}`.trim();
     const m = Number(entry.mirrorEquiv);
     const price = document.createElement("span");
     price.className = "cmp-price";
-    price.textContent = `${formatMirror(m)} m`;
+    price.appendChild(buildMirrorPriceNode(m));
 
     const seller = document.createElement("span");
     seller.className = "compare-market-seller";
@@ -323,14 +346,23 @@ function buildMarketColumnCell(topListings, fallbackAmount) {
     seller.textContent = name;
     seller.title = name;
 
-    const mode = entry.instantBuyout ? "Buyout" : "Trade";
+    const mode = instant ? "Instant" : "In-person";
     const cur = entry.listingCurrency != null ? String(entry.listingCurrency).trim() : "";
     const amt = entry.listingAmount != null ? Number(entry.listingAmount) : null;
     const detail =
       cur && amt != null && Number.isFinite(amt) && !/^mirror/i.test(cur) ? `${formatMirror(amt)} ${cur}` : "";
     pill.title = [name || null, mode, detail || null].filter(Boolean).join(" · ");
 
-    pill.append(price, seller);
+    pill.appendChild(price);
+    if (entry?.corrupted) {
+      const c = document.createElement("span");
+      c.className = "compare-market-corrupt";
+      c.textContent = "C";
+      c.setAttribute("aria-label", "Corrupted");
+      c.title = "Corrupted";
+      pill.appendChild(c);
+    }
+    pill.appendChild(seller);
     return pill;
   };
 
@@ -379,8 +411,7 @@ function renderCompareBody(tbody, normalized) {
     if (marketList.length > 1) {
       tr.classList.add("compare-row--market-collapsible");
       tr.tabIndex = 0;
-      tr.setAttribute("aria-expanded", "false");
-      tr.title = "Click row to expand or collapse market listings";
+      tr.title = "Hover row to preview market listings";
     }
 
     for (const d of row.deltas) {
@@ -443,26 +474,6 @@ export function initAccountCompare() {
 
   if (!panel || !chipsEl || !inputEl || !addBtn || !modeEl || !btn || !summaryEl || !hintEl || !thead || !tbody) {
     return;
-  }
-
-  if (!tbody.dataset.compareMarketRowCollapseBound) {
-    tbody.dataset.compareMarketRowCollapseBound = "1";
-    tbody.addEventListener("click", (e) => {
-      const tr = e.target.closest("tr.compare-row--market-collapsible");
-      if (!tr || !tbody.contains(tr)) return;
-      const expand = !tr.classList.contains("compare-row-expanded");
-      tr.classList.toggle("compare-row-expanded", expand);
-      tr.setAttribute("aria-expanded", expand ? "true" : "false");
-    });
-    tbody.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
-      const tr = e.target.closest("tr.compare-row--market-collapsible");
-      if (!tr || !tbody.contains(tr) || document.activeElement !== tr) return;
-      e.preventDefault();
-      const expand = !tr.classList.contains("compare-row-expanded");
-      tr.classList.toggle("compare-row-expanded", expand);
-      tr.setAttribute("aria-expanded", expand ? "true" : "false");
-    });
   }
 
   let lastPayload = null;

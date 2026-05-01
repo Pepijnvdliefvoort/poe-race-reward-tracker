@@ -59,9 +59,30 @@
           <div>
             <p class="eyebrow">Quick check</p>
             <h2 class="compare-title">Compare vs market floor</h2>
-            <p class="compare-subtitle">
-              See whether your accounts are priced above the current market floor. Uses the latest stored listing snapshots (mirror-only).
-            </p>
+            <div class="compare-legend" aria-label="Legend">
+              <span class="compare-legend-item">
+                <span class="cmp-pill cmp-pill--market-row cmp-market-inperson">
+                  <span class="compare-legend-swatch"></span>
+                  In-person
+                </span>
+              </span>
+              <span class="compare-legend-item">
+                <span class="cmp-pill cmp-pill--market-row cmp-market-instant">
+                  <span class="compare-legend-swatch"></span>
+                  Instant
+                </span>
+              </span>
+              <span class="compare-legend-item">
+                <span class="cmp-pill cmp-ok">Undercut</span>
+              </span>
+              <span class="compare-legend-item">
+                <span class="cmp-pill cmp-bad">Overpriced</span>
+              </span>
+              <span class="compare-legend-item">
+                <span class="compare-market-corrupt" aria-hidden="true">C</span>
+                <span class="compare-legend-text">Corrupted</span>
+              </span>
+            </div>
           </div>
           <div class="compare-controls">
             <div class="compare-control" aria-label="Accounts">

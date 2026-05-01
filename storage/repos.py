@@ -319,6 +319,7 @@ class PollsRepo:
                     r.get("amount"),
                     str(r.get("currency") or "unknown"),
                     1 if bool(r.get("isInstantBuyout")) else 0,
+                    1 if bool(r.get("isCorrupted")) else 0,
                     r.get("posted"),
                     r.get("indexed"),
                     r.get("fingerprint"),
@@ -327,8 +328,8 @@ class PollsRepo:
         self._con.executemany(
             """
             INSERT INTO listing_snapshots(
-              item_poll_id, rank, seller_name, price_text, amount, currency, is_instant_buyout, posted, indexed, fingerprint
-            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+              item_poll_id, rank, seller_name, price_text, amount, currency, is_instant_buyout, is_corrupted, posted, indexed, fingerprint
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
             """,
             payload,
         )

@@ -1440,6 +1440,7 @@ def build_listing_preview_entries(
 
         item_data = entry.get("item") if isinstance(entry.get("item"), dict) else None
         fp = fingerprint_trade_item(item_data)
+        is_corrupted = bool(item_data.get("corrupted")) if isinstance(item_data, dict) else False
 
         preview_rows.append(
             {
@@ -1447,6 +1448,7 @@ def build_listing_preview_entries(
                 "amount": amount,
                 "currency": currency,
                 "isInstantBuyout": is_instant_buyout,
+                "isCorrupted": is_corrupted,
                 "sellerName": extract_listing_seller_name(entry),
                 "posted": extract_listing_posted_time(entry),
                 "indexed": indexed,

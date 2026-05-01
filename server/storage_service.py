@@ -537,6 +537,7 @@ class ServerStorage:
                     ls.amount AS listing_amount,
                     ls.currency AS listing_currency,
                     ls.is_instant_buyout AS is_instant_buyout,
+                    ls.is_corrupted AS is_corrupted,
                     CASE
                       WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
                       WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
@@ -560,6 +561,7 @@ class ServerStorage:
                     listing_amount,
                     listing_currency,
                     is_instant_buyout,
+                    is_corrupted,
                     mirror_equiv,
                     ROW_NUMBER() OVER (
                       PARTITION BY variant_id
@@ -568,7 +570,7 @@ class ServerStorage:
                   FROM priced
                   WHERE mirror_equiv IS NOT NULL
                 )
-                SELECT variant_id, seller_name, listing_amount, listing_currency, mirror_equiv, is_instant_buyout, rn
+                SELECT variant_id, seller_name, listing_amount, listing_currency, mirror_equiv, is_instant_buyout, is_corrupted, rn
                 FROM ranked
                 WHERE rn <= 5
                 ORDER BY variant_id ASC, rn ASC
@@ -585,6 +587,7 @@ class ServerStorage:
                         "listingAmount": float(tr["listing_amount"]) if tr["listing_amount"] is not None else None,
                         "listingCurrency": str(tr["listing_currency"] or ""),
                         "instantBuyout": bool(int(tr["is_instant_buyout"] or 0)),
+                        "corrupted": bool(int(tr["is_corrupted"] or 0)),
                     }
                 )
 

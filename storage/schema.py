@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def migration_001_initial() -> str:
@@ -262,5 +262,10 @@ def migration_008_non_instant_online_inference() -> str:
 
 def migration_009_widen_sales_rule() -> str:
     """Applied via a Python idempotent migration in `storage/db.py` (rebuild `sales` for CHECK)."""
+    return ""
+
+
+def migration_010_listing_snapshots_corrupted() -> str:
+    """Applied via a Python idempotent migration in `storage/db.py`."""
     return ""
 
