@@ -1954,34 +1954,54 @@ function setupDeleteSalesTool() {
     return d.toLocaleString();
   };
 
-  const hhmmKey = (iso) => {
-    const raw = String(iso || "");
-    const m = raw.match(/T(\d{2}:\d{2})/);
-    if (m && m[1]) return m[1];
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return "unknown";
+  const localMinuteBucket = (iso) => {
+    const d = new Date(String(iso || ""));
+    if (Number.isNaN(d.getTime())) {
+      return {
+        key: `unknown-${String(iso || "")}`,
+        label: `unknown (${String(iso || "") || "n/a"})`,
+        sortTs: Number.NEGATIVE_INFINITY,
+      };
+    }
+    const y = d.getFullYear();
+    const M = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    return `${hh}:${mm}`;
+    const key = `${y}-${M}-${dd} ${hh}:${mm}`;
+    const label = `${dd}-${M}-${y} ${hh}:${mm}`;
+    const sortTs = new Date(y, d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), 0, 0).getTime();
+    return { key, label, sortTs };
   };
 
   const buildSaleGroups = (rows) => {
     const map = new Map();
     for (const s of Array.isArray(rows) ? rows : []) {
-      const key = hhmmKey(s?.occurredAtUtc);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(s);
+      const bucket = localMinuteBucket(s?.occurredAtUtc);
+      if (!map.has(bucket.key)) {
+        map.set(bucket.key, {
+          key: bucket.key,
+          label: bucket.label,
+          sortTs: bucket.sortTs,
+          entries: [],
+          saleIds: [],
+          signals: 0,
+        });
+      }
+      const group = map.get(bucket.key);
+      group.entries.push(s);
+      const sid = Number(s?.saleId);
+      if (Number.isFinite(sid) && sid > 0) group.saleIds.push(sid);
+      const qty = Number(s?.quantity);
+      group.signals += Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 1;
     }
-    const out = [];
-    for (const [key, entries] of map.entries()) {
-      entries.sort((a, b) => String(b?.occurredAtUtc || "").localeCompare(String(a?.occurredAtUtc || "")));
-      out.push({
-        key,
-        entries,
-        saleIds: entries.map((x) => Number(x.saleId)).filter((n) => Number.isFinite(n) && n > 0),
-      });
-    }
-    out.sort((a, b) => String(b.key).localeCompare(String(a.key)));
+    const out = Array.from(map.values());
+    out.forEach((g) => {
+      const uniq = new Set();
+      g.saleIds = g.saleIds.filter((n) => !uniq.has(n) && uniq.add(n));
+      g.entries.sort((a, b) => String(b?.occurredAtUtc || "").localeCompare(String(a?.occurredAtUtc || "")));
+    });
+    out.sort((a, b) => Number(b.sortTs || 0) - Number(a.sortTs || 0));
     return out;
   };
 
@@ -2005,7 +2025,7 @@ function setupDeleteSalesTool() {
     }
     const sellersPreview = Array.from(sellers).slice(0, 3).join(", ");
     const sellersMore = sellers.size > 3 ? ` +${sellers.size - 3} more` : "";
-    salePreview.textContent = `${g.key} · ${g.entries.length} sale signal(s) · sellers: ${sellersPreview || "unknown"}${sellersMore}`;
+    salePreview.textContent = `${g.label} · ${g.signals} sale signal(s) · sellers: ${sellersPreview || "unknown"}${sellersMore}`;
   };
 
   const renderSalesSelect = () => {
@@ -2026,12 +2046,12 @@ function setupDeleteSalesTool() {
     saleSelect.disabled = false;
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = "Select a timestamp group (HH:mm)…";
+    placeholder.textContent = "Select a timestamp group (date + HH:mm)…";
     saleSelect.appendChild(placeholder);
     saleGroups.forEach((g) => {
       const opt = document.createElement("option");
       opt.value = g.key;
-      opt.textContent = `${g.key} · ${g.entries.length} sale signal(s)`;
+      opt.textContent = `${g.label} · ${g.signals} sale signal(s)`;
       saleSelect.appendChild(opt);
     });
     saleSelect.value = "";
@@ -2090,7 +2110,7 @@ function setupDeleteSalesTool() {
         setHint(payload?.error ? `Resend sale alert: ${payload.error}` : "Resend sale alert failed.", true);
         return;
       }
-      setHint(`Resent sale alert for ${payload?.item || selected.displayName} (${g.key}, ${g.entries.length} signal(s)).`);
+      setHint(`Resent sale alert for ${payload?.item || selected.displayName} (${g.label}, ${g.signals} signal(s)).`);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Resend sale alert"), true);
     } finally {
