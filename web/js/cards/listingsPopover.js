@@ -346,15 +346,18 @@ function renderListingsPreview(entry, payload) {
     }
 
     top.appendChild(priceGroup);
+    const badgesGroup = document.createElement("span");
+    badgesGroup.className = "listings-row-badges-group";
     if (rowData.corrupted) {
       const corruptBadge = document.createElement("span");
       corruptBadge.className = "listings-row-corrupt-badge";
       corruptBadge.textContent = "C";
       corruptBadge.setAttribute("aria-label", "Corrupted");
       corruptBadge.title = "Corrupted";
-      top.appendChild(corruptBadge);
+      badgesGroup.appendChild(corruptBadge);
     }
-    top.appendChild(buyout);
+    badgesGroup.appendChild(buyout);
+    top.appendChild(badgesGroup);
 
     const meta = document.createElement("div");
     meta.className = "listings-row-meta";

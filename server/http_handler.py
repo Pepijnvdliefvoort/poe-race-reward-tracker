@@ -8,7 +8,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .admin_service import (
     POLLER_LOG_PATH,
@@ -42,6 +42,7 @@ from .data_service import (
 )
 from .db_admin_service import db_overview, er_schema, list_tables, preview_table, run_query, table_details
 from .recommendation_service import RecommendationInputError, recommend_investments
+from .sales_discord_notify import send_estimated_sales_change_notification
 
 from storage.db import Database
 from storage.service import StorageService
@@ -74,6 +75,26 @@ def _load_discord_db_export_webhook_url_from_env() -> str:
         if value:
             return value
     return ""
+
+
+def _load_discord_sales_webhook_url_from_env() -> str:
+    sales = os.getenv("DISCORD_WEBHOOK_URL_SALES", "").strip()
+    if sales:
+        return sales
+    for env_name in ("DISCORD_WEBHOOK_URL", "POE_DISCORD_WEBHOOK_URL"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _load_sales_discord_window_days() -> int:
+    try:
+        cfg = load_config()
+        raw = int(float(cfg.get("sales_discord_window_days", 90)))
+    except Exception:
+        raw = 90
+    return max(1, min(3650, raw))
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -386,6 +407,80 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 finally:
                     con.close()
                 body = json.dumps({"ok": True, "variants": variants}, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if req_path == "/api/admin/market/sales":
+                try:
+                    variant_id = int((params.get("variantId", ["0"])[0] or "0").strip())
+                except Exception:
+                    variant_id = 0
+                try:
+                    limit = int((params.get("limit", ["100"])[0] or "100").strip())
+                except Exception:
+                    limit = 100
+                limit = max(1, min(500, limit))
+
+                if variant_id <= 0:
+                    body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    rows = con.execute(
+                        """
+                        SELECT
+                          s.id,
+                          s.rule,
+                          s.seller,
+                          s.buyer,
+                          s.price_amount,
+                          s.price_currency,
+                          s.mirror_equiv,
+                          s.quantity,
+                          s.occurred_at_utc,
+                          s.reverted_at_utc,
+                          v.display_name AS display_name
+                        FROM sales s
+                        JOIN item_variants v ON v.id = s.item_variant_id
+                        WHERE s.item_variant_id = ?
+                          AND s.reverted_at_utc IS NULL
+                        ORDER BY s.occurred_at_utc DESC, s.id DESC
+                        LIMIT ?
+                        """,
+                        (variant_id, limit),
+                    ).fetchall()
+                    sales = [
+                        {
+                            "saleId": int(r["id"]),
+                            "rule": str(r["rule"] or ""),
+                            "seller": str(r["seller"] or ""),
+                            "buyer": str(r["buyer"] or ""),
+                            "priceAmount": r["price_amount"],
+                            "priceCurrency": str(r["price_currency"] or ""),
+                            "mirrorEquiv": r["mirror_equiv"],
+                            "quantity": int(r["quantity"] or 1),
+                            "occurredAtUtc": str(r["occurred_at_utc"] or ""),
+                            "displayName": str(r["display_name"] or ""),
+                        }
+                        for r in rows
+                    ]
+                finally:
+                    con.close()
+
+                body = json.dumps({"ok": True, "variantId": variant_id, "sales": sales}, allow_nan=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -1018,6 +1113,186 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 body = json.dumps(
                     {"ok": True, "scope": scope, "variantIds": variant_ids, "deleted": deleted_total, "deletedByVariantId": deleted_by_variant},
+                    allow_nan=False,
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/sales/resend-alert":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    data = json.loads(raw or b"{}")
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+
+                try:
+                    sale_id = int(data.get("saleId") or 0)
+                except Exception:
+                    sale_id = 0
+                if sale_id <= 0:
+                    body = json.dumps({"ok": False, "error": "saleId is required"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                webhook_url = _load_discord_sales_webhook_url_from_env()
+                if not webhook_url:
+                    body = json.dumps({"ok": False, "error": "Sales Discord webhook is not configured"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    row = con.execute(
+                        """
+                        SELECT
+                          s.id,
+                          s.item_variant_id,
+                          s.rule,
+                          s.seller,
+                          s.buyer,
+                          s.price_amount,
+                          s.price_currency,
+                          s.mirror_equiv,
+                          s.quantity,
+                          s.fingerprint,
+                          s.occurred_at_utc,
+                          s.reverted_at_utc,
+                          v.display_name AS display_name,
+                          i.icon_path AS icon_path
+                        FROM sales s
+                        JOIN item_variants v ON v.id = s.item_variant_id
+                        JOIN items i ON i.id = v.item_id
+                        WHERE s.id = ?
+                        LIMIT 1
+                        """,
+                        (sale_id,),
+                    ).fetchone()
+                    if not row:
+                        body = json.dumps({"ok": False, "error": "Sale not found"}).encode("utf-8")
+                        self.send_response(404)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+                    if row["reverted_at_utc"]:
+                        body = json.dumps({"ok": False, "error": "Sale was reverted and cannot be resent"}).encode("utf-8")
+                        self.send_response(400)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+
+                    variant_id = int(row["item_variant_id"])
+                    dpm_row = con.execute(
+                        """
+                        SELECT pr.divines_per_mirror AS dpm
+                        FROM item_polls ip
+                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                        WHERE ip.item_variant_id = ?
+                        ORDER BY ip.id DESC
+                        LIMIT 1
+                        """,
+                        (variant_id,),
+                    ).fetchone()
+                    divines_per_mirror = float(dpm_row["dpm"]) if dpm_row and dpm_row["dpm"] is not None else None
+
+                    window_days = _load_sales_discord_window_days()
+                    since = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+                    total_row = con.execute(
+                        """
+                        SELECT COUNT(*) AS n
+                        FROM sales
+                        WHERE item_variant_id = ?
+                          AND reverted_at_utc IS NULL
+                          AND rule IN ('confirmed_transfer','likely_instant_sale','likely_non_instant_online_sale')
+                          AND occurred_at_utc >= ?
+                        """,
+                        (variant_id, since),
+                    ).fetchone()
+                    total_in_window = int(total_row["n"] or 0) if total_row else 0
+                finally:
+                    con.close()
+
+                rule = str(row["rule"] or "")
+                qty = int(row["quantity"] or 1)
+                qty = max(1, qty)
+                confirmed_transfer = qty if rule == "confirmed_transfer" else 0
+                likely_instant_sale = qty if rule == "likely_instant_sale" else 0
+                likely_non_instant_online = qty if rule == "likely_non_instant_online_sale" else 0
+
+                event: dict[str, Any] = {
+                    "rule": rule,
+                    "fingerprint": str(row["fingerprint"] or ""),
+                }
+                if rule == "confirmed_transfer":
+                    event.update(
+                        {
+                            "from_seller": str(row["seller"] or ""),
+                            "to_seller": str(row["buyer"] or ""),
+                            "fromPriceAmount": row["price_amount"],
+                            "fromPriceCurrency": str(row["price_currency"] or ""),
+                            "fromMirrorEquiv": row["mirror_equiv"],
+                        }
+                    )
+                else:
+                    event.update(
+                        {
+                            "seller": str(row["seller"] or ""),
+                            "priceAmount": row["price_amount"],
+                            "priceCurrency": str(row["price_currency"] or ""),
+                            "mirrorEquiv": row["mirror_equiv"],
+                        }
+                    )
+
+                icon_path = str(row["icon_path"] or "").strip()
+                image_url = icon_path if icon_path.startswith("http://") or icon_path.startswith("https://") else None
+
+                session = requests.Session()
+                send_estimated_sales_change_notification(
+                    session,
+                    webhook_url=webhook_url,
+                    item_name=str(row["display_name"] or "item"),
+                    item_image_url=image_url,
+                    cycle_delta=qty,
+                    total_in_window=total_in_window,
+                    window_days=window_days,
+                    confirmed_transfer=confirmed_transfer,
+                    likely_instant_sale=likely_instant_sale,
+                    likely_non_instant_online=likely_non_instant_online,
+                    divines_per_mirror=divines_per_mirror,
+                    inference_events=[event],
+                )
+
+                body = json.dumps(
+                    {
+                        "ok": True,
+                        "saleId": sale_id,
+                        "item": str(row["display_name"] or ""),
+                        "rule": rule,
+                    },
                     allow_nan=False,
                 ).encode("utf-8")
                 self.send_response(200)

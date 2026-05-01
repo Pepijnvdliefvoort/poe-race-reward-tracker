@@ -527,11 +527,25 @@
   gap: 10px;
 }
 
+.listings-row-top {
+  min-height: 20px;
+}
+
 .listings-row-price-group {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  min-height: 18px;
+}
+
+.listings-row-badges-group {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 18px;
+  flex: 0 0 auto;
 }
 
 .listings-row-price {
@@ -599,7 +613,6 @@
   white-space: nowrap;
   flex: 0 0 auto;
   line-height: 1.4;
-  margin-right: -40px;
 }
 
 .listings-row-count-badge {
@@ -608,7 +621,10 @@
   font-size: 0.60rem;
   color: rgba(194, 210, 227, 0.45);
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
+  line-height: 1.4;
 }
 
 .listings-popover-message {

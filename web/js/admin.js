@@ -1889,9 +1889,12 @@ function setupDeleteSalesTool() {
   const input = document.getElementById("adminSalesItemInput");
   const list = document.getElementById("adminSalesItemList");
   const preview = document.getElementById("adminSalesPreview");
+  const saleSelect = document.getElementById("adminSalesEventSelect");
+  const salePreview = document.getElementById("adminSalesEventPreview");
   const btn = document.getElementById("adminWipeVariantBtn");
+  const resendBtn = document.getElementById("adminResendSaleAlertBtn");
   const hint = document.getElementById("adminSalesDeleteHint");
-  if (!input || !list || !preview || !btn || !hint) return;
+  if (!input || !list || !preview || !saleSelect || !salePreview || !btn || !resendBtn || !hint) return;
 
   const setHint = (text, isWarn = false) => {
     hint.textContent = text || "";
@@ -1901,6 +1904,7 @@ function setupDeleteSalesTool() {
   let variants = [];
   let byLabel = new Map();
   let selected = null;
+  let sales = [];
 
   const fmt = (v) => {
     const mode = v.mode ? ` · ${v.mode}` : "";
@@ -1913,6 +1917,10 @@ function setupDeleteSalesTool() {
     if (!v) {
       preview.textContent = "Select an item variant.";
       btn.disabled = true;
+      resendBtn.disabled = true;
+      saleSelect.disabled = true;
+      saleSelect.innerHTML = `<option value="">Select a variant first…</option>`;
+      salePreview.textContent = "Select a sale to resend.";
       return;
     }
     const count = Number(v.salesCount) || 0;
@@ -1921,16 +1929,134 @@ function setupDeleteSalesTool() {
     btn.disabled = false;
   };
 
+  const saleRuleLabel = (rule) => {
+    const r = String(rule || "");
+    if (r === "confirmed_transfer") return "Transfer";
+    if (r === "likely_instant_sale") return "Likely instant";
+    if (r === "likely_non_instant_online_sale") return "Likely non-instant online";
+    return r || "Unknown";
+  };
+
+  const salePriceLabel = (s) => {
+    const amount = Number(s?.priceAmount);
+    const cur = String(s?.priceCurrency || "").trim();
+    if (Number.isFinite(amount) && cur) return `${amount} ${cur}`;
+    const m = Number(s?.mirrorEquiv);
+    if (Number.isFinite(m)) return `${m} mirrors`;
+    return "price n/a";
+  };
+
+  const formatWhen = (iso) => {
+    if (!iso) return "unknown time";
+    const d = new Date(String(iso));
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString();
+  };
+
+  const selectedSale = () => {
+    const id = Number(saleSelect.value || 0);
+    if (!Number.isFinite(id) || id <= 0) return null;
+    return sales.find((s) => Number(s.saleId) === id) || null;
+  };
+
+  const updateSalePreview = () => {
+    const s = selectedSale();
+    if (!s) {
+      resendBtn.disabled = true;
+      salePreview.textContent = sales.length ? "Select a sale to resend." : "No recorded sales for this variant.";
+      return;
+    }
+    resendBtn.disabled = false;
+    const who = s.buyer ? `${s.seller} -> ${s.buyer}` : s.seller;
+    salePreview.textContent = `${saleRuleLabel(s.rule)} · ${who} · ${salePriceLabel(s)} · ${formatWhen(s.occurredAtUtc)}`;
+  };
+
+  const renderSalesSelect = () => {
+    saleSelect.innerHTML = "";
+    if (!selected) {
+      saleSelect.disabled = true;
+      saleSelect.innerHTML = `<option value="">Select a variant first…</option>`;
+      updateSalePreview();
+      return;
+    }
+    if (!sales.length) {
+      saleSelect.disabled = true;
+      saleSelect.innerHTML = `<option value="">No recorded sales</option>`;
+      updateSalePreview();
+      return;
+    }
+    saleSelect.disabled = false;
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Select a sale…";
+    saleSelect.appendChild(placeholder);
+    sales.forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = String(s.saleId);
+      const who = s.buyer ? `${s.seller} -> ${s.buyer}` : s.seller;
+      opt.textContent = `${saleRuleLabel(s.rule)} · ${who} · ${salePriceLabel(s)} · ${formatWhen(s.occurredAtUtc)}`;
+      saleSelect.appendChild(opt);
+    });
+    saleSelect.value = "";
+    updateSalePreview();
+  };
+
+  const loadSalesForSelected = async () => {
+    if (!selected) {
+      sales = [];
+      renderSalesSelect();
+      return;
+    }
+    salePreview.textContent = "Loading sales…";
+    resendBtn.disabled = true;
+    try {
+      const payload = await fetchJson(`/api/admin/market/sales?variantId=${encodeURIComponent(selected.variantId)}&limit=200`);
+      if (!payload?.ok) throw new Error(payload?.error || "Failed to load sales");
+      sales = Array.isArray(payload.sales) ? payload.sales : [];
+      renderSalesSelect();
+    } catch (e) {
+      sales = [];
+      renderSalesSelect();
+      salePreview.textContent = adminEndpointErrorMessage(e, "Load sales");
+    }
+  };
+
   const selectFromInput = () => {
     const raw = String(input.value || "").trim();
     selected = byLabel.get(raw) || null;
     updatePreview();
+    void loadSalesForSelected();
   };
 
   input.addEventListener("change", selectFromInput);
   input.addEventListener("input", () => {
     // Live update preview when an exact match exists.
     selectFromInput();
+  });
+
+  saleSelect.addEventListener("change", updateSalePreview);
+
+  resendBtn.addEventListener("click", async () => {
+    const s = selectedSale();
+    if (!s || !selected) return;
+    resendBtn.disabled = true;
+    setHint("Resending alert…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/sales/resend-alert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saleId: s.saleId }),
+      });
+      if (!payload?.ok) {
+        setHint(payload?.error ? `Resend sale alert: ${payload.error}` : "Resend sale alert failed.", true);
+        return;
+      }
+      setHint(`Resent sale alert for ${payload?.item || selected.displayName}.`);
+    } catch (e) {
+      setHint(adminEndpointErrorMessage(e, "Resend sale alert"), true);
+    } finally {
+      updateSalePreview();
+    }
   });
 
   btn.addEventListener("click", async () => {
@@ -1980,6 +2106,7 @@ function setupDeleteSalesTool() {
   async function loadVariants() {
     preview.textContent = "Loading…";
     btn.disabled = true;
+    resendBtn.disabled = true;
     setHint("");
     try {
       const payload = await fetchJson("/api/admin/market/variants-sales");
@@ -1995,8 +2122,12 @@ function setupDeleteSalesTool() {
         list.appendChild(opt);
       });
       preview.textContent = "Select an item variant.";
+      sales = [];
+      renderSalesSelect();
     } catch (e) {
       preview.textContent = adminEndpointErrorMessage(e, "Load variants");
+      sales = [];
+      renderSalesSelect();
     }
   }
 

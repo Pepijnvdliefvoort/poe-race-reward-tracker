@@ -285,9 +285,22 @@
           <p id="adminSalesPreview" class="admin-muted" style="margin: 0">Loading…</p>
         </div>
 
+        <div class="admin-appconfig-row">
+          <label class="admin-appconfig-k" for="adminSalesEventSelect">Recorded sale</label>
+          <div>
+            <select id="adminSalesEventSelect" class="admin-appconfig-input" disabled>
+              <option value="">Select a variant first…</option>
+            </select>
+            <p id="adminSalesEventPreview" class="admin-muted" style="margin: 6px 0 0">Select a sale to resend.</p>
+          </div>
+        </div>
+
         <div class="admin-appconfig-actions">
           <button id="adminWipeVariantBtn" class="admin-btn admin-btn-danger" type="button" disabled>
             Delete sales + fingerprints
+          </button>
+          <button id="adminResendSaleAlertBtn" class="admin-btn admin-btn-ghost" type="button" disabled>
+            Resend selected sale alert
           </button>
           <span id="adminSalesDeleteHint" class="admin-muted" aria-live="polite"></span>
         </div>
