@@ -700,6 +700,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             params = parse_qs(parsed.query)
             accounts_raw = params.get("accounts", [""])[0]
             mode = params.get("mode", ["all"])[0].strip()
+            top_n_raw = params.get("topN", ["5"])[0].strip()
             # Accept comma- or newline-separated accounts.
             accounts = []
             for part in str(accounts_raw or "").replace("\n", ",").split(","):
@@ -710,7 +711,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 accounts = ["ABVT#0013", "junglechrist#0894"]
 
             try:
-                payload = fetch_account_compare(accounts=accounts, mode=mode)
+                try:
+                    top_n = int(float(top_n_raw)) if top_n_raw else 5
+                except ValueError:
+                    top_n = 5
+                top_n = max(1, min(10, top_n))
+                payload = fetch_account_compare(accounts=accounts, mode=mode, top_n=top_n)
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

@@ -398,6 +398,7 @@ class ServerStorage:
         mode: str = "all",
         currency: str = "mirror",
         instant_only: bool = False,
+        top_n: int = 5,
     ) -> dict[str, Any]:
         """
         Compare market-lowest listings vs lowest listings for given seller accounts.
@@ -421,6 +422,12 @@ class ServerStorage:
         mode_norm = str(mode or "all").strip().lower()
         if mode_norm not in {"all", "diff"}:
             mode_norm = "all"
+
+        try:
+            top_n_int = int(top_n)
+        except Exception:
+            top_n_int = 5
+        top_n_int = max(1, min(10, top_n_int))
 
         # UI displays values in mirror equivalents, matching the main dashboard logic.
         cur_norm = "mirror"
@@ -572,10 +579,10 @@ class ServerStorage:
                 )
                 SELECT variant_id, seller_name, listing_amount, listing_currency, mirror_equiv, is_instant_buyout, is_corrupted, rn
                 FROM ranked
-                WHERE rn <= 5
+                WHERE rn <= ?
                 ORDER BY variant_id ASC, rn ASC
                 """,
-                (1 if instant_only else 0,),
+                (1 if instant_only else 0, top_n_int),
             ).fetchall()
             for tr in top_rows:
                 vid = int(tr["variant_id"])

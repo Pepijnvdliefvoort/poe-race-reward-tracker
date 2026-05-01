@@ -7,6 +7,7 @@ function readState() {
     mode: "all",
     sortCol: null,
     sortDir: /** @type {'asc' | 'desc'} */ ("asc"),
+    topN: 5,
   });
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -30,12 +31,18 @@ function readState() {
       }
     }
     const sortDir = parsed?.sortDir === "desc" ? "desc" : "asc";
+    let topN = 5;
+    if (parsed && Object.prototype.hasOwnProperty.call(parsed, "topN")) {
+      const n = Number(parsed.topN);
+      if (Number.isFinite(n)) topN = Math.min(10, Math.max(1, Math.floor(n)));
+    }
 
     return {
       accounts: accounts.length ? accounts : [...DEFAULT_ACCOUNTS],
       mode,
       sortCol,
       sortDir,
+      topN,
     };
   } catch {
     return defaults();
@@ -118,10 +125,13 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-async function fetchCompare({ accounts, mode }) {
+async function fetchCompare({ accounts, mode, topN }) {
   const params = new URLSearchParams();
   params.set("accounts", accounts.join(","));
   params.set("mode", mode || "all");
+  if (topN != null) {
+    params.set("topN", String(topN));
+  }
   const res = await fetch(`/api/account-compare?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -286,7 +296,8 @@ function renderCompareHeader(thead, accounts, sortState) {
   };
 
   tr.appendChild(mkSortable("Item", COL_ITEM));
-  tr.appendChild(mkSortable("Market (top 5)", COL_MARKET));
+  const nLabel = Number.isFinite(Number(sortState?.topN)) ? Math.min(10, Math.max(1, Math.floor(Number(sortState.topN)))) : 5;
+  tr.appendChild(mkSortable(`Market (top ${nLabel})`, COL_MARKET));
   accounts.forEach((a, i) => tr.appendChild(mkSortable(a, 2 + i)));
   thead.appendChild(tr);
 }
@@ -466,14 +477,171 @@ export function initAccountCompare() {
   const inputEl = document.getElementById("accountCompareAccountInput");
   const addBtn = document.getElementById("accountCompareAddAccount");
   const modeEl = document.getElementById("accountCompareMode");
+  const topNEl = document.getElementById("accountCompareTopN");
   const btn = document.getElementById("accountCompareRefresh");
   const summaryEl = document.getElementById("accountCompareSummary");
   const hintEl = document.getElementById("accountCompareHint");
   const thead = document.getElementById("accountCompareThead");
   const tbody = document.getElementById("accountCompareTbody");
 
-  if (!panel || !chipsEl || !inputEl || !addBtn || !modeEl || !btn || !summaryEl || !hintEl || !thead || !tbody) {
+  if (!panel || !chipsEl || !inputEl || !addBtn || !modeEl || !topNEl || !btn || !summaryEl || !hintEl || !thead || !tbody) {
     return;
+  }
+
+  // Market rows expand only while pointer is held down.
+  if (!tbody.dataset.compareMarketRowPressExpandBound) {
+    tbody.dataset.compareMarketRowPressExpandBound = "1";
+
+    let activeRow = null;
+    let activePointerId = null;
+    let mouseDown = false;
+
+    const collapseAllRows = () => {
+      // Collapse any expanded rows, even if we lost track of which one.
+      tbody.querySelectorAll("tr.compare-row-expanded").forEach((tr) => tr.classList.remove("compare-row-expanded"));
+      // If something inside the table is focused, blur it so focus state can't "pin" expanded styles.
+      const ae = document.activeElement;
+      if (ae && tbody.contains(ae) && typeof ae.blur === "function") {
+        ae.blur();
+      }
+      activeRow = null;
+      activePointerId = null;
+      mouseDown = false;
+    };
+
+    const clearActive = () => {
+      if (activeRow) {
+        activeRow.classList.remove("compare-row-expanded");
+        activeRow = null;
+      }
+      activePointerId = null;
+    };
+
+    // Mouse: expand on mousedown, collapse on mouseup anywhere.
+    let lastButtons = 0;
+
+    document.addEventListener(
+      "mousemove",
+      (e) => {
+        if (!mouseDown) return;
+        if (typeof e.buttons === "number") lastButtons = e.buttons;
+      },
+      true
+    );
+
+    tbody.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      const tr = e.target.closest("tr.compare-row--market-collapsible");
+      if (!tr || !tbody.contains(tr)) return;
+      // Prevent focus from sticking to the row on click-and-hold.
+      e.preventDefault();
+      clearActive();
+      mouseDown = true;
+      lastButtons = typeof e.buttons === "number" ? e.buttons : 1;
+      activeRow = tr;
+      tr.classList.add("compare-row-expanded");
+
+      // Some environments miss mouseup (e.g. drag, iframe, lost focus). While the mouse is held,
+      // poll `buttons` (via mousemove updates) and collapse immediately once it's released.
+      const step = () => {
+        if (!mouseDown) return;
+        const held = (lastButtons & 1) === 1;
+        if (!held) {
+          mouseDown = false;
+          clearActive();
+          return;
+        }
+        window.requestAnimationFrame(step);
+      };
+      window.requestAnimationFrame(step);
+    });
+
+    window.addEventListener(
+      "mouseup",
+      () => {
+        if (!mouseDown) return;
+        mouseDown = false;
+        collapseAllRows();
+      },
+      true
+    );
+
+    // Pointer (touch/pen): expand on pointerdown, collapse on pointerup anywhere.
+    tbody.addEventListener("pointerdown", (e) => {
+      const tr = e.target.closest("tr.compare-row--market-collapsible");
+      if (!tr || !tbody.contains(tr)) return;
+      // Only left-click / primary pointer; ignore right click.
+      if (e.button != null && e.button !== 0) return;
+      // Mouse is handled by mousedown/mouseup to avoid browser-specific pointerup quirks.
+      if (e.pointerType === "mouse") return;
+      clearActive();
+      activeRow = tr;
+      activePointerId = e.pointerId;
+      tr.classList.add("compare-row-expanded");
+      // Capture so we still get pointerup even if cursor leaves row.
+      try {
+        // Capture on the actual event target for best browser support.
+        e.target?.setPointerCapture?.(e.pointerId);
+      } catch {
+        // ignore
+      }
+    });
+
+    // Close on any pointerup anywhere (even outside tbody).
+    // Use capture so we run before other handlers.
+    window.addEventListener(
+      "pointerup",
+      (e) => {
+        if (activePointerId == null || e.pointerId !== activePointerId) return;
+        collapseAllRows();
+      },
+      true
+    );
+
+    window.addEventListener(
+      "pointercancel",
+      (e) => {
+        if (activePointerId == null || e.pointerId !== activePointerId) return;
+        collapseAllRows();
+      },
+      true
+    );
+
+    // Safety: if something steals capture / focus, collapse.
+    window.addEventListener("blur", collapseAllRows);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") collapseAllRows();
+    });
+
+    // Hard safety net: if we ever see "no left button held", collapse everything.
+    // This covers edge cases where mouseup doesn't fire (dragging, iframe focus shifts, etc).
+    const collapseIfNoLeftButton = (buttons) => {
+      if (typeof buttons !== "number") return;
+      if ((buttons & 1) === 0) {
+        collapseAllRows();
+      }
+    };
+
+    window.addEventListener(
+      "mousemove",
+      (e) => {
+        if (!mouseDown) return;
+        collapseIfNoLeftButton(e.buttons);
+      },
+      true
+    );
+
+    window.addEventListener(
+      "pointermove",
+      (e) => {
+        if (e.pointerType !== "mouse") return;
+        if (!mouseDown) return;
+        collapseIfNoLeftButton(e.buttons);
+      },
+      true
+    );
+
+    window.addEventListener("dragend", collapseAllRows, true);
   }
 
   let lastPayload = null;
@@ -481,10 +649,12 @@ export function initAccountCompare() {
   let state = readState();
   state.accounts = normalizeAccounts(state.accounts);
   modeEl.value = state.mode;
+  topNEl.value = String(state.topN || 5);
 
   let sortState = {
     col: state.sortCol,
     dir: state.sortDir === "desc" ? "desc" : "asc",
+    topN: state.topN || 5,
   };
 
   const saveComparePage = () => {
@@ -493,6 +663,7 @@ export function initAccountCompare() {
       mode: state.mode,
       sortCol: sortState.col,
       sortDir: sortState.dir,
+      topN: sortState.topN,
     });
   };
 
@@ -581,12 +752,14 @@ export function initAccountCompare() {
     const accounts = normalizeAccounts(state.accounts);
     const mode = modeEl.value === "diff" ? "diff" : "all";
     state.mode = mode;
+    const topNRaw = Number(topNEl.value);
+    sortState.topN = Number.isFinite(topNRaw) ? Math.min(10, Math.max(1, Math.floor(topNRaw))) : (sortState.topN || 5);
     saveComparePage();
 
     setBusy(true);
     hintEl.textContent = "";
     try {
-      const payload = await fetchCompare({ accounts, mode });
+      const payload = await fetchCompare({ accounts, mode, topN: sortState.topN });
       if (!payload?.ok) {
         throw new Error(payload?.error || "Failed to load compare data");
       }
@@ -609,6 +782,7 @@ export function initAccountCompare() {
 
   btn.addEventListener("click", () => void run({ force: true }));
   modeEl.addEventListener("change", () => void run());
+  topNEl.addEventListener("change", () => void run());
 
   addBtn.addEventListener("click", () => {
     const raw = inputEl.value || "";

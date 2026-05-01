@@ -313,8 +313,8 @@ def fetch_listing_preview(query_id: str, *, limit: int | None = 20) -> dict[str,
     return ServerStorage(ROOT_DIR).fetch_listing_preview(query_id, limit=limit)
 
 
-def fetch_account_compare(*, accounts: list[str], mode: str = "all") -> dict[str, Any]:
-    return ServerStorage(ROOT_DIR).fetch_account_compare(accounts=accounts, mode=mode)
+def fetch_account_compare(*, accounts: list[str], mode: str = "all", top_n: int = 5) -> dict[str, Any]:
+    return ServerStorage(ROOT_DIR).fetch_account_compare(accounts=accounts, mode=mode, top_n=top_n)
 
 
 def load_price_data() -> dict[str, Any]:

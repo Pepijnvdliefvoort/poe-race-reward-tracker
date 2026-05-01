@@ -295,7 +295,7 @@
 }
 
 /* Pills 2–5 are direct children of the stack; pill 1 lives in .compare-market-first-row */
-.compare-table tbody tr.compare-row--market-collapsible:not(:hover):not(:focus-within) .compare-market-stack > span.cmp-pill--market-row {
+.compare-table tbody tr.compare-row--market-collapsible:not(.compare-row-expanded) .compare-market-stack > span.cmp-pill--market-row {
   display: none;
 }
 
@@ -306,13 +306,13 @@
   flex-shrink: 0;
 }
 
-.compare-table tbody tr.compare-row--market-collapsible:hover .compare-market-collapsed-hint,
+.compare-table tbody tr.compare-row--market-collapsible.compare-row-expanded .compare-market-collapsed-hint,
 .compare-table tbody tr.compare-row--market-collapsible:focus-within .compare-market-collapsed-hint {
   display: none;
 }
 
 /* Hide seller names until expanded (hover/focus). */
-.compare-table tbody tr.compare-row--market-collapsible:not(:hover):not(:focus-within) .compare-market-seller {
+.compare-table tbody tr.compare-row--market-collapsible:not(.compare-row-expanded) .compare-market-seller {
   display: none;
 }
 
