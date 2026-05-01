@@ -19,6 +19,7 @@ from .schema import (
     migration_008_non_instant_online_inference,
     migration_009_widen_sales_rule,
     migration_010_listing_snapshots_corrupted,
+    migration_011_listing_snapshots_count,
 )
 
 
@@ -102,6 +103,7 @@ class Database:
             (8, migration_008_non_instant_online_inference()),
             (9, migration_009_widen_sales_rule()),
             (10, migration_010_listing_snapshots_corrupted()),
+            (11, migration_011_listing_snapshots_count()),
         ]
 
         for version, sql in migrations:
@@ -117,6 +119,8 @@ class Database:
                 self._migration_009_widen_sales_rule_check(con)
             elif version == 10:
                 self._migration_010_listing_snapshots_corrupted(con)
+            elif version == 11:
+                self._migration_011_listing_snapshots_count(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -251,6 +255,14 @@ class Database:
         }
         if "is_corrupted" not in cols:
             con.execute("ALTER TABLE listing_snapshots ADD COLUMN is_corrupted INTEGER NOT NULL DEFAULT 0")
+
+    def _migration_011_listing_snapshots_count(self, con: sqlite3.Connection) -> None:
+        cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(listing_snapshots)").fetchall()
+        }
+        if "listing_count" not in cols:
+            con.execute("ALTER TABLE listing_snapshots ADD COLUMN listing_count INTEGER NOT NULL DEFAULT 1")
 
 
 def execute_many(con: sqlite3.Connection, sql: str, rows: Iterable[tuple]) -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 def migration_001_initial() -> str:
@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS listing_snapshots (
   price_text TEXT NOT NULL,
   amount REAL,
   currency TEXT NOT NULL,
+  listing_count INTEGER NOT NULL DEFAULT 1,
   is_instant_buyout INTEGER NOT NULL DEFAULT 0,
   posted TEXT,
   indexed TEXT,
@@ -268,4 +269,9 @@ def migration_009_widen_sales_rule() -> str:
 def migration_010_listing_snapshots_corrupted() -> str:
     """Applied via a Python idempotent migration in `storage/db.py`."""
     return ""
+
+
+def migration_011_listing_snapshots_count() -> str:
+  """Applied via a Python idempotent migration in `storage/db.py`."""
+  return ""
 

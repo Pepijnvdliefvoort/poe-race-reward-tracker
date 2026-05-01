@@ -330,18 +330,54 @@ function filterMarketTopListings(topListings) {
     : [];
 }
 
+function aggregateMarketTopListings(topListings, maxN) {
+  const limit = Number.isFinite(Number(maxN)) ? Math.min(10, Math.max(1, Math.floor(Number(maxN)))) : 5;
+  const sliced = filterMarketTopListings(topListings).slice(0, limit);
+  const out = [];
+  const byKey = new Map();
+
+  for (const row of sliced) {
+    const seller = row?.sellerName != null ? String(row.sellerName) : "";
+    const listingCurrency = row?.listingCurrency != null ? String(row.listingCurrency) : "";
+    const listingAmount = row?.listingAmount != null ? Number(row.listingAmount) : null;
+    const mirrorEquiv = Number(row?.mirrorEquiv);
+    const instantBuyout = !!row?.instantBuyout;
+    const corrupted = !!row?.corrupted;
+    const listingCount = Number(row?.listingCount || 1);
+    const key = [
+      seller,
+      listingCurrency.trim().toLowerCase(),
+      listingAmount != null && Number.isFinite(listingAmount) ? listingAmount.toFixed(6) : "",
+      Number.isFinite(mirrorEquiv) ? mirrorEquiv.toFixed(6) : "",
+      instantBuyout ? "1" : "0",
+      corrupted ? "1" : "0",
+    ].join("|");
+
+    const idx = byKey.get(key);
+    if (idx == null) {
+      byKey.set(key, out.length);
+      out.push({ ...row, count: Number.isFinite(listingCount) && listingCount > 0 ? Math.floor(listingCount) : 1 });
+      continue;
+    }
+
+    const bump = Number.isFinite(listingCount) && listingCount > 0 ? Math.floor(listingCount) : 1;
+    out[idx].count = Number(out[idx].count || 1) + bump;
+  }
+
+  return out;
+}
+
 function buildMarketColumnCell(topListings, fallbackAmount, maxN) {
   const wrap = document.createElement("div");
   wrap.className = "compare-market-stack";
-  const list = filterMarketTopListings(topListings);
+  const list = aggregateMarketTopListings(topListings, maxN);
 
   if (!list.length) {
     wrap.appendChild(buildCellPill({ amount: fallbackAmount, delta: 0 }));
     return wrap;
   }
 
-  const limit = Number.isFinite(Number(maxN)) ? Math.min(10, Math.max(1, Math.floor(Number(maxN)))) : 5;
-  const pills = list.slice(0, limit);
+  const pills = list;
 
   const makeMarketPill = (entry) => {
     const pill = document.createElement("span");
@@ -355,25 +391,39 @@ function buildMarketColumnCell(topListings, fallbackAmount, maxN) {
     const seller = document.createElement("span");
     seller.className = "compare-market-seller";
     const name = entry.sellerName != null ? String(entry.sellerName) : "";
+    const count = Number(entry?.count || 1);
     seller.textContent = name;
-    seller.title = name;
+    seller.title = count > 1 ? `${name} (${count} listings)` : name;
 
     const mode = instant ? "Instant" : "In-person";
     const cur = entry.listingCurrency != null ? String(entry.listingCurrency).trim() : "";
     const amt = entry.listingAmount != null ? Number(entry.listingAmount) : null;
     const detail =
       cur && amt != null && Number.isFinite(amt) && !/^mirror/i.test(cur) ? `${formatMirror(amt)} ${cur}` : "";
-    pill.title = [name || null, mode, detail || null].filter(Boolean).join(" · ");
+    const countPart = count > 1 ? `${count} listings` : null;
+    pill.title = [name || null, mode, detail || null, countPart].filter(Boolean).join(" · ");
 
     pill.appendChild(price);
     pill.appendChild(seller);
     return pill;
   };
 
+  const appendCountBadge = (container, entry) => {
+    const count = Number(entry?.count || 1);
+    if (count <= 1) return;
+    const badge = document.createElement("span");
+    badge.className = "compare-market-count-badge";
+    badge.textContent = `x${count}`;
+    badge.setAttribute("aria-label", `${count} listings`);
+    badge.title = `${count} listings`;
+    container.appendChild(badge);
+  };
+
   const firstRow = document.createElement("div");
   firstRow.className = "compare-market-first-row";
   const firstPill = makeMarketPill(pills[0]);
   firstRow.appendChild(firstPill);
+  appendCountBadge(firstRow, pills[0]);
   if (pills[0]?.corrupted) {
     const c = document.createElement("span");
     c.className = "compare-market-corrupt compare-market-corrupt--outside";
@@ -395,6 +445,7 @@ function buildMarketColumnCell(topListings, fallbackAmount, maxN) {
     const row = document.createElement("div");
     row.className = "compare-market-line";
     row.appendChild(makeMarketPill(pills[i]));
+    appendCountBadge(row, pills[i]);
     if (pills[i]?.corrupted) {
       const c = document.createElement("span");
       c.className = "compare-market-corrupt compare-market-corrupt--outside";
@@ -530,14 +581,30 @@ export function initAccountCompare() {
       activePointerId = null;
     };
 
-    // Mouse: expand on mousedown, collapse on mouseup anywhere.
-    let lastButtons = 0;
+    const setActiveMouseRow = (nextRow) => {
+      if (activeRow === nextRow) return;
+      if (activeRow) {
+        activeRow.classList.remove("compare-row-expanded");
+      }
+      activeRow = nextRow;
+      if (activeRow) {
+        activeRow.classList.add("compare-row-expanded");
+      }
+    };
 
-    document.addEventListener(
-      "mousemove",
+    const getMouseRowFromPoint = (clientX, clientY) => {
+      const el = document.elementFromPoint(clientX, clientY);
+      const tr = el?.closest?.("tr.compare-row--market-collapsible");
+      if (!tr || !tbody.contains(tr)) return null;
+      return tr;
+    };
+
+    // Mouse: while left button is held, expand whichever market row is under cursor.
+    window.addEventListener(
+      "mousedown",
       (e) => {
-        if (!mouseDown) return;
-        if (typeof e.buttons === "number") lastButtons = e.buttons;
+        if (e.button !== 0) return;
+        mouseDown = true;
       },
       true
     );
@@ -548,26 +615,22 @@ export function initAccountCompare() {
       if (!tr || !tbody.contains(tr)) return;
       // Prevent focus from sticking to the row on click-and-hold.
       e.preventDefault();
-      clearActive();
       mouseDown = true;
-      lastButtons = typeof e.buttons === "number" ? e.buttons : 1;
-      activeRow = tr;
-      tr.classList.add("compare-row-expanded");
+      setActiveMouseRow(tr);
+    });
 
-      // Some environments miss mouseup (e.g. drag, iframe, lost focus). While the mouse is held,
-      // poll `buttons` (via mousemove updates) and collapse immediately once it's released.
-      const step = () => {
+    window.addEventListener(
+      "mousemove",
+      (e) => {
         if (!mouseDown) return;
-        const held = (lastButtons & 1) === 1;
-        if (!held) {
-          mouseDown = false;
-          clearActive();
+        if (typeof e.buttons === "number" && (e.buttons & 1) === 0) {
+          collapseAllRows();
           return;
         }
-        window.requestAnimationFrame(step);
-      };
-      window.requestAnimationFrame(step);
-    });
+        setActiveMouseRow(getMouseRowFromPoint(e.clientX, e.clientY));
+      },
+      true
+    );
 
     window.addEventListener(
       "mouseup",
@@ -628,28 +691,16 @@ export function initAccountCompare() {
 
     // Hard safety net: if we ever see "no left button held", collapse everything.
     // This covers edge cases where mouseup doesn't fire (dragging, iframe focus shifts, etc).
-    const collapseIfNoLeftButton = (buttons) => {
-      if (typeof buttons !== "number") return;
-      if ((buttons & 1) === 0) {
-        collapseAllRows();
-      }
-    };
-
-    window.addEventListener(
-      "mousemove",
-      (e) => {
-        if (!mouseDown) return;
-        collapseIfNoLeftButton(e.buttons);
-      },
-      true
-    );
-
     window.addEventListener(
       "pointermove",
       (e) => {
         if (e.pointerType !== "mouse") return;
         if (!mouseDown) return;
-        collapseIfNoLeftButton(e.buttons);
+        if (typeof e.buttons === "number" && (e.buttons & 1) === 0) {
+          collapseAllRows();
+          return;
+        }
+        setActiveMouseRow(getMouseRowFromPoint(e.clientX, e.clientY));
       },
       true
     );

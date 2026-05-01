@@ -325,6 +325,10 @@
   display: none;
 }
 
+.compare-table tbody tr.compare-row--market-collapsible:not(.compare-row-expanded) .compare-market-count-badge {
+  display: none;
+}
+
 .cmp-pill.cmp-market-inperson {
   border-color: rgba(59, 130, 246, 0.40);
   background: rgba(59, 130, 246, 0.12);
@@ -348,6 +352,15 @@
 }
 
 .compare-market-corrupt--outside {
+  transform: translateY(-1px);
+}
+
+.compare-market-count-badge {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-weight: 600;
+  font-size: 10px;
+  color: rgba(194, 210, 227, 0.45);
+  flex-shrink: 0;
   transform: translateY(-1px);
 }
 

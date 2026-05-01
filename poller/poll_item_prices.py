@@ -1119,7 +1119,7 @@ def _dedupe_listings_for_display(listings: list[dict[str, Any]]) -> list[dict[st
     Best-effort dedupe when we merge multiple fetches (regular ladder + divines-only fallback).
     Trade fetch payloads don't always include a stable ID, so we use a conservative key.
     """
-    seen: set[tuple[str, str, str]] = set()
+    seen: dict[tuple[str, str, str], int] = {}
     out: list[dict[str, Any]] = []
     for entry in listings or []:
         if not isinstance(entry, dict):
@@ -1134,9 +1134,18 @@ def _dedupe_listings_for_display(listings: list[dict[str, Any]]) -> list[dict[st
         seller = extract_listing_seller_name(entry)
         key = (str(seller), f"{cur}:{float(amt):.6f}", str(indexed))
         if key in seen:
+            idx = int(seen[key])
+            prev = out[idx].get("_listingCount")
+            try:
+                prev_n = int(prev)
+            except Exception:
+                prev_n = 1
+            out[idx]["_listingCount"] = max(1, prev_n + 1)
             continue
-        seen.add(key)
-        out.append(entry)
+        copy_entry = dict(entry)
+        copy_entry["_listingCount"] = 1
+        out.append(copy_entry)
+        seen[key] = len(out) - 1
     return out
 
 
@@ -1447,6 +1456,7 @@ def build_listing_preview_entries(
                 "priceText": price_text,
                 "amount": amount,
                 "currency": currency,
+                "listingCount": max(1, int(entry.get("_listingCount") or 1)),
                 "isInstantBuyout": is_instant_buyout,
                 "isCorrupted": is_corrupted,
                 "sellerName": extract_listing_seller_name(entry),

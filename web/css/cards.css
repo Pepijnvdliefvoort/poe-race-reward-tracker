@@ -527,6 +527,13 @@
   gap: 10px;
 }
 
+.listings-row-price-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .listings-row-price {
   color: #ffcb48;
   font-weight: 400;
@@ -578,6 +585,30 @@
   color: #f7ba63;
   border-color: rgba(247, 186, 99, 0.36);
   background: rgba(100, 74, 31, 0.2);
+}
+
+.listings-row-corrupt-badge {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-weight: 700;
+  font-size: 0.60rem;
+  color: #dc2626;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.10);
+  padding: 0 5px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  line-height: 1.4;
+  margin-right: -40px;
+}
+
+.listings-row-count-badge {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-weight: 600;
+  font-size: 0.60rem;
+  color: rgba(194, 210, 227, 0.45);
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .listings-popover-message {

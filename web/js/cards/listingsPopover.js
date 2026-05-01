@@ -238,6 +238,47 @@ function setListingsPreviewSubline(entry, payload) {
   entry.listingsPopoverSubline.textContent = `${total} total listings (${leagueLabel})`;
 }
 
+function aggregateListingsForDisplay(listings) {
+  const out = [];
+  const byKey = new Map();
+
+  for (const row of Array.isArray(listings) ? listings : []) {
+    if (!row || typeof row !== "object") continue;
+
+    const seller = row.sellerName != null ? String(row.sellerName) : "";
+    const amount = row.amount != null ? Number(row.amount) : null;
+    const currency = row.currency != null ? String(row.currency).trim().toLowerCase() : "";
+    const priceText = row.priceText != null ? String(row.priceText) : "";
+    const instant = !!row.isInstantBuyout;
+    const corrupted = !!row.corrupted;
+    const listingCount = Number(row?.listingCount || 1);
+    const key = [
+      seller,
+      currency,
+      amount != null && Number.isFinite(amount) ? amount.toFixed(6) : "",
+      priceText,
+      instant ? "1" : "0",
+      corrupted ? "1" : "0",
+    ].join("|");
+
+    const idx = byKey.get(key);
+    if (idx == null) {
+      byKey.set(key, out.length);
+      out.push({
+        ...row,
+        count: Number.isFinite(listingCount) && listingCount > 0 ? Math.floor(listingCount) : 1,
+      });
+      continue;
+    }
+
+    const current = out[idx];
+    const bump = Number.isFinite(listingCount) && listingCount > 0 ? Math.floor(listingCount) : 1;
+    current.count = Number(current.count || 1) + bump;
+  }
+
+  return out;
+}
+
 function renderListingsPreview(entry, payload) {
   const previousScrollTop = entry.listingsPopover ? entry.listingsPopover.scrollTop : 0;
 
@@ -245,7 +286,7 @@ function renderListingsPreview(entry, payload) {
   setListingsPreviewSubline(entry, payload);
   clearNodeChildren(entry.listingsPopoverBody);
 
-  const listings = Array.isArray(payload?.listings) ? payload.listings : [];
+  const listings = aggregateListingsForDisplay(payload?.listings);
   if (!listings.length) {
     setListingsPopoverBody(entry, "No priced listings returned.", "listings-popover-muted");
     if (entry.listingsPopover) {
@@ -302,13 +343,40 @@ function renderListingsPreview(entry, payload) {
     buyout.className = `buyout-badge ${rowData.isInstantBuyout ? "yes" : "no"}`;
     buyout.textContent = rowData.isInstantBuyout ? "Instant trade" : "In-person trade";
 
-    top.append(price, buyout);
+    const count = Number(rowData?.count || 1);
+
+    const priceGroup = document.createElement("span");
+    priceGroup.className = "listings-row-price-group";
+    priceGroup.appendChild(price);
+    if (count > 1) {
+      const countBadge = document.createElement("span");
+      countBadge.className = "listings-row-count-badge";
+      countBadge.textContent = `x${count}`;
+      countBadge.setAttribute("aria-label", `${count} listings`);
+      countBadge.title = `${count} listings`;
+      priceGroup.appendChild(countBadge);
+    }
+
+    top.appendChild(priceGroup);
+    if (rowData.corrupted) {
+      const corruptBadge = document.createElement("span");
+      corruptBadge.className = "listings-row-corrupt-badge";
+      corruptBadge.textContent = "C";
+      corruptBadge.setAttribute("aria-label", "Corrupted");
+      corruptBadge.title = "Corrupted";
+      top.appendChild(corruptBadge);
+    }
+    top.appendChild(buyout);
 
     const meta = document.createElement("div");
     meta.className = "listings-row-meta";
 
     const seller = document.createElement("span");
-    seller.textContent = rowData.sellerName || "unknown seller";
+    const sellerName = rowData.sellerName || "unknown seller";
+    seller.textContent = sellerName;
+    if (count > 1) {
+      seller.title = `${sellerName} (${count} listings)`;
+    }
 
     const posted = document.createElement("span");
     posted.textContent = rowData.posted || "unknown";
