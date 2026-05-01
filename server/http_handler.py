@@ -1133,12 +1133,39 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if not isinstance(data, dict):
                     data = {}
 
-                try:
-                    sale_id = int(data.get("saleId") or 0)
-                except Exception:
-                    sale_id = 0
-                if sale_id <= 0:
-                    body = json.dumps({"ok": False, "error": "saleId is required"}).encode("utf-8")
+                sale_ids_raw = data.get("saleIds")
+                sale_ids: list[int] = []
+                if isinstance(sale_ids_raw, list):
+                    for x in sale_ids_raw:
+                        try:
+                            n = int(x)
+                        except Exception:
+                            continue
+                        if n > 0:
+                            sale_ids.append(n)
+                elif sale_ids_raw is not None:
+                    try:
+                        n = int(sale_ids_raw)
+                    except Exception:
+                        n = 0
+                    if n > 0:
+                        sale_ids.append(n)
+
+                # Backward compatibility: allow single saleId.
+                if not sale_ids:
+                    try:
+                        n = int(data.get("saleId") or 0)
+                    except Exception:
+                        n = 0
+                    if n > 0:
+                        sale_ids = [n]
+
+                # Deduplicate while preserving order.
+                seen_sale_ids: set[int] = set()
+                sale_ids = [s for s in sale_ids if not (s in seen_sale_ids or seen_sale_ids.add(s))]
+
+                if not sale_ids:
+                    body = json.dumps({"ok": False, "error": "saleId or saleIds is required"}).encode("utf-8")
                     self.send_response(400)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.send_header("Cache-Control", "no-store")
@@ -1161,8 +1188,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 storage = ServerStorage(ROOT_DIR)
                 con = storage.connect()
                 try:
-                    row = con.execute(
-                        """
+                    qmarks = ",".join(["?"] * len(sale_ids))
+                    rows = con.execute(
+                        f"""
                         SELECT
                           s.id,
                           s.item_variant_id,
@@ -1181,12 +1209,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         FROM sales s
                         JOIN item_variants v ON v.id = s.item_variant_id
                         JOIN items i ON i.id = v.item_id
-                        WHERE s.id = ?
-                        LIMIT 1
+                        WHERE s.id IN ({qmarks})
+                        ORDER BY s.occurred_at_utc DESC, s.id DESC
                         """,
-                        (sale_id,),
-                    ).fetchone()
-                    if not row:
+                        tuple(sale_ids),
+                    ).fetchall()
+                    if not rows:
                         body = json.dumps({"ok": False, "error": "Sale not found"}).encode("utf-8")
                         self.send_response(404)
                         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1195,8 +1223,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(body)
                         return
-                    if row["reverted_at_utc"]:
-                        body = json.dumps({"ok": False, "error": "Sale was reverted and cannot be resent"}).encode("utf-8")
+
+                    if len(rows) != len(sale_ids):
+                        body = json.dumps({"ok": False, "error": "One or more sale IDs were not found"}).encode("utf-8")
+                        self.send_response(404)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+
+                    first_variant_id = int(rows[0]["item_variant_id"])
+                    if any(int(r["item_variant_id"]) != first_variant_id for r in rows):
+                        body = json.dumps({"ok": False, "error": "All selected sales must be from the same variant"}).encode("utf-8")
                         self.send_response(400)
                         self.send_header("Content-Type", "application/json; charset=utf-8")
                         self.send_header("Cache-Control", "no-store")
@@ -1205,7 +1245,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         self.wfile.write(body)
                         return
 
-                    variant_id = int(row["item_variant_id"])
+                    if any(r["reverted_at_utc"] for r in rows):
+                        body = json.dumps({"ok": False, "error": "One or more selected sales were reverted and cannot be resent"}).encode("utf-8")
+                        self.send_response(400)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+
+                    variant_id = first_variant_id
                     dpm_row = con.execute(
                         """
                         SELECT pr.divines_per_mirror AS dpm
@@ -1236,62 +1286,76 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 finally:
                     con.close()
 
-                rule = str(row["rule"] or "")
-                qty = int(row["quantity"] or 1)
-                qty = max(1, qty)
-                confirmed_transfer = qty if rule == "confirmed_transfer" else 0
-                likely_instant_sale = qty if rule == "likely_instant_sale" else 0
-                likely_non_instant_online = qty if rule == "likely_non_instant_online_sale" else 0
+                confirmed_transfer = 0
+                likely_instant_sale = 0
+                likely_non_instant_online = 0
+                cycle_delta = 0
+                inference_events: list[dict[str, Any]] = []
 
-                event: dict[str, Any] = {
-                    "rule": rule,
-                    "fingerprint": str(row["fingerprint"] or ""),
-                }
-                if rule == "confirmed_transfer":
-                    event.update(
-                        {
-                            "from_seller": str(row["seller"] or ""),
-                            "to_seller": str(row["buyer"] or ""),
-                            "fromPriceAmount": row["price_amount"],
-                            "fromPriceCurrency": str(row["price_currency"] or ""),
-                            "fromMirrorEquiv": row["mirror_equiv"],
-                        }
-                    )
-                else:
-                    event.update(
-                        {
-                            "seller": str(row["seller"] or ""),
-                            "priceAmount": row["price_amount"],
-                            "priceCurrency": str(row["price_currency"] or ""),
-                            "mirrorEquiv": row["mirror_equiv"],
-                        }
-                    )
+                for row in rows:
+                    rule = str(row["rule"] or "")
+                    qty = int(row["quantity"] or 1)
+                    qty = max(1, qty)
+                    cycle_delta += qty
+                    if rule == "confirmed_transfer":
+                        confirmed_transfer += qty
+                    elif rule == "likely_instant_sale":
+                        likely_instant_sale += qty
+                    elif rule == "likely_non_instant_online_sale":
+                        likely_non_instant_online += qty
 
-                icon_path = str(row["icon_path"] or "").strip()
+                    event: dict[str, Any] = {
+                        "rule": rule,
+                        "fingerprint": str(row["fingerprint"] or ""),
+                    }
+                    if rule == "confirmed_transfer":
+                        event.update(
+                            {
+                                "from_seller": str(row["seller"] or ""),
+                                "to_seller": str(row["buyer"] or ""),
+                                "fromPriceAmount": row["price_amount"],
+                                "fromPriceCurrency": str(row["price_currency"] or ""),
+                                "fromMirrorEquiv": row["mirror_equiv"],
+                            }
+                        )
+                    else:
+                        event.update(
+                            {
+                                "seller": str(row["seller"] or ""),
+                                "priceAmount": row["price_amount"],
+                                "priceCurrency": str(row["price_currency"] or ""),
+                                "mirrorEquiv": row["mirror_equiv"],
+                            }
+                        )
+                    for _ in range(qty):
+                        inference_events.append(dict(event))
+
+                first = rows[0]
+                icon_path = str(first["icon_path"] or "").strip()
                 image_url = icon_path if icon_path.startswith("http://") or icon_path.startswith("https://") else None
 
                 session = requests.Session()
                 send_estimated_sales_change_notification(
                     session,
                     webhook_url=webhook_url,
-                    item_name=str(row["display_name"] or "item"),
+                    item_name=str(first["display_name"] or "item"),
                     item_image_url=image_url,
-                    cycle_delta=qty,
+                    cycle_delta=cycle_delta,
                     total_in_window=total_in_window,
                     window_days=window_days,
                     confirmed_transfer=confirmed_transfer,
                     likely_instant_sale=likely_instant_sale,
                     likely_non_instant_online=likely_non_instant_online,
                     divines_per_mirror=divines_per_mirror,
-                    inference_events=[event],
+                    inference_events=inference_events,
                 )
 
                 body = json.dumps(
                     {
                         "ok": True,
-                        "saleId": sale_id,
-                        "item": str(row["display_name"] or ""),
-                        "rule": rule,
+                        "saleIds": [int(r["id"]) for r in rows],
+                        "item": str(first["display_name"] or ""),
+                        "cycleDelta": cycle_delta,
                     },
                     allow_nan=False,
                 ).encode("utf-8")

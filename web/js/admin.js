@@ -1905,6 +1905,7 @@ function setupDeleteSalesTool() {
   let byLabel = new Map();
   let selected = null;
   let sales = [];
+  let saleGroups = [];
 
   const fmt = (v) => {
     const mode = v.mode ? ` · ${v.mode}` : "";
@@ -1953,22 +1954,58 @@ function setupDeleteSalesTool() {
     return d.toLocaleString();
   };
 
-  const selectedSale = () => {
-    const id = Number(saleSelect.value || 0);
-    if (!Number.isFinite(id) || id <= 0) return null;
-    return sales.find((s) => Number(s.saleId) === id) || null;
+  const hhmmKey = (iso) => {
+    const raw = String(iso || "");
+    const m = raw.match(/T(\d{2}:\d{2})/);
+    if (m && m[1]) return m[1];
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return "unknown";
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
+
+  const buildSaleGroups = (rows) => {
+    const map = new Map();
+    for (const s of Array.isArray(rows) ? rows : []) {
+      const key = hhmmKey(s?.occurredAtUtc);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(s);
+    }
+    const out = [];
+    for (const [key, entries] of map.entries()) {
+      entries.sort((a, b) => String(b?.occurredAtUtc || "").localeCompare(String(a?.occurredAtUtc || "")));
+      out.push({
+        key,
+        entries,
+        saleIds: entries.map((x) => Number(x.saleId)).filter((n) => Number.isFinite(n) && n > 0),
+      });
+    }
+    out.sort((a, b) => String(b.key).localeCompare(String(a.key)));
+    return out;
+  };
+
+  const selectedGroup = () => {
+    const key = String(saleSelect.value || "").trim();
+    if (!key) return null;
+    return saleGroups.find((g) => g.key === key) || null;
   };
 
   const updateSalePreview = () => {
-    const s = selectedSale();
-    if (!s) {
+    const g = selectedGroup();
+    if (!g) {
       resendBtn.disabled = true;
-      salePreview.textContent = sales.length ? "Select a sale to resend." : "No recorded sales for this variant.";
+      salePreview.textContent = sales.length ? "Select a grouped timestamp to resend." : "No recorded sales for this variant.";
       return;
     }
     resendBtn.disabled = false;
-    const who = s.buyer ? `${s.seller} -> ${s.buyer}` : s.seller;
-    salePreview.textContent = `${saleRuleLabel(s.rule)} · ${who} · ${salePriceLabel(s)} · ${formatWhen(s.occurredAtUtc)}`;
+    const sellers = new Set();
+    for (const s of g.entries) {
+      if (s?.seller) sellers.add(String(s.seller));
+    }
+    const sellersPreview = Array.from(sellers).slice(0, 3).join(", ");
+    const sellersMore = sellers.size > 3 ? ` +${sellers.size - 3} more` : "";
+    salePreview.textContent = `${g.key} · ${g.entries.length} sale signal(s) · sellers: ${sellersPreview || "unknown"}${sellersMore}`;
   };
 
   const renderSalesSelect = () => {
@@ -1985,16 +2022,16 @@ function setupDeleteSalesTool() {
       updateSalePreview();
       return;
     }
+    saleGroups = buildSaleGroups(sales);
     saleSelect.disabled = false;
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = "Select a sale…";
+    placeholder.textContent = "Select a timestamp group (HH:mm)…";
     saleSelect.appendChild(placeholder);
-    sales.forEach((s) => {
+    saleGroups.forEach((g) => {
       const opt = document.createElement("option");
-      opt.value = String(s.saleId);
-      const who = s.buyer ? `${s.seller} -> ${s.buyer}` : s.seller;
-      opt.textContent = `${saleRuleLabel(s.rule)} · ${who} · ${salePriceLabel(s)} · ${formatWhen(s.occurredAtUtc)}`;
+      opt.value = g.key;
+      opt.textContent = `${g.key} · ${g.entries.length} sale signal(s)`;
       saleSelect.appendChild(opt);
     });
     saleSelect.value = "";
@@ -2013,9 +2050,11 @@ function setupDeleteSalesTool() {
       const payload = await fetchJson(`/api/admin/market/sales?variantId=${encodeURIComponent(selected.variantId)}&limit=200`);
       if (!payload?.ok) throw new Error(payload?.error || "Failed to load sales");
       sales = Array.isArray(payload.sales) ? payload.sales : [];
+      saleGroups = [];
       renderSalesSelect();
     } catch (e) {
       sales = [];
+      saleGroups = [];
       renderSalesSelect();
       salePreview.textContent = adminEndpointErrorMessage(e, "Load sales");
     }
@@ -2037,21 +2076,21 @@ function setupDeleteSalesTool() {
   saleSelect.addEventListener("change", updateSalePreview);
 
   resendBtn.addEventListener("click", async () => {
-    const s = selectedSale();
-    if (!s || !selected) return;
+    const g = selectedGroup();
+    if (!g || !selected) return;
     resendBtn.disabled = true;
     setHint("Resending alert…");
     try {
       const payload = await fetchJsonWithInit("/api/admin/sales/resend-alert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ saleId: s.saleId }),
+        body: JSON.stringify({ saleIds: g.saleIds }),
       });
       if (!payload?.ok) {
         setHint(payload?.error ? `Resend sale alert: ${payload.error}` : "Resend sale alert failed.", true);
         return;
       }
-      setHint(`Resent sale alert for ${payload?.item || selected.displayName}.`);
+      setHint(`Resent sale alert for ${payload?.item || selected.displayName} (${g.key}, ${g.entries.length} signal(s)).`);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Resend sale alert"), true);
     } finally {
@@ -2123,10 +2162,12 @@ function setupDeleteSalesTool() {
       });
       preview.textContent = "Select an item variant.";
       sales = [];
+      saleGroups = [];
       renderSalesSelect();
     } catch (e) {
       preview.textContent = adminEndpointErrorMessage(e, "Load variants");
       sales = [];
+      saleGroups = [];
       renderSalesSelect();
     }
   }
