@@ -1,6 +1,14 @@
 import { applySorting } from "../domain/sorting.js";
 import { getAvailableLowestPrice } from "../domain/pricing.js";
+import { poeStashRegexMatches } from "../domain/poeStashRegex.js";
 import { state } from "../core/state.js";
+
+/**
+ * Match item name against PoE stash-style regex (see `poeStashRegex.js`).
+ */
+export function itemNameMatchesSearch(itemName, rawQuery) {
+    return poeStashRegexMatches(itemName, rawQuery);
+}
 
 /**
  * Filter and sort items based on current filter state.
@@ -9,9 +17,10 @@ import { state } from "../core/state.js";
 export function getFilteredAndSortedItems(items) {
     let filtered = [...items];
 
-    // Apply search filter
-    if (state.filters.search) {
-        filtered = filtered.filter((item) => item.itemName.toLowerCase().includes(state.filters.search));
+    // Apply search filter (PoE stash-style regex; see poeStashRegex.js)
+    const searchQuery = state.filters.search.trim();
+    if (searchQuery) {
+        filtered = filtered.filter((item) => itemNameMatchesSearch(item.itemName, searchQuery));
     }
 
     // Apply favorites filter
@@ -96,7 +105,7 @@ export function isManualSortActive() {
  */
 export function hasActiveFilters() {
     return (
-        state.filters.search ||
+        Boolean(state.filters.search?.trim()) ||
         state.filters.priceSort ||
         state.filters.trendSort ||
         state.filters.soldSort ||

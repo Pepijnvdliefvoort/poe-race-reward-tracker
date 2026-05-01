@@ -93,7 +93,7 @@ export function syncFilterControlsFromState() {
 export function registerFilterEventListeners() {
     // Search input
     dom.searchInput.addEventListener("input", (e) => {
-        state.filters.search = e.target.value.toLowerCase();
+        state.filters.search = e.target.value;
         saveFilters();
         syncSearchClearButton();
         applyFiltersAndRender();

@@ -69,9 +69,56 @@
     <main>
       <div class="search-row">
         <div class="filter-group main-search-group">
-          <label for="searchInput">Search</label>
+          <div class="search-label-row">
+            <label for="searchInput">Search</label>
+            <span class="search-regex-info-wrap">
+              <button
+                type="button"
+                class="search-regex-info-btn"
+                aria-label="Regex search examples"
+                aria-describedby="searchRegexHelp"
+              >
+                <span class="search-regex-info-icon" aria-hidden="true">i</span>
+              </button>
+              <div id="searchRegexHelp" class="search-regex-tooltip" role="tooltip">
+                <p class="search-regex-tooltip-lead">
+                  Supports regex like PoE stash tab: <code>im</code> (case-insensitive, line
+                  <code>^</code>/<code>$</code>). Only <strong>item names</strong> are matched here.
+                  Use spaces around <code>|</code> for OR (e.g. <code>Tabula | Headhunter</code>); a compact <code>|</code> is
+                  alternation inside one regex.
+                </p>
+                <ul class="search-regex-examples">
+                  <li>
+                    <code>Storm|Presence</code>
+                    <span class="search-regex-hint">one pattern: <code>|</code> means OR (no quotes)</span>
+                  </li>
+                  <li>
+                    <code>"Demigod's Stride"|"Demigod's Immortality"</code>
+                    <span class="search-regex-hint">quotes to include spaces in the name</span>
+                  </li>
+                  <li>
+                    <code>"Talisman" "normal"</code>
+                    <span class="search-regex-hint">space-separated quoted parts all match the name (AND)</span>
+                  </li>
+                  <li>
+                    <code>^The </code>
+                    <span class="search-regex-hint">names starting with “The ”</span>
+                  </li>
+                  <li>
+                    <code>!Tabula</code>
+                    <span class="search-regex-hint">not matching names with <code>!</code> (negates)</span>
+                  </li>
+                </ul>
+              </div>
+            </span>
+          </div>
           <div class="search-input-wrap">
-            <input type="text" id="searchInput" placeholder="Filter by name..." enterkeyhint="done" />
+            <input
+              type="text"
+              id="searchInput"
+              placeholder="Filter by name..."
+              enterkeyhint="done"
+            />
             <button type="button" id="searchClearBtn" class="search-clear-btn" aria-label="Clear search" title="Clear search">
               &times;
             </button>

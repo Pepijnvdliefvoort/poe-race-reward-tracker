@@ -142,7 +142,7 @@ export function loadFilters() {
     chartTimespanCustomAmount = Math.min(maxAmt, Math.max(1, Math.round(chartTimespanCustomAmount)));
 
     return {
-      search: typeof parsed.search === "string" ? parsed.search.toLowerCase() : DEFAULT_FILTERS.search,
+      search: typeof parsed.search === "string" ? parsed.search : DEFAULT_FILTERS.search,
       priceSort: parsed.priceSort === "asc" || parsed.priceSort === "desc" ? parsed.priceSort : "",
       trendSort:
         parsed.trendSort === "highest" || parsed.trendSort === "lowest" ? parsed.trendSort : "",
