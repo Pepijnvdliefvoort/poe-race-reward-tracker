@@ -521,6 +521,73 @@ class ServerStorage:
             ).fetchall()
             market_min_by_variant = {int(r["variant_id"]): (float(r["market_min"]) if r["market_min"] is not None else None) for r in market_rows}
 
+            # Cheapest N listings per variant (mirror equivalents), same filters as market_min.
+            market_top_listings_by_variant: dict[int, list[dict[str, Any]]] = {}
+            top_rows = con.execute(
+                """
+                WITH latest_poll AS (
+                  SELECT item_variant_id, MAX(id) AS item_poll_id
+                  FROM item_polls
+                  GROUP BY item_variant_id
+                ),
+                priced AS (
+                  SELECT
+                    ip.item_variant_id AS variant_id,
+                    ls.seller_name AS seller_name,
+                    ls.amount AS listing_amount,
+                    ls.currency AS listing_currency,
+                    ls.is_instant_buyout AS is_instant_buyout,
+                    CASE
+                      WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
+                      WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
+                        THEN ls.amount / NULLIF(pr.divines_per_mirror, 0)
+                      WHEN LOWER(TRIM(ls.currency)) IN ('exalted', 'exalt', 'exa', 'exalted orb', 'exalted orbs')
+                        THEN (ls.amount / 60.0) / NULLIF(pr.divines_per_mirror, 0)
+                      ELSE NULL
+                    END AS mirror_equiv
+                  FROM latest_poll lp
+                  JOIN item_polls ip ON ip.id = lp.item_poll_id
+                  JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                  JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
+                  WHERE ls.amount IS NOT NULL
+                    AND ls.amount > 0
+                    AND (? = 0 OR ls.is_instant_buyout = 1)
+                ),
+                ranked AS (
+                  SELECT
+                    variant_id,
+                    seller_name,
+                    listing_amount,
+                    listing_currency,
+                    is_instant_buyout,
+                    mirror_equiv,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY variant_id
+                      ORDER BY mirror_equiv ASC, seller_name ASC
+                    ) AS rn
+                  FROM priced
+                  WHERE mirror_equiv IS NOT NULL
+                )
+                SELECT variant_id, seller_name, listing_amount, listing_currency, mirror_equiv, is_instant_buyout, rn
+                FROM ranked
+                WHERE rn <= 5
+                ORDER BY variant_id ASC, rn ASC
+                """,
+                (1 if instant_only else 0,),
+            ).fetchall()
+            for tr in top_rows:
+                vid = int(tr["variant_id"])
+                me = tr["mirror_equiv"]
+                market_top_listings_by_variant.setdefault(vid, []).append(
+                    {
+                        "sellerName": str(tr["seller_name"] or ""),
+                        "mirrorEquiv": float(me),
+                        "listingAmount": float(tr["listing_amount"]) if tr["listing_amount"] is not None else None,
+                        "listingCurrency": str(tr["listing_currency"] or ""),
+                        "instantBuyout": bool(int(tr["is_instant_buyout"] or 0)),
+                    }
+                )
+
             # When an account is already the market floor, compare it to the next cheapest listing
             # by excluding that seller from the market min calculation.
             market_min_excluding_account_by_variant: dict[int, dict[str, float | None]] = {}
@@ -662,7 +729,12 @@ class ServerStorage:
                     "sortOrder": int(v["sort_order"] or 0),
                     "queryId": str(v["query_id"] or ""),
                     "updatedAt": str(v["updated_at_utc"] or ""),
-                    "market": {"currency": cur_norm, "amount": market_min, "excluding": {acct: market_excl.get(acct) for acct in cleaned_accounts}},
+                    "market": {
+                        "currency": cur_norm,
+                        "amount": market_min,
+                        "excluding": {acct: market_excl.get(acct) for acct in cleaned_accounts},
+                        "topListings": market_top_listings_by_variant.get(vid, []),
+                    },
                     "accounts": {acct: acct_map.get(acct) for acct in cleaned_accounts},
                 }
                 rows.append(row)

@@ -187,6 +187,31 @@
   background: rgba(255, 255, 255, 0.96);
 }
 
+.compare-table thead th.compare-th--sortable {
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+}
+
+.compare-table thead th.compare-th--sortable:hover {
+  color: var(--ink);
+}
+
+.compare-table thead th.compare-th--sortable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.compare-th-label {
+  vertical-align: middle;
+}
+
+.compare-th-sort-ind {
+  font-size: 0.72rem;
+  opacity: 0.85;
+  vertical-align: middle;
+}
+
 .compare-table tbody td {
   padding: 9px 10px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
@@ -194,6 +219,81 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.compare-table tbody td.compare-td-market {
+  white-space: normal;
+  vertical-align: top;
+  overflow: visible;
+}
+
+.compare-market-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-start;
+}
+
+.compare-market-first-row {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.compare-table tbody tr.compare-row--market-collapsible {
+  cursor: pointer;
+}
+
+.compare-table tbody tr.compare-row--market-collapsible:hover td {
+  background: rgba(148, 163, 184, 0.07);
+}
+
+:root.light-theme .compare-table tbody tr.compare-row--market-collapsible:hover td {
+  background: rgba(15, 23, 42, 0.055);
+}
+
+.compare-table tbody tr.compare-row--market-collapsible:focus {
+  outline: none;
+}
+
+.compare-table tbody tr.compare-row--market-collapsible:focus-visible td {
+  box-shadow: inset 0 0 0 2px rgba(56, 189, 248, 0.45);
+}
+
+/* Pills 2–5 are direct children of the stack; pill 1 lives in .compare-market-first-row */
+.compare-table tbody tr.compare-row--market-collapsible:not(.compare-row-expanded) .compare-market-stack > span.cmp-pill--market-row {
+  display: none;
+}
+
+.compare-market-collapsed-hint {
+  font-size: 11px;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.compare-table tbody tr.compare-row-expanded .compare-market-collapsed-hint {
+  display: none;
+}
+
+.cmp-pill.cmp-pill--market-row {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.compare-market-seller {
+  font-size: 11px;
+  color: var(--ink-soft);
+  max-width: min(160px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .compare-item {
