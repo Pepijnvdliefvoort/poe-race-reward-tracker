@@ -219,13 +219,11 @@
   }
 
   #meta,
-  #overview,
-  .next-poll-pill {
+  #overview {
     width: 100%;
   }
 
-  #meta,
-  .next-poll-pill {
+  #meta {
     justify-content: center;
   }
 }

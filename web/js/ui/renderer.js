@@ -84,68 +84,6 @@ export function getNextInLineItemName(items) {
 }
 
 /**
- * Format milliseconds as hh:mm:ss
- */
-function formatCountdown(ms) {
-    if (ms <= 0) return "00:00:00";
-    
-    const totalSeconds = Math.floor(ms / 1000);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-/**
- * Update the overview panel with metadata (next poll time, etc).
- */
-export function updateOverview(payload) {
-    const nextPollTime = payload.nextPollTime;
-
-    const pill = document.createElement("div");
-    pill.className = "meta next-poll-pill";
-    const icon = document.createElement("span");
-    icon.className = "meta-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = "⏰";
-
-    const label = document.createElement("span");
-    label.className = "meta-label";
-    label.textContent = "Next poll";
-
-    const value = document.createElement("span");
-    value.className = "meta-value meta-value--mono";
-
-    pill.appendChild(icon);
-    pill.appendChild(label);
-    pill.appendChild(value);
-
-    if (nextPollTime) {
-        const updateCountdown = () => {
-            const now = Date.now();
-            const timeRemaining = nextPollTime - now;
-            value.textContent = formatCountdown(timeRemaining);
-        };
-
-        updateCountdown();
-
-        const interval = setInterval(updateCountdown, 1000);
-        pill.dataset.countdownInterval = String(interval);
-    } else {
-        value.textContent = "—";
-    }
-    
-    // Clear any existing interval from previous pill
-    const oldPill = dom.overviewEl.querySelector(".next-poll-pill");
-    if (oldPill?.dataset.countdownInterval) {
-        clearInterval(parseInt(oldPill.dataset.countdownInterval, 10));
-    }
-    
-    dom.overviewEl.replaceChildren(pill);
-}
-
-/**
  * Set the status indicator (color and message).
  */
 export function setStatus(stateName, text) {
@@ -158,7 +96,6 @@ export function setStatus(stateName, text) {
  * Render the full page with price data payload.
  */
 export function render(payload) {
-    updateOverview(payload);
     state.currentItems = payload.items || [];
 
     if (!state.currentItems.length) {
