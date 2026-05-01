@@ -274,6 +274,15 @@
   max-width: 100%;
 }
 
+.compare-market-line {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
 .compare-table tbody tr.compare-row--market-collapsible {
   cursor: pointer;
 }
@@ -294,8 +303,8 @@
   box-shadow: inset 0 0 0 2px rgba(56, 189, 248, 0.45);
 }
 
-/* Pills 2–5 are direct children of the stack; pill 1 lives in .compare-market-first-row */
-.compare-table tbody tr.compare-row--market-collapsible:not(.compare-row-expanded) .compare-market-stack > span.cmp-pill--market-row {
+/* Collapsed: hide market lines after the first row */
+.compare-table tbody tr.compare-row--market-collapsible:not(.compare-row-expanded) .compare-market-stack > .compare-market-line {
   display: none;
 }
 
@@ -336,6 +345,10 @@
   padding: 0 6px;
   border-radius: 999px;
   line-height: 1.4;
+}
+
+.compare-market-corrupt--outside {
+  transform: translateY(-1px);
 }
 
 .cmp-pill.cmp-pill--market-row {

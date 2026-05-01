@@ -365,21 +365,22 @@ function buildMarketColumnCell(topListings, fallbackAmount) {
     pill.title = [name || null, mode, detail || null].filter(Boolean).join(" · ");
 
     pill.appendChild(price);
-    if (entry?.corrupted) {
-      const c = document.createElement("span");
-      c.className = "compare-market-corrupt";
-      c.textContent = "C";
-      c.setAttribute("aria-label", "Corrupted");
-      c.title = "Corrupted";
-      pill.appendChild(c);
-    }
     pill.appendChild(seller);
     return pill;
   };
 
   const firstRow = document.createElement("div");
   firstRow.className = "compare-market-first-row";
-  firstRow.appendChild(makeMarketPill(pills[0]));
+  const firstPill = makeMarketPill(pills[0]);
+  firstRow.appendChild(firstPill);
+  if (pills[0]?.corrupted) {
+    const c = document.createElement("span");
+    c.className = "compare-market-corrupt compare-market-corrupt--outside";
+    c.textContent = "C";
+    c.setAttribute("aria-label", "Corrupted");
+    c.title = "Corrupted";
+    firstRow.appendChild(c);
+  }
   if (pills.length > 1) {
     const hint = document.createElement("span");
     hint.className = "compare-market-collapsed-hint";
@@ -390,7 +391,18 @@ function buildMarketColumnCell(topListings, fallbackAmount) {
   wrap.appendChild(firstRow);
 
   for (let i = 1; i < pills.length; i++) {
-    wrap.appendChild(makeMarketPill(pills[i]));
+    const row = document.createElement("div");
+    row.className = "compare-market-line";
+    row.appendChild(makeMarketPill(pills[i]));
+    if (pills[i]?.corrupted) {
+      const c = document.createElement("span");
+      c.className = "compare-market-corrupt compare-market-corrupt--outside";
+      c.textContent = "C";
+      c.setAttribute("aria-label", "Corrupted");
+      c.title = "Corrupted";
+      row.appendChild(c);
+    }
+    wrap.appendChild(row);
   }
 
   return wrap;
