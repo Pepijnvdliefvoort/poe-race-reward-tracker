@@ -102,6 +102,18 @@ class StorageService:
         finally:
             con.close()
 
+    def update_variant_icon_path(self, *, variant_id: int, icon_path: str) -> None:
+        self.ensure_initialized()
+        path = str(icon_path or "").strip()
+        if int(variant_id) <= 0 or not path:
+            return
+        con = self._db.connect()
+        try:
+            ItemsRepo(con).set_icon_path_for_variant(variant_id=int(variant_id), icon_path=path)
+            con.commit()
+        finally:
+            con.close()
+
     def latest_cycle_number(self, *, league: str) -> int:
         """Return the greatest stored poll_runs.cycle_number for this league, else 0."""
         self.ensure_initialized()

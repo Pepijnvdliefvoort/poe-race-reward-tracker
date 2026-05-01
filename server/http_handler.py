@@ -97,6 +97,21 @@ def _load_sales_discord_window_days() -> int:
     return max(1, min(3650, raw))
 
 
+def _normalize_trade_icon_url_for_discord(raw: str | None) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if s.startswith("http://") or s.startswith("https://"):
+        return s
+    if s.startswith("//"):
+        return "https:" + s
+    if s.startswith("/"):
+        return "https://web.poecdn.com" + s
+    return "https://web.poecdn.com/" + s
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
@@ -1332,7 +1347,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 first = rows[0]
                 icon_path = str(first["icon_path"] or "").strip()
-                image_url = icon_path if icon_path.startswith("http://") or icon_path.startswith("https://") else None
+                image_url = _normalize_trade_icon_url_for_discord(icon_path)
 
                 session = requests.Session()
                 send_estimated_sales_change_notification(
