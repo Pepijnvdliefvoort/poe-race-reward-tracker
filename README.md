@@ -57,6 +57,32 @@ Optional custom interval (seconds):
 python -m poller --poll-interval 1800
 ```
 
+Run exactly one cycle (useful for local testing):
+
+```powershell
+python -m poller --max-cycles 1
+```
+
+Override sale-inference fetch cap for this run (`0` disables inference fetches):
+
+```powershell
+python -m poller --inference-cap 50
+```
+
+Prioritize specific items by name substring (case-insensitive):
+
+```powershell
+python -m poller --only Mokou --max-cycles 1
+python -m poller --only "Demigod's" Headhunter --max-cycles 1
+```
+
+Poller CLI arguments summary:
+
+- `--poll-interval <seconds>`: sleep between cycles (default `3600`, use `0` for back-to-back)
+- `--max-cycles <n>`: stop after `n` cycles
+- `--inference-cap <n>`: max listing IDs fetched for inference (`0` disables)
+- `--only <substr...>`: move matching item names to the front of each cycle
+
 3. In another terminal, run the dashboard server:
 
 ```powershell

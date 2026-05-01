@@ -68,6 +68,7 @@ class Config:
     poll_interval: int
     max_cycles: int | None
     inference_fetch_cap: int
+    only: list[str]
 
 
 @dataclass
@@ -523,6 +524,17 @@ def parse_args() -> Config:
             f"0 disables). Default: app_config key 'inference_listings_fetch_cap' or {DEFAULT_INFERENCE_LISTINGS_FETCH_CAP}."
         ),
     )
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        default=[],
+        metavar="SUBSTR",
+        help=(
+            "Only poll items whose name contains one of these substrings (case-insensitive). "
+            "Matched items are placed first; unmatched items follow. "
+            "Combine with --max-cycles 1 to run a single pass over just the matched items."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -538,6 +550,7 @@ def parse_args() -> Config:
         poll_interval=args.poll_interval,
         max_cycles=args.max_cycles,
         inference_fetch_cap=inference_cap,
+        only=[s.strip() for s in args.only if s.strip()],
     )
 
 
@@ -1115,11 +1128,16 @@ def fetch_top_listings(
 
 
 def _dedupe_listings_for_display(listings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge listings from multiple fetch batches.
+
+    Two-pass logic:
+    - If an entry has a fingerprint already seen, it is the same physical item from a
+      different fetch batch (e.g. regular ladder + divine-only fallback). Skip it entirely.
+    - Otherwise group by (seller, currency, amount, corrupted) and count: these are distinct
+      physical items that share the same seller/price/corruption state.
     """
-    Best-effort dedupe when we merge multiple fetches (regular ladder + divines-only fallback).
-    Trade fetch payloads don't always include a stable ID, so we use a conservative key.
-    """
-    seen: dict[tuple[str, str, str], int] = {}
+    seen_fp: set[str] = set()
+    group_idx: dict[tuple[str, str, str, bool], int] = {}
     out: list[dict[str, Any]] = []
     for entry in listings or []:
         if not isinstance(entry, dict):
@@ -1130,22 +1148,26 @@ def _dedupe_listings_for_display(listings: list[dict[str, Any]]) -> list[dict[st
         if norm is None:
             continue
         cur, amt = norm
-        indexed = listing.get("indexed") if isinstance(listing.get("indexed"), str) else ""
         seller = extract_listing_seller_name(entry)
-        key = (str(seller), f"{cur}:{float(amt):.6f}", str(indexed))
-        if key in seen:
-            idx = int(seen[key])
-            prev = out[idx].get("_listingCount")
-            try:
-                prev_n = int(prev)
-            except Exception:
-                prev_n = 1
-            out[idx]["_listingCount"] = max(1, prev_n + 1)
+        item_data = entry.get("item") if isinstance(entry.get("item"), dict) else None
+        corrupted = bool(item_data.get("corrupted")) if isinstance(item_data, dict) else False
+        fp = fingerprint_trade_item(item_data) if item_data else None
+
+        # Skip exact duplicate from another fetch batch.
+        if fp:
+            if fp in seen_fp:
+                continue
+            seen_fp.add(fp)
+
+        # Group distinct physical listings with same seller/price/corruption.
+        group_key = (str(seller), str(cur), f"{float(amt):.6f}", corrupted)
+        if group_key in group_idx:
+            out[group_idx[group_key]]["_listingCount"] = out[group_idx[group_key]].get("_listingCount", 1) + 1
             continue
         copy_entry = dict(entry)
         copy_entry["_listingCount"] = 1
+        group_idx[group_key] = len(out)
         out.append(copy_entry)
-        seen[key] = len(out) - 1
     return out
 
 
@@ -2093,8 +2115,8 @@ def run_cycle(
             _, divine_only_prices_raw, _ = extract_listing_prices(divine_only_listings)
             divine_only_converted = [p / divines_per_mirror for p in divine_only_prices_raw]
 
-        # Dedupe for UI preview / storage. Prefer the deeper fetch (`listings_inference`) so we
-        # persist more than TOP_IDS_LIMIT (up to the configured cap).
+        # Keep fetched rows as-is for UI preview / storage. Prefer the deeper fetch
+        # (`listings_inference`) so we persist more than TOP_IDS_LIMIT (up to the configured cap).
         listings_for_display = _dedupe_listings_for_display(listings_inference + divine_only_listings)
         base_for_icon = listings_inference if listings_inference else listings
         listings_for_icon = _dedupe_listings_for_display(base_for_icon + divine_only_listings)
@@ -2348,6 +2370,13 @@ def main() -> None:
     for (_vid, name, mode, _dn, _so, _ic) in variants:
         alt = True if mode == "aa" else False if mode == "normal" else None
         item_specs.append(ItemSpec(name=name, alternate_art=alt))
+
+    if cfg.only:
+        filters = [f.lower() for f in cfg.only]
+        matched = [s for s in item_specs if any(f in s.name.lower() for f in filters)]
+        rest = [s for s in item_specs if s not in matched]
+        item_specs = matched + rest
+        log_line("cycle", f"--only filter active: {[s.name for s in matched]} matched, {len(rest)} item(s) appended after.")
 
     log_line("cycle", f"Loaded {len(item_specs)} item(s) from SQLite (bootstrap file: {items_file}).")
     if cfg.poll_interval > 0:

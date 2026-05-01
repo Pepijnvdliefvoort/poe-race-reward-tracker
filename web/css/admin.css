@@ -1420,6 +1420,48 @@ button.admin-db-list-item {
   font-weight: 500;
 }
 
+.admin-table-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-table-sort::after {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 0.28rem solid transparent;
+  border-right: 0.28rem solid transparent;
+  border-top: 0.36rem solid currentColor;
+  opacity: 0.28;
+  transform: translateY(0.08rem);
+}
+
+.admin-table th[aria-sort="ascending"] .admin-table-sort::after {
+  opacity: 0.92;
+  transform: rotate(180deg) translateY(-0.08rem);
+}
+
+.admin-table th[aria-sort="descending"] .admin-table-sort::after {
+  opacity: 0.92;
+}
+
+.admin-table-sort.is-active {
+  color: var(--ink);
+}
+
+.admin-table-sort:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 78%, white 22%);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .admin-table tbody tr:hover {
   background: rgba(42, 183, 191, 0.06);
 }

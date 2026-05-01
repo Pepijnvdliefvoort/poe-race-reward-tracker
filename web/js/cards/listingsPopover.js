@@ -248,32 +248,24 @@ function aggregateListingsForDisplay(listings) {
     const seller = row.sellerName != null ? String(row.sellerName) : "";
     const amount = row.amount != null ? Number(row.amount) : null;
     const currency = row.currency != null ? String(row.currency).trim().toLowerCase() : "";
-    const priceText = row.priceText != null ? String(row.priceText) : "";
-    const instant = !!row.isInstantBuyout;
     const corrupted = !!row.corrupted;
-    const listingCount = Number(row?.listingCount || 1);
+    const instant = !!row.isInstantBuyout;
+    const count = Number(row.listingCount) > 0 ? Math.floor(Number(row.listingCount)) : 1;
     const key = [
       seller,
       currency,
       amount != null && Number.isFinite(amount) ? amount.toFixed(6) : "",
-      priceText,
-      instant ? "1" : "0",
       corrupted ? "1" : "0",
+      instant ? "1" : "0",
     ].join("|");
 
     const idx = byKey.get(key);
     if (idx == null) {
       byKey.set(key, out.length);
-      out.push({
-        ...row,
-        count: Number.isFinite(listingCount) && listingCount > 0 ? Math.floor(listingCount) : 1,
-      });
+      out.push({ ...row, count });
       continue;
     }
-
-    const current = out[idx];
-    const bump = Number.isFinite(listingCount) && listingCount > 0 ? Math.floor(listingCount) : 1;
-    current.count = Number(current.count || 1) + bump;
+    out[idx].count += count;
   }
 
   return out;
@@ -343,17 +335,13 @@ function renderListingsPreview(entry, payload) {
     buyout.className = `buyout-badge ${rowData.isInstantBuyout ? "yes" : "no"}`;
     buyout.textContent = rowData.isInstantBuyout ? "Instant trade" : "In-person trade";
 
-    const count = Number(rowData?.count || 1);
-
     const priceGroup = document.createElement("span");
     priceGroup.className = "listings-row-price-group";
     priceGroup.appendChild(price);
-    if (count > 1) {
+    if (rowData.count > 1) {
       const countBadge = document.createElement("span");
       countBadge.className = "listings-row-count-badge";
-      countBadge.textContent = `x${count}`;
-      countBadge.setAttribute("aria-label", `${count} listings`);
-      countBadge.title = `${count} listings`;
+      countBadge.textContent = `x${rowData.count}`;
       priceGroup.appendChild(countBadge);
     }
 
@@ -374,8 +362,8 @@ function renderListingsPreview(entry, payload) {
     const seller = document.createElement("span");
     const sellerName = rowData.sellerName || "unknown seller";
     seller.textContent = sellerName;
-    if (count > 1) {
-      seller.title = `${sellerName} (${count} listings)`;
+    if (rowData.count > 1) {
+      seller.title = `${sellerName} (${rowData.count} listings)`;
     }
 
     const posted = document.createElement("span");

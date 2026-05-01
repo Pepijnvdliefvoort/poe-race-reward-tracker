@@ -227,9 +227,15 @@
         <table class="admin-table" id="visitorTable">
           <thead>
             <tr>
-              <th>IP address</th>
-              <th>Visits</th>
-              <th>Last seen</th>
+              <th aria-sort="none">
+                <button type="button" class="admin-table-sort" data-visitor-sort-key="ip">IP address</button>
+              </th>
+              <th aria-sort="descending">
+                <button type="button" class="admin-table-sort" data-visitor-sort-key="visits">Visits</button>
+              </th>
+              <th aria-sort="none">
+                <button type="button" class="admin-table-sort" data-visitor-sort-key="lastSeen">Last seen</button>
+              </th>
             </tr>
           </thead>
           <tbody id="visitorTableBody"></tbody>

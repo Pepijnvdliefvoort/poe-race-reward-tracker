@@ -108,6 +108,7 @@ let markersLayer;
 let visitorMarkersByIp = {};
 let lastVisitorMapData = null;
 let userFocusedVisitor = false;
+const visitorTableSort = { key: "visits", direction: "desc" };
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -263,12 +264,73 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function compareVisitorRows(a, b) {
+  const direction = visitorTableSort.direction === "asc" ? 1 : -1;
+  const key = visitorTableSort.key;
+
+  if (key === "visits") {
+    const av = Number(a?.visits) || 0;
+    const bv = Number(b?.visits) || 0;
+    if (av !== bv) return (av - bv) * direction;
+  } else if (key === "lastSeen") {
+    const at = a?.lastSeen ? Date.parse(String(a.lastSeen)) : Number.NEGATIVE_INFINITY;
+    const bt = b?.lastSeen ? Date.parse(String(b.lastSeen)) : Number.NEGATIVE_INFINITY;
+    if (at !== bt) return (at - bt) * direction;
+  } else {
+    const cmp = String(a?.ip || "").localeCompare(String(b?.ip || ""), undefined, { numeric: true, sensitivity: "base" });
+    if (cmp !== 0) return cmp * direction;
+  }
+
+  const ipCmp = String(a?.ip || "").localeCompare(String(b?.ip || ""), undefined, { numeric: true, sensitivity: "base" });
+  if (ipCmp !== 0) return ipCmp;
+  return (Number(a?.visits) || 0) - (Number(b?.visits) || 0);
+}
+
+function updateVisitorTableSortUi() {
+  document.querySelectorAll?.("#visitorTable thead th").forEach((th) => {
+    const btn = th.querySelector?.("[data-visitor-sort-key]");
+    const key = btn?.getAttribute("data-visitor-sort-key") || "";
+    const active = key === visitorTableSort.key;
+    const direction = active ? visitorTableSort.direction : "none";
+    th.setAttribute("aria-sort", direction === "asc" ? "ascending" : (direction === "desc" ? "descending" : "none"));
+    btn?.classList.toggle("is-active", active);
+    btn?.setAttribute(
+      "aria-label",
+      active
+        ? `${btn.textContent} sorted ${direction === "asc" ? "ascending" : "descending"}. Activate to sort ${direction === "asc" ? "descending" : "ascending"}.`
+        : `${btn.textContent} not sorted. Activate to sort ascending.`,
+    );
+  });
+}
+
+function setupVisitorTableSorting() {
+  document.querySelectorAll?.("[data-visitor-sort-key]").forEach((btn) => {
+    if (btn.dataset.sortReady === "1") return;
+    btn.dataset.sortReady = "1";
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-visitor-sort-key");
+      if (!key) return;
+      if (visitorTableSort.key === key) {
+        visitorTableSort.direction = visitorTableSort.direction === "asc" ? "desc" : "asc";
+      } else {
+        visitorTableSort.key = key;
+        visitorTableSort.direction = key === "visits" || key === "lastSeen" ? "desc" : "asc";
+      }
+      updateVisitorTableSortUi();
+      if (lastVisitorMapData) renderVisitorTable(lastVisitorMapData);
+    });
+  });
+  updateVisitorTableSortUi();
+}
+
 function renderVisitorTable(data) {
   const tbody = document.getElementById("visitorTableBody");
   const stats = document.getElementById("visitorStats");
   if (!tbody) return;
 
-  const visitors = data.visitors || [];
+  setupVisitorTableSorting();
+
+  const visitors = [...(data.visitors || [])].sort(compareVisitorRows);
   const pending = data.pendingGeocodes ?? 0;
   if (stats) {
     stats.textContent = `${data.uniqueVisitors ?? 0} unique IPs · ${data.totalVisits ?? 0} page loads (dashboard)`;

@@ -332,39 +332,32 @@ function filterMarketTopListings(topListings) {
 
 function aggregateMarketTopListings(topListings, maxN) {
   const limit = Number.isFinite(Number(maxN)) ? Math.min(10, Math.max(1, Math.floor(Number(maxN)))) : 5;
-  const sliced = filterMarketTopListings(topListings).slice(0, limit);
   const out = [];
   const byKey = new Map();
 
-  for (const row of sliced) {
+  for (const row of filterMarketTopListings(topListings)) {
     const seller = row?.sellerName != null ? String(row.sellerName) : "";
-    const listingCurrency = row?.listingCurrency != null ? String(row.listingCurrency) : "";
-    const listingAmount = row?.listingAmount != null ? Number(row.listingAmount) : null;
-    const mirrorEquiv = Number(row?.mirrorEquiv);
-    const instantBuyout = !!row?.instantBuyout;
+    const cur = row?.listingCurrency != null ? String(row.listingCurrency).trim().toLowerCase() : "";
+    const amt = row?.listingAmount != null ? Number(row.listingAmount) : null;
     const corrupted = !!row?.corrupted;
-    const listingCount = Number(row?.listingCount || 1);
+    const count = Number(row?.listingCount) > 0 ? Math.floor(Number(row.listingCount)) : 1;
     const key = [
       seller,
-      listingCurrency.trim().toLowerCase(),
-      listingAmount != null && Number.isFinite(listingAmount) ? listingAmount.toFixed(6) : "",
-      Number.isFinite(mirrorEquiv) ? mirrorEquiv.toFixed(6) : "",
-      instantBuyout ? "1" : "0",
+      cur,
+      amt != null && Number.isFinite(amt) ? amt.toFixed(6) : "",
       corrupted ? "1" : "0",
     ].join("|");
 
     const idx = byKey.get(key);
     if (idx == null) {
       byKey.set(key, out.length);
-      out.push({ ...row, count: Number.isFinite(listingCount) && listingCount > 0 ? Math.floor(listingCount) : 1 });
+      out.push({ ...row, count });
       continue;
     }
-
-    const bump = Number.isFinite(listingCount) && listingCount > 0 ? Math.floor(listingCount) : 1;
-    out[idx].count = Number(out[idx].count || 1) + bump;
+    out[idx].count += count;
   }
 
-  return out;
+  return out.slice(0, limit);
 }
 
 function buildMarketColumnCell(topListings, fallbackAmount, maxN) {
@@ -391,7 +384,7 @@ function buildMarketColumnCell(topListings, fallbackAmount, maxN) {
     const seller = document.createElement("span");
     seller.className = "compare-market-seller";
     const name = entry.sellerName != null ? String(entry.sellerName) : "";
-    const count = Number(entry?.count || 1);
+    const count = Number(entry?.count) > 1 ? Math.floor(Number(entry.count)) : 1;
     seller.textContent = name;
     seller.title = count > 1 ? `${name} (${count} listings)` : name;
 
@@ -401,7 +394,7 @@ function buildMarketColumnCell(topListings, fallbackAmount, maxN) {
     const detail =
       cur && amt != null && Number.isFinite(amt) && !/^mirror/i.test(cur) ? `${formatMirror(amt)} ${cur}` : "";
     const countPart = count > 1 ? `${count} listings` : null;
-    pill.title = [name || null, mode, detail || null, countPart].filter(Boolean).join(" · ");
+    pill.title = [name || null, mode, detail || null, countPart].filter(Boolean).join(" \u00b7 ");
 
     pill.appendChild(price);
     pill.appendChild(seller);
@@ -409,13 +402,11 @@ function buildMarketColumnCell(topListings, fallbackAmount, maxN) {
   };
 
   const appendCountBadge = (container, entry) => {
-    const count = Number(entry?.count || 1);
-    if (count <= 1) return;
+    const c = Number(entry?.count) > 1 ? Math.floor(Number(entry.count)) : 0;
+    if (c <= 1) return;
     const badge = document.createElement("span");
     badge.className = "compare-market-count-badge";
-    badge.textContent = `x${count}`;
-    badge.setAttribute("aria-label", `${count} listings`);
-    badge.title = `${count} listings`;
+    badge.textContent = `x${c}`;
     container.appendChild(badge);
   };
 
