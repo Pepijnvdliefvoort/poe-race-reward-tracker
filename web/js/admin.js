@@ -2056,6 +2056,8 @@ function setupDeleteSalesTool() {
     });
     saleSelect.value = "";
     updateSalePreview();
+    // Reset delete button label since no group is selected after a (re)render.
+    if (btn) btn.textContent = "Delete all sales + fingerprints";
   };
 
   const loadSalesForSelected = async () => {
@@ -2080,6 +2082,20 @@ function setupDeleteSalesTool() {
     }
   };
 
+  const filterListOptions = (query) => {
+    const q = String(query || "").trim().toLowerCase();
+    list.innerHTML = "";
+    const matches = q
+      ? variants.filter((v) => `${v.displayName} (${v.mode || "variant"})`.toLowerCase().includes(q))
+      : variants;
+    matches.forEach((v) => {
+      const label = `${v.displayName} (${v.mode || "variant"})`;
+      const opt = document.createElement("option");
+      opt.value = label;
+      list.appendChild(opt);
+    });
+  };
+
   const selectFromInput = () => {
     const raw = String(input.value || "").trim();
     selected = byLabel.get(raw) || null;
@@ -2089,11 +2105,19 @@ function setupDeleteSalesTool() {
 
   input.addEventListener("change", selectFromInput);
   input.addEventListener("input", () => {
-    // Live update preview when an exact match exists.
+    filterListOptions(input.value);
     selectFromInput();
   });
 
-  saleSelect.addEventListener("change", updateSalePreview);
+  const updateDeleteBtnLabel = () => {
+    const g = selectedGroup();
+    btn.textContent = g ? "Delete selected sale" : "Delete all sales + fingerprints";
+  };
+
+  saleSelect.addEventListener("change", () => {
+    updateSalePreview();
+    updateDeleteBtnLabel();
+  });
 
   resendBtn.addEventListener("click", async () => {
     const g = selectedGroup();
@@ -2120,39 +2144,56 @@ function setupDeleteSalesTool() {
 
   btn.addEventListener("click", async () => {
     if (!selected) return;
-    const msg =
-      `Delete sales + fingerprint state for:\n\n${selected.displayName}\n\n` +
-      `This will remove:\n` +
-      `- sales rows\n` +
-      `- listing snapshot fingerprints (used for inference)\n` +
-      `- inference events/state fingerprints\n` +
-      `- inferred sale counters (“Est. sold”) for this variant\n\n` +
-      `This cannot be undone.\n\nContinue?`;
+    const g = selectedGroup();
+    let msg;
+    let requestBody;
+    if (g) {
+      msg =
+        `Delete sale group for:\n\n${selected.displayName}\n` +
+        `Timestamp: ${g.label} · ${g.signals} signal(s)\n\n` +
+        `This will remove ${g.saleIds.length} sale record(s).\n` +
+        `Fingerprints and inference state are NOT affected.\n\n` +
+        `This cannot be undone.\n\nContinue?`;
+      requestBody = { scope: "sales", variantId: selected.variantId, saleIds: g.saleIds };
+    } else {
+      msg =
+        `Delete ALL sales + fingerprint state for:\n\n${selected.displayName}\n\n` +
+        `This will remove:\n` +
+        `- all sales rows\n` +
+        `- listing snapshot fingerprints (used for inference)\n` +
+        `- inference events/state fingerprints\n` +
+        `- inferred sale counters ("Est. sold") for this variant\n\n` +
+        `This cannot be undone.\n\nContinue?`;
+      requestBody = { scope: "variant", variantId: selected.variantId };
+    }
     const ok = window.confirm(msg);
     if (!ok) return;
-
     btn.disabled = true;
-    setHint("Deleting…");
+    setHint("Deleting\u2026");
     try {
       const payload = await fetchJsonWithInit("/api/admin/market/wipe-variant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scope: "variant", variantId: selected.variantId }),
+        body: JSON.stringify(requestBody),
       });
       if (!payload?.ok) {
         setHint(payload?.error ? `Delete item data: ${payload.error}` : "Delete item data failed", true);
         return;
       }
-      const salesN = payload?.deleted?.sales ?? payload?.deletedSales ?? 0;
-      const listingsN = payload?.deleted?.listingSnapshots ?? 0;
-      const eventsN = payload?.deleted?.inferenceEvents ?? 0;
-      const pendingN = payload?.deleted?.inferencePending ?? 0;
-      const signalsN = payload?.deleted?.inferenceSignals ?? 0;
-      const pollsN = payload?.updated?.pollsReset ?? payload?.pollsUpdated ?? 0;
-      setHint(
-        `Deleted sales ${salesN}, listings ${listingsN}, events ${eventsN}, pending ${pendingN}, signals ${signalsN}. Reset polls ${pollsN}.`,
-      );
-      // Refresh counts in UI so the preview stays accurate.
+      if (g) {
+        const salesN = payload?.deleted?.sales ?? 0;
+        setHint(`Deleted ${salesN} sale record(s) for ${selected.displayName} (${g.label}).`);
+      } else {
+        const salesN = payload?.deleted?.sales ?? payload?.deletedSales ?? 0;
+        const listingsN = payload?.deleted?.listingSnapshots ?? 0;
+        const eventsN = payload?.deleted?.inferenceEvents ?? 0;
+        const pendingN = payload?.deleted?.inferencePending ?? 0;
+        const signalsN = payload?.deleted?.inferenceSignals ?? 0;
+        const pollsN = payload?.updated?.pollsReset ?? payload?.pollsUpdated ?? 0;
+        setHint(
+          `Deleted sales ${salesN}, listings ${listingsN}, events ${eventsN}, pending ${pendingN}, signals ${signalsN}. Reset polls ${pollsN}.`,
+        );
+      }
       await loadVariants();
       selectFromInput();
     } catch (e) {
@@ -2172,14 +2213,11 @@ function setupDeleteSalesTool() {
       if (!payload?.ok) throw new Error(payload?.error || "Failed to load variants");
       variants = payload.variants || [];
       byLabel = new Map();
-      list.innerHTML = "";
       variants.forEach((v) => {
         const label = `${v.displayName} (${v.mode || "variant"})`;
         byLabel.set(label, v);
-        const opt = document.createElement("option");
-        opt.value = label;
-        list.appendChild(opt);
       });
+      filterListOptions(String(input.value || ""));
       preview.textContent = "Select an item variant.";
       sales = [];
       saleGroups = [];

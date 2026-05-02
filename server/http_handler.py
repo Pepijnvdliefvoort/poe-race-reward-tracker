@@ -1542,6 +1542,57 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         item_id = int(row["item_id"])
                         ids = con.execute("SELECT id FROM item_variants WHERE item_id = ?", (item_id,)).fetchall()
                         variant_ids = [int(r["id"]) for r in ids]
+                    elif scope == "sales":
+                        # Delete only the specified sale rows — no fingerprint/state wipe.
+                        sale_ids_raw = data.get("saleIds")
+                        sale_ids: list[int] = []
+                        if isinstance(sale_ids_raw, list):
+                            for x in sale_ids_raw:
+                                try:
+                                    n = int(x)
+                                except Exception:
+                                    continue
+                                if n > 0:
+                                    sale_ids.append(n)
+                        if not sale_ids:
+                            body = json.dumps({"ok": False, "error": "saleIds is required for scope=sales"}).encode("utf-8")
+                            self.send_response(400)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            self.send_header("Cache-Control", "no-store")
+                            self.send_header("Content-Length", str(len(body)))
+                            self.end_headers()
+                            self.wfile.write(body)
+                            return
+                        qmarks = ",".join(["?"] * len(sale_ids))
+                        cur = con.execute(
+                            f"DELETE FROM sales WHERE id IN ({qmarks}) AND item_variant_id = ?",
+                            (*sale_ids, variant_id),
+                        )
+                        deleted_sales = int(cur.rowcount or 0)
+                        con.commit()
+                        body = json.dumps(
+                            {
+                                "ok": True,
+                                "scope": "sales",
+                                "variantIds": [variant_id],
+                                "deleted": {
+                                    "sales": deleted_sales,
+                                    "listingSnapshots": 0,
+                                    "inferenceEvents": 0,
+                                    "inferencePending": 0,
+                                    "inferenceSignals": 0,
+                                },
+                                "updated": {"pollsReset": 0},
+                            },
+                            allow_nan=False,
+                        ).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
                     else:
                         variant_ids = [variant_id]
 

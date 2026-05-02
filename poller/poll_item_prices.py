@@ -1971,6 +1971,7 @@ def run_cycle(
     inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
     sales_webhook_url: str = "",
     sales_window_days: int = 90,
+    icon_urls_by_key: dict[str, str | None] | None = None,
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
     # SQLite is the source of truth (no CSV or listings cache file).
@@ -2123,6 +2124,12 @@ def run_cycle(
         base_for_icon = listings_inference if listings_inference else listings
         listings_for_icon = _dedupe_listings_for_display(base_for_icon + divine_only_listings)
         cheapest_icon_url = find_cheapest_listing_icon(listings_for_icon, divines_per_mirror)
+        if cheapest_icon_url is not None and variant_id:
+            if icon_urls_by_key is not None:
+                icon_urls_by_key[item_key] = cheapest_icon_url
+            storage.update_variant_icon_path(variant_id=variant_id, icon_path=cheapest_icon_url)
+        elif cheapest_icon_url is None and icon_urls_by_key is not None:
+            cheapest_icon_url = icon_urls_by_key.get(item_key)
         top_listing_summary = build_top_listing_summary(listings_for_display, divines_per_mirror)
         listing_preview_rows = build_listing_preview_entries(
             listings_for_display,
@@ -2368,6 +2375,7 @@ def main() -> None:
         variants = storage.list_variants()
 
     variant_ids_by_key = {f"{name}::{mode}": int(vid) for (vid, name, mode, _dn, _so, _ic) in variants}
+    icon_urls_by_key: dict[str, str | None] = {f"{name}::{mode}": _ic for (_, name, mode, _dn, _so, _ic) in variants}
     item_specs = []
     for (_vid, name, mode, _dn, _so, _ic) in variants:
         alt = True if mode == "aa" else False if mode == "normal" else None
@@ -2486,6 +2494,7 @@ def main() -> None:
                 inference_fetch_cap=cfg.inference_fetch_cap,
                 sales_webhook_url=sales_webhook_url,
                 sales_window_days=sales_window_days,
+                icon_urls_by_key=icon_urls_by_key,
             )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "?"
