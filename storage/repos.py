@@ -82,19 +82,19 @@ class ItemsRepo:
             for r in rows
         ]
 
-        def set_icon_path_for_variant(self, *, variant_id: int, icon_path: str) -> None:
-                self._con.execute(
-                        """
-                        UPDATE items
-                             SET icon_path = ?
-                         WHERE id = (
-                             SELECT item_id
-                                 FROM item_variants
-                                WHERE id = ?
-                         )
-                        """,
-                        (icon_path, int(variant_id)),
-                )
+    def set_icon_path_for_variant(self, *, variant_id: int, icon_path: str) -> None:
+        self._con.execute(
+            """
+            UPDATE items
+               SET icon_path = ?
+             WHERE id = (
+                 SELECT item_id
+                   FROM item_variants
+                  WHERE id = ?
+             )
+            """,
+            (icon_path, int(variant_id)),
+        )
 
 
 class ConfigRepo:
