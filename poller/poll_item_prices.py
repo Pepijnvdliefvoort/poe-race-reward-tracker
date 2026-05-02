@@ -1131,12 +1131,15 @@ def _dedupe_listings_for_display(listings: list[dict[str, Any]]) -> list[dict[st
     """Merge listings from multiple fetch batches.
 
     Two-pass logic:
-    - If an entry has a fingerprint already seen, it is the same physical item from a
+    - If an entry has an already seen listing id, it is the same trade listing from a
       different fetch batch (e.g. regular ladder + divine-only fallback). Skip it entirely.
+      We intentionally do not dedupe by fingerprint alone, because fixed-roll uniques can
+      share fingerprints across different sellers and prices.
     - Otherwise group by (seller, currency, amount, corrupted) and count: these are distinct
       physical items that share the same seller/price/corruption state.
     """
-    seen_fp: set[str] = set()
+    seen_listing_ids: set[str] = set()
+    seen_fallback_keys: set[tuple[str, str, str, str, bool, bool]] = set()
     group_idx: dict[tuple[str, str, str, bool], int] = {}
     out: list[dict[str, Any]] = []
     for entry in listings or []:
@@ -1152,12 +1155,32 @@ def _dedupe_listings_for_display(listings: list[dict[str, Any]]) -> list[dict[st
         item_data = entry.get("item") if isinstance(entry.get("item"), dict) else None
         corrupted = bool(item_data.get("corrupted")) if isinstance(item_data, dict) else False
         fp = fingerprint_trade_item(item_data) if item_data else None
+        is_instant = is_instant_buyout_listing(
+            listing,
+            price,
+            allow_fixed_price_fallback=False,
+        )
 
-        # Skip exact duplicate from another fetch batch.
-        if fp:
-            if fp in seen_fp:
+        # Skip exact duplicate from another fetch batch. Prefer trade listing id, and fall
+        # back to a conservative composite key when id is absent.
+        listing_id_raw = entry.get("id")
+        if isinstance(listing_id_raw, str) and listing_id_raw.strip():
+            listing_id = listing_id_raw.strip()
+            if listing_id in seen_listing_ids:
                 continue
-            seen_fp.add(fp)
+            seen_listing_ids.add(listing_id)
+        else:
+            fallback_key = (
+                str(fp or ""),
+                str(seller),
+                str(cur),
+                f"{float(amt):.6f}",
+                corrupted,
+                bool(is_instant),
+            )
+            if fallback_key in seen_fallback_keys:
+                continue
+            seen_fallback_keys.add(fallback_key)
 
         # Group distinct physical listings with same seller/price/corruption.
         group_key = (str(seller), str(cur), f"{float(amt):.6f}", corrupted)
