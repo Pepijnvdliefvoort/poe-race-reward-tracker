@@ -2332,6 +2332,11 @@ function setupMarketConfigEditor() {
       help: "Turns alerting on/off globally.",
       type: "boolean",
     },
+    alert_require_flip_signal: {
+      label: "Require flip signal",
+      help: "When enabled, alerts only fire if a flip opportunity exists. Disable for pure price-drop alerts.",
+      type: "boolean",
+    },
     alert_threshold_pct: {
       label: "Threshold (%)",
       help: "Minimum percent drop required to trigger an alert.",

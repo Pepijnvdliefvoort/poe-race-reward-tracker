@@ -1,5 +1,6 @@
 {
   "alert_enabled": false,
+  "alert_require_flip_signal": true,
   "alert_threshold_pct": 30.0,
   "alert_history_cycles": 10,
   "alert_min_total_results": 10,

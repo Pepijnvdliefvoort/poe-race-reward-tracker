@@ -26,6 +26,7 @@ registerKeyboardShortcuts();
 initFiltersDrawer();
 initBackToTopButton();
 initCompanion();
+initStatusJumpToNextInLine();
 
 // Start data refresh cycle
 refresh();
@@ -123,4 +124,59 @@ function initBackToTopButton() {
   window.addEventListener("scroll", sync, { passive: true });
   window.addEventListener("resize", sync, { passive: true });
   sync();
+}
+
+function initStatusJumpToNextInLine() {
+  const meta = document.getElementById("meta");
+  const statusDot = document.getElementById("statusDot");
+  const statusText = document.getElementById("statusText");
+  if (!meta || !statusDot || !statusText) return;
+
+  const canJump = () => {
+    const text = String(statusText.textContent || "").trim();
+    return statusDot.classList.contains("ok") && /^Live\b/i.test(text);
+  };
+
+  const updateJumpUi = () => {
+    const enabled = canJump();
+    meta.classList.toggle("status-jump-enabled", enabled);
+    meta.setAttribute("role", "button");
+    meta.tabIndex = 0;
+    meta.setAttribute("aria-disabled", enabled ? "false" : "true");
+    meta.title = enabled
+      ? "Jump to current next-in-line item"
+      : "Jump is available while status is Live";
+  };
+
+  const jumpToNextInLineCard = () => {
+    if (!canJump()) return;
+    const card = document.querySelector(".card.next-in-line");
+    if (!(card instanceof HTMLElement)) return;
+
+    try {
+      card.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    } catch {
+      card.scrollIntoView();
+    }
+
+    card.classList.remove("card-jump-highlight");
+    void card.getBoundingClientRect();
+    card.classList.add("card-jump-highlight");
+    window.setTimeout(() => {
+      card.classList.remove("card-jump-highlight");
+    }, 950);
+  };
+
+  meta.addEventListener("click", jumpToNextInLineCard);
+  meta.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    jumpToNextInLineCard();
+  });
+
+  const observer = new MutationObserver(() => updateJumpUi());
+  observer.observe(statusDot, { attributes: true, attributeFilter: ["class"] });
+  observer.observe(statusText, { childList: true, characterData: true, subtree: true });
+
+  updateJumpUi();
 }

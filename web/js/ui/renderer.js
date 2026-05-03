@@ -100,7 +100,7 @@ export function render(payload) {
 
     if (!state.currentItems.length) {
         dom.cardsEl.innerHTML =
-            '<div class="empty">No item rows yet. Start your poller and wait for CSV updates.</div>';
+            '<div class="empty">No item rows yet. Start your poller and wait for SQLite-backed updates.</div>';
         return;
     }
 

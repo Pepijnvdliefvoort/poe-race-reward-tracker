@@ -17,6 +17,7 @@ POLL_INTERVAL_SECONDS = 3600
 
 DEFAULT_CONFIG = {
     "alert_enabled": False,
+    "alert_require_flip_signal": True,
     "alert_threshold_pct": 30,
     "alert_history_cycles": 10,
     "alert_min_total_results": 10,

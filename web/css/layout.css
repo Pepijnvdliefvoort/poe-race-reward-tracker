@@ -144,6 +144,22 @@ h1 {
   backdrop-filter: blur(8px);
   font-size: 0.88rem;
   line-height: 1.1;
+  transition: border-color 0.16s ease, transform 0.16s ease;
+}
+
+.meta.status-jump-enabled {
+  cursor: pointer;
+  user-select: none;
+}
+
+.meta.status-jump-enabled:hover {
+  border-color: rgba(38, 185, 109, 0.5);
+  transform: translateY(-1px);
+}
+
+.meta.status-jump-enabled:focus-visible {
+  outline: 2px solid rgba(38, 185, 109, 0.65);
+  outline-offset: 2px;
 }
 
 #meta {

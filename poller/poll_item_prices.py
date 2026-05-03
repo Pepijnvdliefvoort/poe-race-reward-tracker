@@ -74,6 +74,7 @@ class Config:
 @dataclass
 class AlertConfig:
     enabled: bool
+    require_flip_signal: bool
     threshold_pct: float
     history_cycles: int
     min_total_results: int
@@ -314,6 +315,7 @@ def load_alert_config() -> AlertConfig:
     webhook_url = load_discord_webhook_url_from_env()
     defaults = AlertConfig(
         enabled=False,
+        require_flip_signal=True,
         threshold_pct=30.0,
         history_cycles=10,
         min_total_results=10,
@@ -337,6 +339,9 @@ def load_alert_config() -> AlertConfig:
                         file_data = json.load(fh)
                     merged = {
                         "alert_enabled": bool(file_data.get("alert_enabled", defaults.enabled)),
+                        "alert_require_flip_signal": bool(
+                            file_data.get("alert_require_flip_signal", defaults.require_flip_signal)
+                        ),
                         "alert_threshold_pct": float(file_data.get("alert_threshold_pct", defaults.threshold_pct)),
                         "alert_history_cycles": max(1, int(file_data.get("alert_history_cycles", defaults.history_cycles))),
                         "alert_min_total_results": max(1, int(file_data.get("alert_min_total_results", defaults.min_total_results))),
@@ -363,6 +368,7 @@ def load_alert_config() -> AlertConfig:
             data = data or {}
         return AlertConfig(
             enabled=bool(data.get("alert_enabled", False)),
+            require_flip_signal=bool(data.get("alert_require_flip_signal", defaults.require_flip_signal)),
             threshold_pct=float(data.get("alert_threshold_pct", defaults.threshold_pct)),
             history_cycles=max(1, int(data.get("alert_history_cycles", defaults.history_cycles))),
             min_total_results=max(1, int(data.get("alert_min_total_results", defaults.min_total_results))),
@@ -2290,7 +2296,7 @@ def run_cycle(
                         pct_drop >= required_drop_pct
                         and alert_config.webhook_url
                         and meets_floor_depth
-                        and resale_opportunity is not None
+                        and (not alert_config.require_flip_signal or resale_opportunity is not None)
                     ):
                         last_alert = alert_state.get(item_key)
                         suppress_for_cooldown = False
@@ -2440,6 +2446,7 @@ def main() -> None:
         "cycle",
         "Alert config: "
         f"enabled={alert_config.enabled}, "
+        f"require_flip_signal={alert_config.require_flip_signal}, "
         f"threshold={alert_config.threshold_pct}%, "
         f"history_cycles={alert_config.history_cycles}, "
         f"min_total_results={alert_config.min_total_results}, "
