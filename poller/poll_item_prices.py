@@ -2178,7 +2178,7 @@ def run_cycle(
         # Poll summary is persisted in SQLite (no CSV file).
 
         if variant_id:
-            storage.write_poll_result(
+            write_result = storage.write_poll_result(
                 cycle_number=cycle,
                 league=DEFAULT_LEAGUE,
                 run_started_at_utc=run_started_at_utc,
@@ -2216,12 +2216,19 @@ def run_cycle(
                 late_relist_window_days=load_late_relist_window_days(storage),
             )
 
+            effective_counts = write_result.inference_counts
+            effective_events = write_result.inference_events
             cycle_est = (
-                int(inf.confirmed_transfer)
-                + int(inf.likely_instant_sale)
-                + int(inf.likely_non_instant_online)
+                int(effective_counts.get("confirmedTransfer", 0))
+                + int(effective_counts.get("likelyInstantSale", 0))
+                + int(effective_counts.get("likelyNonInstantOnline", 0))
             )
-            if sales_webhook_url and cycle_est != 0:
+            has_relist_signal = any(
+                isinstance(event, dict)
+                and str(event.get("rule") or "") in {"relist_same_seller", "relist_same_seller_late"}
+                for event in effective_events
+            )
+            if sales_webhook_url and (cycle_est != 0 or has_relist_signal):
                 try:
                     since = (datetime.now(timezone.utc) - timedelta(days=int(sales_window_days))).isoformat()
                     total_est = storage.sum_estimated_sales_since(variant_id=variant_id, since_utc_iso=since)
@@ -2229,8 +2236,9 @@ def run_cycle(
                         "alert",
                         (
                             f"Est. sales alert fired: {item.name} delta={cycle_est} "
-                            f"(xfer={inf.confirmed_transfer} instant={inf.likely_instant_sale} "
-                            f"non_inst_online={inf.likely_non_instant_online}) "
+                            f"(xfer={int(effective_counts.get('confirmedTransfer', 0))} "
+                            f"instant={int(effective_counts.get('likelyInstantSale', 0))} "
+                            f"non_inst_online={int(effective_counts.get('likelyNonInstantOnline', 0))}) "
                             f"total~={total_est} ({sales_window_days}d); sending Discord webhook"
                         ),
                     )
@@ -2242,11 +2250,11 @@ def run_cycle(
                         cycle_delta=cycle_est,
                         total_in_window=total_est,
                         window_days=int(sales_window_days),
-                        confirmed_transfer=int(inf.confirmed_transfer),
-                        likely_instant_sale=int(inf.likely_instant_sale),
-                        likely_non_instant_online=int(inf.likely_non_instant_online),
+                        confirmed_transfer=int(effective_counts.get("confirmedTransfer", 0)),
+                        likely_instant_sale=int(effective_counts.get("likelyInstantSale", 0)),
+                        likely_non_instant_online=int(effective_counts.get("likelyNonInstantOnline", 0)),
                         divines_per_mirror=divines_per_mirror,
-                        inference_events=inf.events,
+                        inference_events=effective_events,
                     )
                 except Exception as exc:  # noqa: BLE001
                     log_line("warn", f"Failed sales Discord webhook for {item.name}: {exc}")

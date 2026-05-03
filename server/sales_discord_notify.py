@@ -118,12 +118,9 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
             )
         return f"Seller **{seller}** — non-instant listing disappeared while online (likely sold)."
 
-    if rule == "relist_same_seller":
+    if rule == "relist_same_seller" or rule == "relist_same_seller_late":
         seller = str(ev.get("seller") or "unknown")
         return f"Seller **{seller}** relisted it (undoes a prior estimated-sale signal)."
-
-    # Intentionally omit inference events that do not contribute to the estimated-sales
-    # delta (e.g. reprices, inconclusive non-instant removals when seller was offline).
 
     return None
 

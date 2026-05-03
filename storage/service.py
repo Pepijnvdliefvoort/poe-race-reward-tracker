@@ -26,6 +26,13 @@ class VariantSpec:
         return f"{self.base_item_name}::{self.mode}"
 
 
+@dataclass(frozen=True)
+class PollWriteResult:
+    item_poll_id: int
+    inference_counts: dict[str, int]
+    inference_events: list[dict[str, Any]]
+
+
 class StorageService:
     def __init__(self, *, root_dir: Path) -> None:
         self._db = Database(root_dir=root_dir)
@@ -234,7 +241,7 @@ class StorageService:
         inference_events: list[dict[str, Any]],
         inference_state: tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]] | None = None,
         late_relist_window_days: int | None = 30,
-    ) -> int:
+    ) -> PollWriteResult:
         """
         Store the poll run + one item poll row + listing snapshots + inference events.
 
@@ -339,6 +346,12 @@ class StorageService:
                             reverted_rule = "likely_non_instant_online_sale"
 
                     if updated and reverted_rule:
+                        if reverted_rule == "likely_instant_sale":
+                            inference_counts["likelyInstantSale"] = int(inference_counts.get("likelyInstantSale", 0)) - 1
+                        elif reverted_rule == "likely_non_instant_online_sale":
+                            inference_counts["likelyNonInstantOnline"] = int(
+                                inference_counts.get("likelyNonInstantOnline", 0)
+                            ) - 1
                         late_relist_events.append(
                             {
                                 "rule": "relist_same_seller_late",
@@ -354,15 +367,23 @@ class StorageService:
                 if late_relist_events:
                     # Expose in persisted inference_events and UI.
                     inference_events = list(inference_events or []) + late_relist_events
-                    # Also bump the per-poll relist count for visibility (does not change sale deltas).
+                    # Bump the per-poll relist count for visibility and persist the net delta update.
                     inference_counts = dict(inference_counts or {})
                     inference_counts["relistSameSeller"] = int(inference_counts.get("relistSameSeller", 0)) + len(
                         late_relist_events
                     )
                     # Keep the DB's item_polls summary consistent with what we expose in payloads.
                     con.execute(
-                        "UPDATE item_polls SET inf_relist_same_seller = ? WHERE id = ?",
-                        (int(inference_counts["relistSameSeller"]), int(item_poll_id)),
+                        (
+                            "UPDATE item_polls SET inf_likely_instant_sale = ?, "
+                            "inf_likely_non_instant_online = ?, inf_relist_same_seller = ? WHERE id = ?"
+                        ),
+                        (
+                            int(inference_counts.get("likelyInstantSale", 0)),
+                            int(inference_counts.get("likelyNonInstantOnline", 0)),
+                            int(inference_counts["relistSameSeller"]),
+                            int(item_poll_id),
+                        ),
                     )
 
             polls.replace_listing_snapshots(item_poll_id=item_poll_id, rows=listing_preview_rows)
@@ -387,7 +408,11 @@ class StorageService:
                 )
 
             con.commit()
-            return item_poll_id
+            return PollWriteResult(
+                item_poll_id=int(item_poll_id),
+                inference_counts=dict(inference_counts),
+                inference_events=list(inference_events or []),
+            )
         finally:
             con.close()
 
