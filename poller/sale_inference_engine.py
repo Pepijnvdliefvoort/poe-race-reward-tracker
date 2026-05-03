@@ -459,6 +459,7 @@ def evaluate_listing_transition(
         if (fp, seller) in curr_keys:
             result.relist_same_seller += 1
             result.likely_non_instant_online -= 1
+            new_meta = _meta_for(curr_signals, fp, seller)
             events.append(
                 {
                     "rule": "relist_same_seller",
@@ -469,6 +470,8 @@ def evaluate_listing_transition(
                     "mirrorEquiv": mirror_eq,
                     "priceAmount": price_amount,
                     "priceCurrency": price_currency,
+                    "newPriceAmount": new_meta.get("priceAmount") if new_meta else None,
+                    "newPriceCurrency": new_meta.get("priceCurrency") if new_meta else None,
                     "cycle": cycle,
                 }
             )
@@ -493,6 +496,7 @@ def evaluate_listing_transition(
             result.relist_same_seller += 1
             if counted_imm:
                 result.likely_instant_sale -= 1
+            new_meta = _meta_for(curr_signals, fp, seller)
             events.append(
                 {
                     "rule": "relist_same_seller",
@@ -503,6 +507,8 @@ def evaluate_listing_transition(
                     "mirrorEquiv": mirror_eq,
                     "priceAmount": price_amount,
                     "priceCurrency": price_currency,
+                    "newPriceAmount": new_meta.get("priceAmount") if new_meta else None,
+                    "newPriceCurrency": new_meta.get("priceCurrency") if new_meta else None,
                     "cycle": cycle,
                 }
             )

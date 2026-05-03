@@ -38,7 +38,7 @@ TRADE_SEARCH_RESULT_MAX = 100
 # /fetch traffic for deep markets; reduces false "vanished" counts from a shallow top-N slice).
 # Pricing and listing hover preview still use TOP_IDS_LIMIT only.
 DEFAULT_INFERENCE_LISTINGS_FETCH_CAP = TRADE_SEARCH_RESULT_MAX
-DEFAULT_LATE_RELIST_WINDOW_DAYS = 30
+DEFAULT_LATE_RELIST_WINDOW_DAYS = 7
 DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -80,9 +81,35 @@ def _fmt_listed_price(amount: Any, currency: Any) -> str | None:
     return f"{s} {unit}"
 
 
+def _fmt_discord_time(utc_iso: Any) -> str | None:
+    if not isinstance(utc_iso, str) or not utc_iso.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(utc_iso.strip())
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    ts = int(dt.timestamp())
+    if ts <= 0:
+        return None
+    return f"<t:{ts}:f> (<t:{ts}:R>)"
+
+
+def _fmt_short_fp(fp: Any) -> str | None:
+    if not isinstance(fp, str):
+        return None
+    s = fp.strip()
+    if not s:
+        return None
+    return s[:12]
+
+
 def _event_sentence(ev: dict[str, Any]) -> str | None:
     divines_per_mirror = ev.get("divinesPerMirror")
     rule = str(ev.get("rule") or "")
+    fp = _fmt_short_fp(ev.get("fingerprint"))
+    fp_suffix = f" FP: `{fp}`" if fp else ""
 
     if rule == "confirmed_transfer":
         seller = str(ev.get("from_seller") or "unknown")
@@ -92,8 +119,8 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
             divines_per_mirror=divines_per_mirror,
         )
         if price:
-            return f"Seller **{seller}** has sold it for **{price}** to **{buyer}**."
-        return f"Seller **{seller}** has sold it to **{buyer}**."
+            return f"Seller **{seller}** has sold it for **{price}** to **{buyer}**.{fp_suffix}"
+        return f"Seller **{seller}** has sold it to **{buyer}**.{fp_suffix}"
 
     if rule == "likely_instant_sale":
         seller = str(ev.get("seller") or "unknown")
@@ -102,8 +129,8 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
             divines_per_mirror=divines_per_mirror,
         )
         if price:
-            return f"Seller **{seller}** has likely sold it for **{price}** (instant buyout disappeared)."
-        return f"Seller **{seller}** has likely sold it (instant buyout disappeared)."
+            return f"Seller **{seller}** has likely sold it for **{price}** (instant buyout disappeared).{fp_suffix}"
+        return f"Seller **{seller}** has likely sold it (instant buyout disappeared).{fp_suffix}"
 
     if rule == "likely_non_instant_online_sale":
         seller = str(ev.get("seller") or "unknown")
@@ -114,13 +141,52 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
         if price:
             return (
                 f"Seller **{seller}** — non-instant listing disappeared while online (likely sold), "
-                f"was **{price}**."
+                f"was **{price}**.{fp_suffix}"
             )
-        return f"Seller **{seller}** — non-instant listing disappeared while online (likely sold)."
+        return f"Seller **{seller}** — non-instant listing disappeared while online (likely sold).{fp_suffix}"
 
     if rule == "relist_same_seller" or rule == "relist_same_seller_late":
         seller = str(ev.get("seller") or "unknown")
-        return f"Seller **{seller}** relisted it (undoes a prior estimated-sale signal)."
+        old_price = _fmt_listed_price(ev.get("priceAmount"), ev.get("priceCurrency"))
+        new_price = _fmt_listed_price(ev.get("newPriceAmount"), ev.get("newPriceCurrency"))
+        fp = str(ev.get("fingerprint") or "")[:12] if ev.get("fingerprint") else None
+        reverted_rule = str(ev.get("revertsSaleRule") or "")
+        sale_occurred = _fmt_discord_time(ev.get("saleOccurredAtUtc"))
+        window_days = ev.get("windowDays")
+        
+        # Build relist message with more context
+        msg_parts = [f"Seller **{seller}** relisted it"]
+        if rule == "relist_same_seller_late" and sale_occurred:
+            msg_parts.append(f"(reverted sale from {sale_occurred})")
+        elif rule == "relist_same_seller_late" and window_days:
+            # Fallback for older events without saleOccurredAtUtc metadata.
+            msg_parts.append(f"(within {window_days}d relist window)")
+        
+        if reverted_rule:
+            if reverted_rule == "likely_instant_sale":
+                msg_parts.append("(undoes instant buyout signal)")
+            elif reverted_rule == "likely_non_instant_online_sale":
+                msg_parts.append("(undoes non-instant online signal)")
+        else:
+            msg_parts.append("(undoes a prior signal)")
+        
+        msg = " ".join(msg_parts)
+        
+        # Add price and fingerprint info
+        details = []
+        if old_price and new_price and old_price != new_price:
+            details.append(f"Price: **{old_price}** → **{new_price}**")
+        elif old_price or new_price:
+            price = new_price or old_price
+            details.append(f"Price: **{price}**")
+        
+        if fp:
+            details.append(f"FP: `{fp}`")
+        
+        if details:
+            msg += " — " + " | ".join(details)
+        
+        return msg + "."
 
     return None
 

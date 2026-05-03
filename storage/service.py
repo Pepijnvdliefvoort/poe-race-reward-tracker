@@ -316,8 +316,20 @@ class StorageService:
                         continue
                     seen_pairs.add(key)
 
+                    # Guard: if a confirmed_transfer was recorded for this (fingerprint, seller)
+                    # after the sale window start, the item definitely changed hands — the seller's
+                    # new listing is a fresh copy, not a relist of the same item.
+                    if sales_repo.confirmed_transfer_exists_after(
+                        item_variant_id=int(variant_id),
+                        fingerprint=fp,
+                        from_seller=seller,
+                        after_utc=min_cutoff,
+                        before_or_at_utc=str(requested_at_utc),
+                    ):
+                        continue
+
                     reverted_rule: str | None = None
-                    updated = sales_repo.revert_latest_sale(
+                    reverted_sale_occurred_at_utc = sales_repo.revert_latest_sale(
                         item_variant_id=int(variant_id),
                         rule="likely_instant_sale",
                         fingerprint=fp,
@@ -328,10 +340,10 @@ class StorageService:
                         reverted_by_item_poll_id=int(item_poll_id),
                         reverted_reason="relist_same_seller_late",
                     )
-                    if updated:
+                    if reverted_sale_occurred_at_utc:
                         reverted_rule = "likely_instant_sale"
                     else:
-                        updated = sales_repo.revert_latest_sale(
+                        reverted_sale_occurred_at_utc = sales_repo.revert_latest_sale(
                             item_variant_id=int(variant_id),
                             rule="likely_non_instant_online_sale",
                             fingerprint=fp,
@@ -342,10 +354,10 @@ class StorageService:
                             reverted_by_item_poll_id=int(item_poll_id),
                             reverted_reason="relist_same_seller_late",
                         )
-                        if updated:
+                        if reverted_sale_occurred_at_utc:
                             reverted_rule = "likely_non_instant_online_sale"
 
-                    if updated and reverted_rule:
+                    if reverted_sale_occurred_at_utc and reverted_rule:
                         if reverted_rule == "likely_instant_sale":
                             inference_counts["likelyInstantSale"] = int(inference_counts.get("likelyInstantSale", 0)) - 1
                         elif reverted_rule == "likely_non_instant_online_sale":
@@ -360,6 +372,9 @@ class StorageService:
                                 "itemKey": None,
                                 "fingerprint": fp,
                                 "seller": seller,
+                                "saleOccurredAtUtc": reverted_sale_occurred_at_utc,
+                                "newPriceAmount": r.get("amount"),
+                                "newPriceCurrency": r.get("currency"),
                                 "cycle": int(cycle_number),
                             }
                         )

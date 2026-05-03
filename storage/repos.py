@@ -619,41 +619,32 @@ class SalesRepo:
         reverted_at_utc: str,
         reverted_by_item_poll_id: int,
         reverted_reason: str,
-    ) -> int:
+    ) -> str | None:
         """
         Mark the latest matching inferred-sale row (instant or non-instant 4b) as reverted on relist.
 
-        Returns number of rows updated (0 or 1).
+        Returns the reverted sale's ``occurred_at_utc`` timestamp, or None when no row matched.
         """
         r = str(rule)
         if r not in {"likely_instant_sale", "likely_non_instant_online_sale"}:
-            return 0
+            return None
         min_cutoff = str(min_occurred_at_utc) if isinstance(min_occurred_at_utc, str) and min_occurred_at_utc.strip() else None
-        cur = self._con.execute(
+        row = self._con.execute(
             """
-            UPDATE sales
-            SET reverted_at_utc = ?,
-                reverted_by_item_poll_id = ?,
-                reverted_reason = ?
-            WHERE id = (
-              SELECT s.id
-              FROM sales s
-              WHERE s.item_variant_id = ?
-                AND s.rule = ?
-                AND s.fingerprint = ?
-                AND s.seller = ?
-                AND s.buyer = ''
-                AND s.reverted_at_utc IS NULL
-                AND (? IS NULL OR s.occurred_at_utc >= ?)
-                AND s.occurred_at_utc <= ?
-              ORDER BY s.occurred_at_utc DESC, s.id DESC
-              LIMIT 1
-            )
+            SELECT s.id, s.occurred_at_utc
+            FROM sales s
+            WHERE s.item_variant_id = ?
+              AND s.rule = ?
+              AND s.fingerprint = ?
+              AND s.seller = ?
+              AND s.buyer = ''
+              AND s.reverted_at_utc IS NULL
+              AND (? IS NULL OR s.occurred_at_utc >= ?)
+              AND s.occurred_at_utc <= ?
+            ORDER BY s.occurred_at_utc DESC, s.id DESC
+            LIMIT 1
             """,
             (
-                str(reverted_at_utc),
-                int(reverted_by_item_poll_id),
-                str(reverted_reason),
                 int(item_variant_id),
                 r,
                 str(fingerprint),
@@ -662,8 +653,69 @@ class SalesRepo:
                 min_cutoff,
                 str(occurred_at_or_before_utc),
             ),
+        ).fetchone()
+        if not row:
+            return None
+
+        cur = self._con.execute(
+            """
+            UPDATE sales
+            SET reverted_at_utc = ?,
+                reverted_by_item_poll_id = ?,
+                reverted_reason = ?
+            WHERE id = ?
+              AND reverted_at_utc IS NULL
+            """,
+            (
+                str(reverted_at_utc),
+                int(reverted_by_item_poll_id),
+                str(reverted_reason),
+                int(row["id"]),
+            ),
         )
-        return int(cur.rowcount or 0)
+        if int(cur.rowcount or 0) <= 0:
+            return None
+        return str(row["occurred_at_utc"])
+
+
+    def confirmed_transfer_exists_after(
+        self,
+        *,
+        item_variant_id: int,
+        fingerprint: str,
+        from_seller: str,
+        after_utc: str,
+        before_or_at_utc: str,
+    ) -> bool:
+        """
+        Return True if a confirmed_transfer event for (fingerprint, from_seller) was recorded
+        after ``after_utc`` and at or before ``before_or_at_utc``.
+
+        Used to guard late relist reversions: if the item was observed under a different seller
+        after the inferred sale, the seller's new listing is a new copy, not a relist.
+        """
+        row = self._con.execute(
+            """
+            SELECT 1
+            FROM inference_events ie
+            JOIN item_polls ip ON ip.id = ie.item_poll_id
+            WHERE ip.item_variant_id = ?
+              AND ie.rule = 'confirmed_transfer'
+              AND ie.fingerprint = ?
+              AND ie.from_seller = ?
+              AND ip.requested_at_utc > ?
+              AND ip.requested_at_utc <= ?
+            LIMIT 1
+            """,
+            (
+                int(item_variant_id),
+                str(fingerprint),
+                str(from_seller),
+                str(after_utc),
+                str(before_or_at_utc),
+            ),
+        ).fetchone()
+        return row is not None
 
 
 class PriceAlertCooldownRepo:
