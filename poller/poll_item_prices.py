@@ -212,7 +212,8 @@ class FlipConfig:
     Note: this poller evaluates opportunities on mirror-equivalent prices.
     """
 
-    min_profit_mirrors: float
+    min_profit_mirrors_over_1: float
+    min_profit_divines_at_or_below_1: float
     misprice_override_enabled: bool
     misprice_override_max_buy_divines: float
     misprice_override_min_next_mirrors: float
@@ -224,14 +225,16 @@ def load_flip_config(storage: StorageService) -> FlipConfig:
     Config key: app_config.market.*
 
     Primary (clearer) keys:
-    - notify_flip_min_profit_mirrors (default 1.0)
+    - notify_flip_min_profit_mirrors_over_1 (default 1.0)
+    - notify_flip_min_profit_divines_at_or_below_1 (default 300.0)
     - notify_always_if_cheap_enabled (default True)
     - notify_always_if_cheap_max_buy_divines (default 500.0)
     - notify_always_if_cheap_if_next_price_at_least_mirrors (default 1.0)
     - notify_always_if_buy_currency_exalted (default True)
 
     Legacy keys (still supported for backward compatibility):
-    - flip_min_profit_mirrors
+    - notify_flip_min_profit_mirrors (maps to *_over_1)
+    - flip_min_profit_mirrors (maps to *_over_1)
     - flip_misprice_override_enabled
     - flip_misprice_override_max_buy_divines
     - flip_misprice_override_min_next_mirrors
@@ -266,7 +269,19 @@ def load_flip_config(storage: StorageService) -> FlipConfig:
             return _b(primary, default)
         return _b(legacy, default)
 
-    min_profit = max(0.0, _f2("notify_flip_min_profit_mirrors", "flip_min_profit_mirrors", MIN_RESALE_PROFIT_MIRRORS))
+    if "notify_flip_min_profit_mirrors_over_1" in data:
+        min_profit_over_1 = _f("notify_flip_min_profit_mirrors_over_1", MIN_RESALE_PROFIT_MIRRORS)
+    elif "notify_flip_min_profit_mirrors" in data:
+        min_profit_over_1 = _f("notify_flip_min_profit_mirrors", MIN_RESALE_PROFIT_MIRRORS)
+    else:
+        min_profit_over_1 = _f("flip_min_profit_mirrors", MIN_RESALE_PROFIT_MIRRORS)
+    min_profit_over_1 = max(0.0, float(min_profit_over_1))
+
+    min_profit_div_at_or_below_1 = max(
+        0.0,
+        _f("notify_flip_min_profit_divines_at_or_below_1", 300.0),
+    )
+
     override_enabled = _b2("notify_always_if_cheap_enabled", "flip_misprice_override_enabled", True)
     max_buy_div = max(0.0, _f2("notify_always_if_cheap_max_buy_divines", "flip_misprice_override_max_buy_divines", 500.0))
     min_next = max(
@@ -279,7 +294,8 @@ def load_flip_config(storage: StorageService) -> FlipConfig:
     )
     always_ex = _b("notify_always_if_buy_currency_exalted", True)
     return FlipConfig(
-        min_profit_mirrors=float(min_profit),
+        min_profit_mirrors_over_1=float(min_profit_over_1),
+        min_profit_divines_at_or_below_1=float(min_profit_div_at_or_below_1),
         misprice_override_enabled=bool(override_enabled),
         misprice_override_max_buy_divines=float(max_buy_div),
         misprice_override_min_next_mirrors=float(min_next),
@@ -1759,19 +1775,25 @@ def find_resale_opportunity(
         return None
 
     expected_profit = relist_price - buy_price
-    min_profit = float(cfg.min_profit_mirrors)
+    dpm = (
+        float(divines_per_mirror)
+        if isinstance(divines_per_mirror, (int, float))
+        and math.isfinite(float(divines_per_mirror))
+        and float(divines_per_mirror) > 0
+        else DIVINES_PER_MIRROR
+    )
+    # Two-tier gate:
+    # - buy > 1 mirror: require mirror-denominated profit (default 1.0)
+    # - buy <= 1 mirror: require divine-denominated profit (default 300 div)
+    if buy_price > 1.0:
+        min_profit = float(cfg.min_profit_mirrors_over_1)
+    else:
+        min_profit = float(cfg.min_profit_divines_at_or_below_1) / float(dpm)
 
     # Misprice override:
     # If the market is mirror-tier but the cheapest ask is "a few ex / very low div", still notify.
     override = False
     if cfg.misprice_override_enabled:
-        dpm = (
-            float(divines_per_mirror)
-            if isinstance(divines_per_mirror, (int, float))
-            and math.isfinite(float(divines_per_mirror))
-            and float(divines_per_mirror) > 0
-            else DIVINES_PER_MIRROR
-        )
         buy_divines = buy_price * dpm
         if next_market_price >= float(cfg.misprice_override_min_next_mirrors) and buy_divines <= float(
             cfg.misprice_override_max_buy_divines

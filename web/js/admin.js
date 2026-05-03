@@ -2372,6 +2372,16 @@ function setupMarketConfigEditor() {
       help: "Minimum cycles between alerts for the same item.",
       type: "number",
     },
+    notify_flip_min_profit_mirrors_over_1: {
+      label: "Flip min profit (>1 mirror)",
+      help: "Required gross profit in mirrors when cheapest listing is over 1 mirror.",
+      type: "number",
+    },
+    notify_flip_min_profit_divines_at_or_below_1: {
+      label: "Flip min profit (<=1 mirror, divines)",
+      help: "Required gross profit in divines when cheapest listing is 1 mirror or below.",
+      type: "number",
+    },
     sales_discord_window_days: {
       label: "Sales Discord window (days)",
       help: 'Rolling window for "total est. sold" in Discord sale notifications (match your chart period, e.g. 90 ~ 3m preset).',
