@@ -1,18 +1,18 @@
 # Individual alt arts
-Tabula Rasa|Body Armour
-Queen's Decree|Two-Handed Sword
-Storm Cloud|Bow
-Headhunter|Belt
-Alpha's Howl|Helmet
-Demigod's Stride|Boots
-Demigod's Touch|Gloves
-Demigod's Immortality|Helmet
-Demigod's Triumph|Helmet
-Demigod's Bounty|Belt
-Demigod's Eye|Ring
-Demigod's Beacon|Shield
-Demigod's Dominance|Body Armour
-Talisman of the Victor|Amulet
+Tabula Rasa|aa|Body Armour
+Queen's Decree|aa|Two-Handed Sword
+Storm Cloud|aa|Bow
+Headhunter|aa|Belt
+Alpha's Howl|aa|Helmet
+Demigod's Stride|aa|Boots
+Demigod's Touch|aa|Gloves
+Demigod's Immortality|aa|Helmet
+Demigod's Triumph|aa|Helmet
+Demigod's Bounty|aa|Belt
+Demigod's Eye|aa|Ring
+Demigod's Beacon|aa|Shield
+Demigod's Dominance|aa|Body Armour
+Talisman of the Victor|aa|Amulet
 Demigod's Presence|normal|Amulet
 Demigod's Authority|normal|One-Handed Sword
 Demigod's Stride|normal|Boots
@@ -23,108 +23,108 @@ Demigod's Eye|normal|Ring
 Demigod's Beacon|normal|Shield
 Demigod's Dominance|normal|Body Armour
 Talisman of the Victor|normal|Amulet
-Atziri's Mirror|Shield
-Astramentis|Amulet
-Taryn's Shiver|Staff
-Carcass Jack|Body Armour
-Auxium|Belt
-Void Battery|Wand
-Berek's Respite|Ring
-The Taming|Ring
-Voll's Devotion|Amulet
-Taste of Hate|Sapphire Flask
-Warped Timepiece|Amulet
-Emberwake|Ring
-Bloodgrip|Amulet
-Soulthirst|Belt
-Winterheart|Amulet
-Dream Fragments|Ring
-Rainbowstride|Boots
-Hrimnor's Resolve|Helmet
-Perandus Signet|Ring
-Ming's Heart|Ring
-Starkonja's Head|Helmet
-Saffell's Frame|Shield
-Andvarius|Ring
-Daresso's Salute|Amulet
-Bino's Kitchen Knife|Dagger
-Rathpith Globe|Shield
-Shadows and Dust|Gloves
-Soul Taker|One-Handed Axe
-Call of the Brotherhood|Ring
-Natural Hierarchy|Amulet
-Windscream|Boots
-Divinarius|Dagger
-Sidhebreath|Amulet
-Berek's Grip|Ring
-Ungil's Gauche|Dagger
-Kikazaru|Ring
-Rumi's Concoction|Granite Flask
-Doedre's Damning|Ring
-Malachai's Artifice|Ring
-Rashkaldor's Patience|Amulet
-The Blood Dance|Boots
-Lavianga's Spirit|Sanctified Mana Flask
-Dyadian Dawn|Belt
-Victario's Acuity|Amulet
-Facebreaker|Gloves
-Reaper's Pursuit|Two-Handed Axe
-Atziri's Foible|Amulet
-Le Heup of All|Ring
-Meginord's Girdle|Belt
-Thief's Torment|Ring
-Carnage Heart|Amulet
-Sundance|Boots
-Cloak of Flame|Body Armour
-Divination Distillate|Hybrid Flask
-Immortal Flesh|Belt
-Goldrim|Helmet
-Death's Harp|Bow
-The Anvil|Amulet
-Geofri's Baptism|Two-Handed Mace
-Pyre|Ring
-Cybil's Paw|Claw
-Maligaro's Virtuosity|Gloves
-Edge of Madness|Two-Handed Sword
-Crest of Perandus|Shield
-The Whispering Ice|Staff
-Tear of Purity|Amulet
-Blood of Corruption|Amulet
-Eye of Chayula|Amulet
-The Searing Touch|Staff
-Gifts from Above|Ring
-Death Rush|Ring
-Prismatic Eclipse|One-Handed Sword
-The Three Dragons|Helmet
-Brightbeak|One-Handed Mace
-Fairgraves' Tricorne|Helmet
-Goldwyrm|Boots
-Thousand Ribbons|Body Armour
-Berek's Pass|Ring
-Shavronne's Pace|Boots
-Quill Rain|Bow
-Night's Hold|Ring
-Sin Trek|Boots
-Heatshiver|Helmet
-Aurumvorax|One-Handed Sword
-Blackgleam|Quiver
-Pillar of the Caged God|Staff
-Shiversting|Two-Handed Sword
-Redbeak|One-Handed Sword
-Mindspiral|Helmet
-Wanderlust|Boots
-Ungil's Harmony|Amulet
-The Blood Thorn|Staff
-The Princess|One-Handed Sword
-Asphyxia's Wrath|Quiver
-Stone of Lazhwar|Amulet
-Wurm's Molt|Belt
-Perandus Blazon|Belt
-Blackheart|Ring
-The Ignomon|Amulet
-Karui Ward|Amulet
-Kaom's Sign|Ring
-Mokou's Embrace|Ring
-Fencoil|Staff
-Ngamahu Tiki|Amulet
-Lifesprig|Wand
+Atziri's Mirror|aa|Shield
+Astramentis|aa|Amulet
+Taryn's Shiver|aa|Staff
+Carcass Jack|aa|Body Armour
+Auxium|aa|Belt
+Void Battery|aa|Wand
+Berek's Respite|aa|Ring
+The Taming|aa|Ring
+Voll's Devotion|aa|Amulet
+Taste of Hate|aa|Sapphire Flask
+Warped Timepiece|aa|Amulet
+Emberwake|aa|Ring
+Bloodgrip|aa|Amulet
+Soulthirst|aa|Belt
+Winterheart|aa|Amulet
+Dream Fragments|aa|Ring
+Rainbowstride|aa|Boots
+Hrimnor's Resolve|aa|Helmet
+Perandus Signet|aa|Ring
+Ming's Heart|aa|Ring
+Starkonja's Head|aa|Helmet
+Saffell's Frame|aa|Shield
+Andvarius|aa|Ring
+Daresso's Salute|aa|Amulet
+Bino's Kitchen Knife|aa|Dagger
+Rathpith Globe|aa|Shield
+Shadows and Dust|aa|Gloves
+Soul Taker|aa|One-Handed Axe
+Call of the Brotherhood|aa|Ring
+Natural Hierarchy|aa|Amulet
+Windscream|aa|Boots
+Divinarius|aa|Dagger
+Sidhebreath|aa|Amulet
+Berek's Grip|aa|Ring
+Ungil's Gauche|aa|Dagger
+Kikazaru|aa|Ring
+Rumi's Concoction|aa|Granite Flask
+Doedre's Damning|aa|Ring
+Malachai's Artifice|aa|Ring
+Rashkaldor's Patience|aa|Amulet
+The Blood Dance|aa|Boots
+Lavianga's Spirit|aa|Sanctified Mana Flask
+Dyadian Dawn|aa|Belt
+Victario's Acuity|aa|Amulet
+Facebreaker|aa|Gloves
+Reaper's Pursuit|aa|Two-Handed Axe
+Atziri's Foible|aa|Amulet
+Le Heup of All|aa|Ring
+Meginord's Girdle|aa|Belt
+Thief's Torment|aa|Ring
+Carnage Heart|aa|Amulet
+Sundance|aa|Boots
+Cloak of Flame|aa|Body Armour
+Divination Distillate|aa|Hybrid Flask
+Immortal Flesh|aa|Belt
+Goldrim|aa|Helmet
+Death's Harp|aa|Bow
+The Anvil|aa|Amulet
+Geofri's Baptism|aa|Two-Handed Mace
+Pyre|aa|Ring
+Cybil's Paw|aa|Claw
+Maligaro's Virtuosity|aa|Gloves
+Edge of Madness|aa|Two-Handed Sword
+Crest of Perandus|aa|Shield
+The Whispering Ice|aa|Staff
+Tear of Purity|aa|Amulet
+Blood of Corruption|aa|Amulet
+Eye of Chayula|aa|Amulet
+The Searing Touch|aa|Staff
+Gifts from Above|aa|Ring
+Death Rush|aa|Ring
+Prismatic Eclipse|aa|One-Handed Sword
+The Three Dragons|aa|Helmet
+Brightbeak|aa|One-Handed Mace
+Fairgraves' Tricorne|aa|Helmet
+Goldwyrm|aa|Boots
+Thousand Ribbons|aa|Body Armour
+Berek's Pass|aa|Ring
+Shavronne's Pace|aa|Boots
+Quill Rain|aa|Bow
+Night's Hold|aa|Ring
+Sin Trek|aa|Boots
+Heatshiver|aa|Helmet
+Aurumvorax|aa|One-Handed Sword
+Blackgleam|aa|Quiver
+Pillar of the Caged God|aa|Staff
+Shiversting|aa|Two-Handed Sword
+Redbeak|aa|One-Handed Sword
+Mindspiral|aa|Helmet
+Wanderlust|aa|Boots
+Ungil's Harmony|aa|Amulet
+The Blood Thorn|aa|Staff
+The Princess|aa|One-Handed Sword
+Asphyxia's Wrath|aa|Quiver
+Stone of Lazhwar|aa|Amulet
+Wurm's Molt|aa|Belt
+Perandus Blazon|aa|Belt
+Blackheart|aa|Ring
+The Ignomon|aa|Amulet
+Karui Ward|aa|Amulet
+Kaom's Sign|aa|Ring
+Mokou's Embrace|aa|Ring
+Fencoil|aa|Staff
+Ngamahu Tiki|aa|Amulet
+Lifesprig|aa|Wand
