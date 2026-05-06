@@ -854,13 +854,14 @@ def parse_item_spec_line(line: str) -> ItemSpec:
     - Item Name|aa            -> alternate art only
     - Item Name|normal        -> non-alternate-art only
     - Item Name|any           -> either alt or non-alt
+    - Item Name|normal|boots  -> optional third field (category) is ignored by poller
     """
-    parts = [part.strip() for part in line.split("|", 1)]
+    parts = [part.strip() for part in line.split("|")]
     name = parts[0]
     if not name:
         raise RuntimeError("Invalid item line: missing item name")
 
-    if len(parts) == 1:
+    if len(parts) < 2:
         return ItemSpec(name=name, alternate_art=True)
 
     mode = parts[1].lower()

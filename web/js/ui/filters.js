@@ -4,10 +4,37 @@ import { poeStashRegexMatches } from "../domain/poeStashRegex.js";
 import { state } from "../core/state.js";
 
 /**
- * Match item name against PoE stash-style regex (see `poeStashRegex.js`).
+ * Match item against search query.
+ *
+ * Supported patterns:
+ * - `boots` (matches category OR item name)
+ * - `boots|wind` (matches category AND item name)
+ * - name-only regex queries continue to work as before.
  */
-export function itemNameMatchesSearch(itemName, rawQuery) {
-    return poeStashRegexMatches(itemName, rawQuery);
+export function itemMatchesSearch(item, rawQuery) {
+    const query = String(rawQuery || "").trim();
+    if (!query) {
+        return true;
+    }
+
+    const itemName = String(item?.itemName || "");
+    const itemCategory = String(item?.category || "").toLowerCase();
+
+    const splitIndex = query.indexOf("|");
+    if (splitIndex >= 0) {
+        const categoryTerm = query.slice(0, splitIndex).trim().toLowerCase();
+        const nameTerm = query.slice(splitIndex + 1).trim();
+
+        const categoryMatches = !categoryTerm || itemCategory.includes(categoryTerm);
+        const nameMatches = !nameTerm || poeStashRegexMatches(itemName, nameTerm);
+        return categoryMatches && nameMatches;
+    }
+
+    if (itemCategory && itemCategory.includes(query.toLowerCase())) {
+        return true;
+    }
+
+    return poeStashRegexMatches(itemName, query);
 }
 
 /**
@@ -17,10 +44,10 @@ export function itemNameMatchesSearch(itemName, rawQuery) {
 export function getFilteredAndSortedItems(items) {
     let filtered = [...items];
 
-    // Apply search filter (PoE stash-style regex; see poeStashRegex.js)
+    // Apply search filter (category/name matching + PoE stash-style regex for name terms)
     const searchQuery = state.filters.search.trim();
     if (searchQuery) {
-        filtered = filtered.filter((item) => itemNameMatchesSearch(item.itemName, searchQuery));
+        filtered = filtered.filter((item) => itemMatchesSearch(item, searchQuery));
     }
 
     // Apply favorites filter

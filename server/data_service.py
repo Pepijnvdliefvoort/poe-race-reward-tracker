@@ -203,6 +203,7 @@ def _seed_items_from_variants(variants_by_name: dict[str, list[dict[str, Any]]])
                 "itemName": str(variant.get("displayName") or base_item_name),
                 "baseItemName": base_item_name,
                 "mode": mode,
+                "category": str(variant.get("category") or ""),
                 "imagePath": _get_image_path(base_item_name, _mode_to_is_aa(mode)),
                 "sortOrder": variant.get("order"),
                 "points": [],
@@ -228,12 +229,13 @@ def _load_item_variants() -> tuple[dict[str, list[dict[str, Any]]], dict[str, in
                 if not line or line.startswith("#"):
                     continue
 
-                parts = [part.strip() for part in line.split("|", 1)]
+                parts = [part.strip() for part in line.split("|")]
                 item_name = parts[0]
                 if not item_name:
                     continue
 
-                raw_mode = parts[1] if len(parts) == 2 else None
+                raw_mode = parts[1] if len(parts) >= 2 else None
+                category = parts[2] if len(parts) >= 3 else ""
                 is_aa = _parse_mode(raw_mode)
                 mode = _mode_token(is_aa)
                 variant_key = f"{item_name}::{mode}"
@@ -241,6 +243,7 @@ def _load_item_variants() -> tuple[dict[str, list[dict[str, Any]]], dict[str, in
                     "itemName": item_name,
                     "displayName": _display_name(item_name, is_aa),
                     "isAA": is_aa,
+                    "category": category,
                     "key": variant_key,
                     "order": index,
                 }
@@ -381,6 +384,15 @@ def load_price_data() -> dict[str, Any]:
         for key, variant in storage.variants_for_ui_fallback(items_fallback=items).items()
         if key in allowed_keys
     }
+    for key, variant in items_by_key.items():
+        if not isinstance(variant, dict):
+            continue
+        if variant.get("category"):
+            continue
+        fallback = items.get(key)
+        if isinstance(fallback, dict):
+            variant["category"] = str(fallback.get("category") or "")
+
     payload = storage.load_price_payload_points(
         variant_ids_by_key=variant_ids_by_key,
         variants_by_key=items_by_key,

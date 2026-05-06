@@ -200,6 +200,7 @@ class ServerStorage:
                     "itemName": str(variant.get("displayName") or variant.get("itemName") or ""),
                     "baseItemName": str(variant.get("itemName") or ""),
                     "mode": str(variant.get("mode") or ""),
+                    "category": str(variant.get("category") or ""),
                     "imagePath": get_image_path(str(variant.get("itemName") or ""), variant.get("isAA")),
                     "sortOrder": variant.get("order"),
                     "points": [],
