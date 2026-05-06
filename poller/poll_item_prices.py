@@ -2413,25 +2413,22 @@ def main() -> None:
 
     root_dir = Path(__file__).resolve().parents[1]
     storage = StorageService(root_dir=root_dir)
-    variants = storage.list_variants()
-    if not variants:
-        # Bootstrap from items.txt once.
-        item_specs = load_item_specs(items_file)
-        variant_specs: list[VariantSpec] = []
-        for idx, spec in enumerate(item_specs):
-            mode = item_mode_token(spec)
-            display = f"{spec.name} Normal" if mode == "normal" else spec.name
-            variant_specs.append(
-                VariantSpec(
-                    base_item_name=spec.name,
-                    mode=mode,
-                    display_name=display,
-                    sort_order=idx,
-                    icon_path=None,
-                )
+    item_specs = load_item_specs(items_file)
+    variant_specs: list[VariantSpec] = []
+    for idx, spec in enumerate(item_specs):
+        mode = item_mode_token(spec)
+        display = f"{spec.name} Normal" if mode == "normal" else spec.name
+        variant_specs.append(
+            VariantSpec(
+                base_item_name=spec.name,
+                mode=mode,
+                display_name=display,
+                sort_order=idx,
+                icon_path=None,
             )
-        storage.upsert_variants(variant_specs)
-        variants = storage.list_variants()
+        )
+    storage.upsert_variants(variant_specs)
+    variants = storage.list_variants()
 
     variant_ids_by_key = {f"{name}::{mode}": int(vid) for (vid, name, mode, _dn, _so, _ic) in variants}
     icon_urls_by_key: dict[str, str | None] = {f"{name}::{mode}": _ic for (_, name, mode, _dn, _so, _ic) in variants}

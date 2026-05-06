@@ -294,6 +294,17 @@ class StorageService:
             win_days = max(0, min(3650, win_days))
             late_relist_events: list[dict[str, Any]] = []
             if win_days > 0:
+                relist_pairs_in_poll: set[tuple[str, str]] = set()
+                for ev in inference_events or []:
+                    if not isinstance(ev, dict):
+                        continue
+                    if str(ev.get("rule") or "") != "relist_same_seller":
+                        continue
+                    ev_fp = str(ev.get("fingerprint") or "").strip()
+                    ev_seller = str(ev.get("seller") or "").strip()
+                    if ev_fp and ev_seller:
+                        relist_pairs_in_poll.add((ev_fp, ev_seller.casefold()))
+
                 try:
                     dt = datetime.fromisoformat(str(requested_at_utc))
                 except Exception:
@@ -315,6 +326,10 @@ class StorageService:
                     if key in seen_pairs:
                         continue
                     seen_pairs.add(key)
+
+                    # Skip pairs already handled by same-poll relist events.
+                    if (fp, seller.casefold()) in relist_pairs_in_poll:
+                        continue
 
                     # Guard: if a confirmed_transfer was recorded for this (fingerprint, seller)
                     # after the sale window start, the item definitely changed hands — the seller's

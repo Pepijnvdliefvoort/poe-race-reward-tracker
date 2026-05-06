@@ -14,6 +14,7 @@ Demigod's Beacon
 Demigod's Dominance
 Talisman of the Victor
 Demigod's Presence|normal
+Demigod's Authority|normal
 Demigod's Stride|normal
 Demigod's Immortality|normal
 Demigod's Triumph|normal

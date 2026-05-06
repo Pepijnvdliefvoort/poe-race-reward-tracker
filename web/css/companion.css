@@ -288,6 +288,48 @@ body.companion-resizing {
   filter: drop-shadow(1px 1px 0 rgba(167, 139, 250, 0.34));
 }
 
+.companion-message-typing {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 5px;
+  min-width: 44px;
+  min-height: 26px;
+}
+
+.companion-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(191, 219, 254, 0.9);
+  opacity: 0.5;
+  animation: companion-typing-bob 920ms infinite ease-in-out;
+}
+
+:root.light-theme .companion-typing-dot {
+  background: rgba(67, 56, 202, 0.82);
+}
+
+.companion-typing-dot:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.companion-typing-dot:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+@keyframes companion-typing-bob {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.48;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
 .companion-label-help {
   justify-self: start;
   max-width: 96%;

@@ -14,6 +14,7 @@ WEB_DIR = ROOT_DIR / "web"
 ITEMS_FILE = ROOT_DIR / "items.txt"  # bootstrap only (DB is source of truth)
 CONFIG_PATH = ROOT_DIR / "config.json"  # bootstrap only (DB is source of truth)
 POLL_INTERVAL_SECONDS = 3600
+_TRACKED_ITEMS_SYNC_SIGNATURE: tuple[int, int] | None = None
 
 DEFAULT_CONFIG = {
     "alert_enabled": False,
@@ -253,6 +254,44 @@ def _load_item_variants() -> tuple[dict[str, list[dict[str, Any]]], dict[str, in
     return variants_by_name, order_by_key
 
 
+def _tracked_items_file_signature() -> tuple[int, int] | None:
+    try:
+        stat = ITEMS_FILE.stat()
+    except OSError:
+        return None
+    return (int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _sync_tracked_variants_if_needed(
+    variants_by_name: dict[str, list[dict[str, Any]]],
+) -> None:
+    global _TRACKED_ITEMS_SYNC_SIGNATURE
+
+    signature = _tracked_items_file_signature()
+    if signature is None or signature == _TRACKED_ITEMS_SYNC_SIGNATURE:
+        return
+
+    from storage.service import StorageService, VariantSpec  # local import
+
+    variant_specs: list[VariantSpec] = []
+    for base_name, variants in variants_by_name.items():
+        for v in variants:
+            mode = _mode_token(v.get("isAA"))
+            variant_specs.append(
+                VariantSpec(
+                    base_item_name=base_name,
+                    mode=mode,
+                    display_name=str(v.get("displayName") or base_name),
+                    sort_order=_order_or_max(v.get("order")),
+                    icon_path=_get_image_path(base_name, v.get("isAA")),
+                )
+            )
+
+    if variant_specs:
+        StorageService(root_dir=ROOT_DIR).upsert_variants(variant_specs)
+    _TRACKED_ITEMS_SYNC_SIGNATURE = signature
+
+
 def _get_image_path(item_name: str, is_aa: bool | None) -> str | None:
     """Generate local image filename for item with Linux-safe case-insensitive matching."""
     if is_aa is None or is_aa is True:
@@ -327,30 +366,21 @@ def load_price_data() -> dict[str, Any]:
     # DB is the source of truth for tracked items. If empty, bootstrap-import from items.txt once.
     variants_by_name, order_by_key = _load_item_variants()
     items: dict[str, dict[str, Any]] = _seed_items_from_variants(variants_by_name)
+    _sync_tracked_variants_if_needed(variants_by_name)
 
     storage = ServerStorage(ROOT_DIR)
-    from storage.service import StorageService, VariantSpec  # local import
 
-    ss = StorageService(root_dir=ROOT_DIR)
-    if not storage.has_any_variants():
-        # Bootstrap from items.txt definitions (the same parsing you already had)
-        variant_specs = []
-        for base_name, variants in variants_by_name.items():
-            for v in variants:
-                mode = _mode_token(v.get("isAA"))
-                variant_specs.append(
-                    VariantSpec(
-                        base_item_name=base_name,
-                        mode=mode,
-                        display_name=str(v.get("displayName") or base_name),
-                        sort_order=_order_or_max(v.get("order")),
-                        icon_path=_get_image_path(base_name, v.get("isAA")),
-                    )
-                )
-        ss.upsert_variants(variant_specs)
-
-    variant_ids_by_key = storage.variant_ids_by_key()
-    items_by_key = storage.variants_for_ui_fallback(items_fallback=items)
+    allowed_keys = set(items.keys())
+    variant_ids_by_key = {
+        key: variant_id
+        for key, variant_id in storage.variant_ids_by_key().items()
+        if key in allowed_keys
+    }
+    items_by_key = {
+        key: variant
+        for key, variant in storage.variants_for_ui_fallback(items_fallback=items).items()
+        if key in allowed_keys
+    }
     payload = storage.load_price_payload_points(
         variant_ids_by_key=variant_ids_by_key,
         variants_by_key=items_by_key,

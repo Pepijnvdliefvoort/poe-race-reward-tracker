@@ -12,8 +12,15 @@ const modeSelect = document.getElementById("companionMode");
 const submitBtn = document.getElementById("companionSubmit");
 const statusEl = document.getElementById("companionStatus");
 const resultsEl = document.getElementById("companionResults");
+const threadEl = panel?.querySelector(".companion-thread");
 
 const PREFERENCES_STORAGE_KEY = "companion.preferences.v1";
+const TYPING_MIN_MS = 240;
+const TYPING_MAX_MS = 620;
+const FIRST_MESSAGE_TYPING_MS = 250;
+const MESSAGE_PAUSE_MS = 250;
+
+let renderSequenceId = 0;
 
 const CATEGORY_HELP = {
   "Best fit": "High overall score for your wealth and risk profile.",
@@ -60,6 +67,99 @@ function setLoading(isLoading) {
     submitBtn.disabled = isLoading;
     submitBtn.textContent = isLoading ? "Estimating..." : "Estimate";
   }
+}
+
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function scrollThreadToBottom() {
+  if (!threadEl) return;
+  threadEl.scrollTop = threadEl.scrollHeight;
+}
+
+function createBotMessage(text, extraClass = "") {
+  const message = document.createElement("div");
+  message.className = ["companion-message", "companion-message-bot", extraClass].filter(Boolean).join(" ");
+  message.textContent = text;
+  return message;
+}
+
+function createUserMessage(text) {
+  const message = document.createElement("div");
+  message.className = "companion-message companion-message-user";
+  message.textContent = text;
+  return message;
+}
+
+function formatCompanionChoice(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function summarizeUserRequest({ wealth, currency, risk, mode }) {
+  const wealthSummary = `${wealthInput?.value || wealth} ${formatCompanionChoice(currency)}`;
+  return `I have ${wealthSummary}, want a ${String(risk || "balanced").toLowerCase()} risk setup, and want ${formatCompanionChoice(mode)}.`;
+}
+
+function startConversationTurn(summary) {
+  if (!resultsEl) return;
+  resultsEl.replaceChildren(createUserMessage(summary));
+  resultsEl.hidden = false;
+  scrollThreadToBottom();
+}
+
+function createTypingMessage() {
+  const message = document.createElement("div");
+  message.className = "companion-message companion-message-bot companion-message-typing";
+  message.setAttribute("aria-hidden", "true");
+
+  for (let i = 0; i < 3; i += 1) {
+    const dot = document.createElement("span");
+    dot.className = "companion-typing-dot";
+    message.appendChild(dot);
+  }
+  return message;
+}
+
+function typingDelayForMessage(text, messageIndex = 0) {
+  const rawText = String(text || "");
+  const punctuationCount = (rawText.match(/[,:;]/g) || []).length;
+  const charDelay = Math.max(0, Math.min(rawText.length * 2, 130));
+  const punctuationDelay = Math.min(punctuationCount * 18, 54);
+  const jitter = Math.floor(Math.random() * 70);
+  const baseDelay = messageIndex === 0 ? FIRST_MESSAGE_TYPING_MS : TYPING_MIN_MS;
+  return Math.min(TYPING_MAX_MS, baseDelay + charDelay + punctuationDelay + jitter);
+}
+
+async function appendBotMessageWithTyping(text, sequenceId, extraClass = "", messageIndex = 0) {
+  if (!resultsEl) return false;
+
+  const typingMessage = createTypingMessage();
+  resultsEl.appendChild(typingMessage);
+  scrollThreadToBottom();
+
+  await wait(typingDelayForMessage(text, messageIndex));
+  if (sequenceId !== renderSequenceId) {
+    typingMessage.remove();
+    return false;
+  }
+
+  typingMessage.replaceWith(createBotMessage(text, extraClass));
+  scrollThreadToBottom();
+  await wait(MESSAGE_PAUSE_MS);
+  return sequenceId === renderSequenceId;
+}
+
+async function appendBotTopicMessages(messages, sequenceId) {
+  for (const [messageIndex, message] of messages.entries()) {
+    if (!message) continue;
+    const appended = await appendBotMessageWithTyping(message, sequenceId, "", messageIndex);
+    if (!appended) return false;
+  }
+  return sequenceId === renderSequenceId;
 }
 
 function selectHasValue(select, value) {
@@ -367,7 +467,7 @@ function renderRecommendation(rec, options = {}) {
   return card;
 }
 
-function renderPortfolio(payload) {
+async function renderPortfolio(payload, sequenceId) {
   if (!resultsEl) return false;
   const portfolio = payload.portfolio;
   const positions = Array.isArray(portfolio?.positions) ? portfolio.positions : [];
@@ -375,48 +475,65 @@ function renderPortfolio(payload) {
     return false;
   }
 
-  const summary = document.createElement("div");
-  summary.className = "companion-summary companion-message companion-message-bot";
-  const noteText = Array.isArray(portfolio.notes) && portfolio.notes.length ? ` ${portfolio.notes.join(" ")}` : "";
-  summary.textContent = `I built a portfolio plan for ${formatMirror(payload.wealthMirror)}. It deploys ${formatMirror(portfolio.deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(portfolio.cashReserveMirror)} liquid. The ranking favors inferred demand, trend, and real whole-mirror ladder gaps; listing count is only risk context. ${RISK_HELP[payload.risk] || RISK_HELP.balanced}${noteText}`;
-  resultsEl.appendChild(summary);
+  const topics = [
+    `I built a portfolio plan for ${formatMirror(payload.wealthMirror)}. It deploys ${formatMirror(portfolio.deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(portfolio.cashReserveMirror)} liquid.`,
+    "Ranking favors inferred demand, trend, and real whole-mirror ladder gaps. Raw listing count is risk context, not a buy signal.",
+    RISK_HELP[payload.risk] || RISK_HELP.balanced,
+  ];
+  if (Array.isArray(portfolio.notes) && portfolio.notes.length) {
+    topics.push(portfolio.notes.join(" "));
+  }
+
+  const renderedTopics = await appendBotTopicMessages(topics, sequenceId);
+  if (!renderedTopics) {
+    return false;
+  }
+
   resultsEl.appendChild(createLabelHelp());
 
   for (const rec of positions) {
     resultsEl.appendChild(renderRecommendation(rec, { portfolio: true }));
   }
+  scrollThreadToBottom();
   return true;
 }
 
-function renderResults(payload) {
+async function renderResults(payload, sequenceId) {
   if (!resultsEl) return;
-  resultsEl.replaceChildren();
 
   const recommendations = Array.isArray(payload.recommendations) ? payload.recommendations : [];
-  if (payload.mode === "portfolio" && renderPortfolio(payload)) {
+  if (payload.mode === "portfolio" && (await renderPortfolio(payload, sequenceId))) {
     resultsEl.hidden = false;
     return;
   }
 
   if (!recommendations.length) {
-    const empty = document.createElement("div");
-    empty.className = "companion-empty";
-    empty.textContent = "No affordable opportunities matched the current data. Try a larger wealth value or a different risk profile.";
-    resultsEl.appendChild(empty);
+    await appendBotMessageWithTyping(
+      "No affordable opportunities matched the current data. Try a larger wealth value or a different risk profile.",
+      sequenceId,
+      "companion-empty",
+    );
     resultsEl.hidden = false;
     return;
   }
 
-  const summary = document.createElement("div");
-  summary.className = "companion-summary companion-message companion-message-bot";
-  summary.textContent = `I found ${recommendations.length} ranked estimate${recommendations.length === 1 ? "" : "s"} for a ${formatMirror(payload.wealthMirror)} budget. The ranking now favors inferred sale activity, price trend, and real whole-mirror ladder gaps; raw listing count is used as risk context, not as a reason to buy. ${RISK_HELP[payload.risk] || RISK_HELP.balanced}`;
-  resultsEl.appendChild(summary);
+  const topics = [
+    `I found ${recommendations.length} ranked estimate${recommendations.length === 1 ? "" : "s"} for a ${formatMirror(payload.wealthMirror)} budget.`,
+    "Ranking now favors inferred sale activity, price trend, and real whole-mirror ladder gaps. Raw listing count is used as risk context, not as a reason to buy.",
+    RISK_HELP[payload.risk] || RISK_HELP.balanced,
+  ];
+  const renderedTopics = await appendBotTopicMessages(topics, sequenceId);
+  if (!renderedTopics) {
+    return;
+  }
+
   resultsEl.appendChild(createLabelHelp());
 
   for (const rec of recommendations) {
     resultsEl.appendChild(renderRecommendation(rec));
   }
   resultsEl.hidden = false;
+  scrollThreadToBottom();
 }
 
 async function submitCompanion(event) {
@@ -431,8 +548,17 @@ async function submitCompanion(event) {
   }
   storePreferences();
 
+  const requestSummary = summarizeUserRequest({
+    wealth,
+    currency: currencySelect.value,
+    risk: riskSelect.value,
+    mode: modeSelect.value,
+  });
+  startConversationTurn(requestSummary);
+
   setLoading(true);
   setStatus("Checking market data...", "");
+  const sequenceId = ++renderSequenceId;
 
   try {
     const response = await fetch("/api/companion/recommend", {
@@ -450,16 +576,21 @@ async function submitCompanion(event) {
     if (!response.ok || payload.ok === false) {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
-    renderResults(payload);
+    if (sequenceId !== renderSequenceId) return;
+    await renderResults(payload, sequenceId);
+    if (sequenceId !== renderSequenceId) return;
     setStatus(payload.disclaimer || "Results are estimates from inferred market data.", "ok");
   } catch (error) {
+    if (sequenceId !== renderSequenceId) return;
     if (resultsEl) {
       resultsEl.hidden = true;
       resultsEl.replaceChildren();
     }
     setStatus(`Companion error: ${error.message}`, "error");
   } finally {
-    setLoading(false);
+    if (sequenceId === renderSequenceId) {
+      setLoading(false);
+    }
   }
 }
 
