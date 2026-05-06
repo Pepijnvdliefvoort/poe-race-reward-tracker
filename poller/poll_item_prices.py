@@ -1844,7 +1844,14 @@ def find_resale_opportunity(
         # Treat "listed in exalts" as a strong misprice signal; bypass the min-profit gate.
         override = True
 
-    if not override and expected_profit + PRICE_EPSILON < min_profit:
+    # Allow a one-tick shortfall at threshold boundaries (e.g. 2 -> 3 mirrors) where
+    # executable relist undercutting lands just below the configured min profit.
+    if next_market_price >= 5.0:
+        profit_tolerance = 1.0
+    else:
+        profit_tolerance = max(1.0 / dpm, 0.000001)
+
+    if not override and (expected_profit + PRICE_EPSILON + profit_tolerance) < min_profit:
         return None
 
     return ResaleOpportunity(
