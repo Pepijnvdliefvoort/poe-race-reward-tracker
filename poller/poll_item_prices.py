@@ -189,6 +189,39 @@ def load_inference_sale_unlist_if_above_baseline_pct(storage: StorageService) ->
     return max(0.0, min(1000.0, float(raw)))
 
 
+def load_inference_sale_floor_ignore_if_floor_below_mirrors(storage: StorageService) -> float:
+    """
+    Apply a low-market guardrail only when the cheapest listing is below this mirror value.
+
+    Config key: app_config.market.inference_sale_floor_ignore_if_floor_below_mirrors (default 10.0)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = float(data.get("inference_sale_floor_ignore_if_floor_below_mirrors", 10.0))
+    except Exception:
+        raw = 10.0
+    if not math.isfinite(raw):
+        raw = 10.0
+    return max(0.0, min(1000.0, float(raw)))
+
+
+def load_inference_sale_floor_ignore_if_above_by_mirrors(storage: StorageService) -> float:
+    """
+    In low-price markets, if a vanished listing is at least this many mirrors above floor,
+    treat it as an unlisting instead of an inferred sale.
+
+    Config key: app_config.market.inference_sale_floor_ignore_if_above_by_mirrors (default 1.0)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = float(data.get("inference_sale_floor_ignore_if_above_by_mirrors", 1.0))
+    except Exception:
+        raw = 1.0
+    if not math.isfinite(raw):
+        raw = 1.0
+    return max(0.0, min(1000.0, float(raw)))
+
+
 def load_late_relist_window_days(storage: StorageService) -> int:
     """
     How long after an inferred sale we still treat a same-seller reappearance as a relist
@@ -2123,6 +2156,8 @@ def run_cycle(
             seller_online_probe=seller_online_probe,
             baseline_mirror=baseline_mirror_for_inference,
             sale_max_above_baseline_pct=load_inference_sale_unlist_if_above_baseline_pct(storage),
+            sale_floor_ignore_if_floor_below_mirrors=load_inference_sale_floor_ignore_if_floor_below_mirrors(storage),
+            sale_floor_ignore_if_above_by_mirrors=load_inference_sale_floor_ignore_if_above_by_mirrors(storage),
             snapshot_truncated=snap_trunc,
             truncation_cutoff_mirror=trunc_cutoff,
             truncation_safe_margin_pct=float(truncation_margin_pct),

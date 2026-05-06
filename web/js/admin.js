@@ -2394,6 +2394,16 @@ function setupMarketConfigEditor() {
       label: "Inference truncation safe margin (%)",
       help: "Safe margin for truncation of inference results. Anything above this margin is ignored.",
     },
+    inference_sale_floor_ignore_if_floor_below_mirrors: {
+      label: "Inference low-floor cap (mirrors)",
+      help: "Apply the floor-gap sale filter only when cheapest listing is below this mirror value.",
+      type: "number",
+    },
+    inference_sale_floor_ignore_if_above_by_mirrors: {
+      label: "Inference floor-gap ignore (mirrors)",
+      help: "If a vanished listing is this many mirrors above floor in low-floor markets, treat as unlisting, not sale.",
+      type: "number",
+    },
   };
 
   const getSelectedKey = () => {
