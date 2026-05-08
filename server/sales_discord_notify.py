@@ -301,3 +301,119 @@ def send_estimated_sales_change_notification(
     payload: dict[str, Any] = {"embeds": [embed]}
     resp = session.post(webhook_url, json=payload, timeout=10.0)
     resp.raise_for_status()
+
+
+def _fmt_signed_pct(prev_mirror: Any, curr_mirror: Any) -> str | None:
+    try:
+        prev = float(prev_mirror)
+        curr = float(curr_mirror)
+    except Exception:
+        return None
+    if not (prev == prev and curr == curr):
+        return None
+    if prev <= 0:
+        return None
+    pct = ((curr - prev) / prev) * 100.0
+    if not (pct == pct):
+        return None
+    sign = "+" if pct > 0 else ""
+    return f"{sign}{pct:.1f}%"
+
+
+def _reprice_sentence(ev: dict[str, Any], *, divines_per_mirror: float | None) -> str | None:
+    rule = str(ev.get("rule") or "")
+    if rule != "reprice_same_seller":
+        return None
+
+    seller = str(ev.get("seller") or "unknown")
+    prev_price = _fmt_listed_price(ev.get("prevPriceAmount"), ev.get("prevPriceCurrency")) or _fmt_mirror_equiv(
+        ev.get("prevMirrorEquiv"),
+        divines_per_mirror=divines_per_mirror,
+    )
+    curr_price = _fmt_listed_price(ev.get("currPriceAmount"), ev.get("currPriceCurrency")) or _fmt_mirror_equiv(
+        ev.get("currMirrorEquiv"),
+        divines_per_mirror=divines_per_mirror,
+    )
+    if not prev_price or not curr_price or prev_price == curr_price:
+        return None
+
+    fp = _fmt_short_fp(ev.get("fingerprint"))
+    pct = _fmt_signed_pct(ev.get("prevMirrorEquiv"), ev.get("currMirrorEquiv"))
+    tail_parts: list[str] = []
+    if pct:
+        tail_parts.append(pct)
+    if fp:
+        tail_parts.append(f"FP: `{fp}`")
+    tail = f" ({' | '.join(tail_parts)})" if tail_parts else ""
+    return f"Seller **{seller}** repriced: **{prev_price}** -> **{curr_price}**{tail}."
+
+
+def build_reprice_embed(
+    *,
+    item_name: str,
+    item_image_url: str | None,
+    reprice_count: int,
+    divines_per_mirror: float | None = None,
+    inference_events: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    lines = [
+        f"**This poll:** +{max(0, int(reprice_count))} repricing signal" + ("" if int(reprice_count) == 1 else "s"),
+        "Rule 5 (same seller, meaningful price move).",
+    ]
+
+    if inference_events:
+        raw_sentences = [
+            s
+            for s in (
+                _reprice_sentence(ev, divines_per_mirror=divines_per_mirror)
+                for ev in inference_events
+                if isinstance(ev, dict)
+            )
+            if s
+        ]
+        if raw_sentences:
+            counts: dict[str, int] = {}
+            for s in raw_sentences:
+                counts[s] = counts.get(s, 0) + 1
+            lines.append("")
+            lines.append("**Reprices:**")
+            max_lines = 12
+            ranked = sorted(counts.keys(), key=lambda s: (-counts[s], s))
+            for s in ranked[:max_lines]:
+                n = counts[s]
+                suffix = f" ×{n}" if n > 1 else ""
+                lines.append(f"- {s}{suffix}")
+            if len(ranked) > max_lines:
+                lines.append(f"- ...and {len(ranked) - max_lines} more unique reprices")
+
+    embed: dict[str, Any] = {
+        "title": f"Reprices: {item_name}",
+        "description": "\n".join(lines),
+        # Muted blue-grey so reprices feel informational, less urgent than sale alerts.
+        "color": 0x5D6D7E,
+    }
+    if item_image_url:
+        embed["thumbnail"] = {"url": item_image_url}
+    return embed
+
+
+def send_reprice_change_notification(
+    session: requests.Session,
+    *,
+    webhook_url: str,
+    item_name: str,
+    item_image_url: str | None,
+    reprice_count: int,
+    divines_per_mirror: float | None = None,
+    inference_events: list[dict[str, Any]] | None = None,
+) -> None:
+    embed = build_reprice_embed(
+        item_name=item_name,
+        item_image_url=item_image_url,
+        reprice_count=reprice_count,
+        divines_per_mirror=divines_per_mirror,
+        inference_events=inference_events,
+    )
+    payload: dict[str, Any] = {"embeds": [embed]}
+    resp = session.post(webhook_url, json=payload, timeout=10.0)
+    resp.raise_for_status()

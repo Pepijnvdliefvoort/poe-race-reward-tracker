@@ -21,7 +21,10 @@ from .sale_inference_engine import (
     non_instant_vanished_seller_accounts_for_online_probe,
 )
 
-from server.sales_discord_notify import send_estimated_sales_change_notification
+from server.sales_discord_notify import (
+    send_estimated_sales_change_notification,
+    send_reprice_change_notification,
+)
 
 from storage.service import StorageService, VariantSpec
 from .db_export import DbExportConfig, maybe_export_db_to_discord
@@ -115,6 +118,19 @@ def load_discord_sales_webhook_url_from_env() -> tuple[str, bool]:
     if sales:
         return sales, True
     return load_discord_webhook_url_from_env(), False
+
+
+def load_discord_reprices_webhook_url_from_env() -> tuple[str, bool]:
+    """
+    Webhook URL for repricing notifications, and whether a dedicated reprices URL was configured.
+
+    If ``DISCORD_WEBHOOK_URL_REPRICES`` is unset, falls back to sales webhook resolution,
+    then the main alert webhook as a final fallback.
+    """
+    reprices = os.getenv("DISCORD_WEBHOOK_URL_REPRICES", "").strip()
+    if reprices:
+        return reprices, True
+    return load_discord_sales_webhook_url_from_env()[0], False
 
 
 def load_discord_db_export_webhook_url_from_env() -> str:
@@ -2062,6 +2078,7 @@ def run_cycle(
     alert_config: AlertConfig | None = None,
     inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
     sales_webhook_url: str = "",
+    reprices_webhook_url: str = "",
     sales_window_days: int = 90,
     icon_urls_by_key: dict[str, str | None] | None = None,
 ) -> float:
@@ -2330,6 +2347,33 @@ def run_cycle(
                 except Exception as exc:  # noqa: BLE001
                     log_line("warn", f"Failed sales Discord webhook for {item.name}: {exc}")
 
+            reprice_count = int(effective_counts.get("repriceSameSeller", 0))
+            if reprices_webhook_url and reprice_count > 0:
+                try:
+                    reprice_events = [
+                        event
+                        for event in effective_events
+                        if isinstance(event, dict) and str(event.get("rule") or "") == "reprice_same_seller"
+                    ]
+                    log_line(
+                        "alert",
+                        (
+                            f"Reprice alert fired: {item.name} +{reprice_count} "
+                            "(rule5 same-seller meaningful price move); sending Discord webhook"
+                        ),
+                    )
+                    send_reprice_change_notification(
+                        session,
+                        webhook_url=reprices_webhook_url,
+                        item_name=item.name,
+                        item_image_url=cheapest_icon_url,
+                        reprice_count=reprice_count,
+                        divines_per_mirror=divines_per_mirror,
+                        inference_events=reprice_events,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log_line("warn", f"Failed reprice Discord webhook for {item.name}: {exc}")
+
         cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
         # --- Alert check ---
@@ -2503,6 +2547,7 @@ def main() -> None:
     alert_state = seed_price_alert_cooldown_from_db(storage, variant_ids_by_key)
     log_line("cycle", f"Loaded {len(alert_state)} persisted price-alert cooldown entries.")
     logged_sales_webhook_cfg = False
+    logged_reprices_webhook_cfg = False
     logged_db_export_webhook_cfg = False
     log_line(
         "cycle",
@@ -2526,6 +2571,7 @@ def main() -> None:
 
     # Other optional Discord webhooks (warn once at startup if missing).
     sales_webhook_url, sales_webhook_dedicated = load_discord_sales_webhook_url_from_env()
+    reprices_webhook_url, reprices_webhook_dedicated = load_discord_reprices_webhook_url_from_env()
     if not sales_webhook_url:
         log_line(
             "warn",
@@ -2537,6 +2583,18 @@ def main() -> None:
             "warn",
             "DISCORD_WEBHOOK_URL_SALES is not set; estimated-sales notifications will use the main alert webhook. "
             "Set DISCORD_WEBHOOK_URL_SALES for a separate channel.",
+        )
+    if not reprices_webhook_url:
+        log_line(
+            "warn",
+            "Repricing Discord notifications are disabled (no webhook secret set). "
+            "Set DISCORD_WEBHOOK_URL_REPRICES (preferred), DISCORD_WEBHOOK_URL_SALES, or DISCORD_WEBHOOK_URL.",
+        )
+    elif not reprices_webhook_dedicated:
+        log_line(
+            "warn",
+            "DISCORD_WEBHOOK_URL_REPRICES is not set; repricing notifications will use sales/main webhook fallback. "
+            "Set DISCORD_WEBHOOK_URL_REPRICES for a separate channel.",
         )
 
     if not load_discord_db_export_webhook_url_from_env():
@@ -2559,6 +2617,7 @@ def main() -> None:
         # Reload alert config each cycle so UI changes take effect without restart.
         alert_config = load_alert_config()
         sales_webhook_url, sales_webhook_dedicated = load_discord_sales_webhook_url_from_env()
+        reprices_webhook_url, reprices_webhook_dedicated = load_discord_reprices_webhook_url_from_env()
         sales_window_days = load_sales_discord_window_days(storage)
         db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
         if sales_webhook_url and not logged_sales_webhook_cfg:
@@ -2569,6 +2628,14 @@ def main() -> None:
                 )
             log_line("cycle", msg)
             logged_sales_webhook_cfg = True
+        if reprices_webhook_url and not logged_reprices_webhook_cfg:
+            msg = "Repricing Discord webhook active"
+            if reprices_webhook_dedicated:
+                msg += "; using dedicated reprices webhook"
+            else:
+                msg += "; using sales/main fallback (set DISCORD_WEBHOOK_URL_REPRICES for a separate channel)"
+            log_line("cycle", msg)
+            logged_reprices_webhook_cfg = True
         if db_export_webhook_url and not logged_db_export_webhook_cfg:
             log_line("cycle", "DB export webhook active; will upload a DB snapshot once every 24h.")
             logged_db_export_webhook_cfg = True
@@ -2593,6 +2660,7 @@ def main() -> None:
                 divines_per_mirror, price_history, alert_state, alert_config,
                 inference_fetch_cap=cfg.inference_fetch_cap,
                 sales_webhook_url=sales_webhook_url,
+                reprices_webhook_url=reprices_webhook_url,
                 sales_window_days=sales_window_days,
                 icon_urls_by_key=icon_urls_by_key,
             )

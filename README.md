@@ -163,6 +163,10 @@ Optional separate webhook when inferred estimated sales change on a poll (confir
 
 - `DISCORD_WEBHOOK_URL_SALES`
 
+Optional separate webhook for repricing notifications (Rule 5 same-seller meaningful price changes):
+
+- `DISCORD_WEBHOOK_URL_REPRICES`
+
 Optional separate webhook for the admin DB export button:
 
 - `DISCORD_WEBHOOK_URL_DB_EXPORT`
