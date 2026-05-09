@@ -442,6 +442,29 @@ def _meaningful_price_change(prev_m: float, curr_m: float) -> bool:
     return False
 
 
+def _canonical_price_currency(currency: Any) -> str | None:
+    cur = str(currency or "").strip().lower()
+    if not cur:
+        return None
+    if cur in {"mirror", "mirrors", "mirror of kalandra"}:
+        return "mirror"
+    if cur in {"divine", "divines", "div", "divine orb", "divine orbs"}:
+        return "divine"
+    if cur in {"exalted", "exalt", "exa", "exalted orb", "exalted orbs"}:
+        return "exalted"
+    return cur
+
+
+def _same_listed_price(prev_signal: dict[str, Any], curr_signal: dict[str, Any]) -> bool:
+    prev_amount = _as_float(prev_signal.get("priceAmount"))
+    curr_amount = _as_float(curr_signal.get("priceAmount"))
+    prev_currency = _canonical_price_currency(prev_signal.get("priceCurrency"))
+    curr_currency = _canonical_price_currency(curr_signal.get("priceCurrency"))
+    if prev_amount is None or curr_amount is None or not prev_currency or not curr_currency:
+        return False
+    return prev_currency == curr_currency and math.isclose(prev_amount, curr_amount, rel_tol=0.0, abs_tol=1e-9)
+
+
 def _count_multi_seller_fingerprints(signals: list[dict[str, Any]]) -> int:
     """Fingerprints that appear under 2+ distinct sellers in the same snapshot."""
     by_fp: dict[str, set[str]] = {}
@@ -861,6 +884,8 @@ def evaluate_listing_transition(
         pm = _meta_for(prev_signals, fp, seller)
         cm = _meta_for(curr_signals, fp, seller)
         if not pm or not cm:
+            continue
+        if _same_listed_price(pm, cm):
             continue
         a = _as_float(pm.get("mirrorEquiv"))
         b = _as_float(cm.get("mirrorEquiv"))
