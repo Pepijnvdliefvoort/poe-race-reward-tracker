@@ -88,8 +88,23 @@
     transform: translateX(0);
   }
 
+  .topbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
   .filters-menu-btn {
+    order: 1;
     margin-right: auto;
+  }
+
+  .topbar-nav-btn {
+    order: 2;
+  }
+
+  .theme-toggle {
+    order: 3;
   }
 
   body {

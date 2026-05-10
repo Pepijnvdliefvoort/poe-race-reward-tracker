@@ -86,13 +86,6 @@ def fingerprint_trade_item(item: dict[str, Any] | None) -> str:
         str(item.get("ilvl") or ""),
         _stack_size_signature(item),
     ]
-    sockets = item.get("sockets")
-    if isinstance(sockets, list):
-        sock_bits = []
-        for s in sockets:
-            if isinstance(s, dict):
-                sock_bits.append(f"{s.get('group')}:{s.get('sColour')}")
-        parts.append("|".join(sorted(sock_bits)))
 
     raw = "\x1f".join(parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
