@@ -1569,6 +1569,60 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             (*sale_ids, variant_id),
                         )
                         deleted_sales = int(cur.rowcount or 0)
+
+                        # Rebuild the three counters that feed "Est. sold" from remaining
+                        # non-reverted sales rows for this variant.
+                        row = con.execute(
+                            "SELECT COUNT(*) AS n FROM item_polls WHERE item_variant_id = ?",
+                            (variant_id,),
+                        ).fetchone()
+                        polls_recalculated = int(row["n"] or 0) if row else 0
+                        con.execute(
+                            """
+                            UPDATE item_polls
+                            SET
+                              inf_confirmed_transfer = 0,
+                              inf_likely_instant_sale = 0,
+                              inf_likely_non_instant_online = 0
+                            WHERE item_variant_id = ?
+                            """,
+                            (variant_id,),
+                        )
+                        sale_rollups = con.execute(
+                            """
+                            SELECT
+                              item_poll_id,
+                              SUM(CASE WHEN rule = 'confirmed_transfer' THEN COALESCE(quantity, 1) ELSE 0 END) AS c_xfer,
+                              SUM(CASE WHEN rule = 'likely_instant_sale' THEN COALESCE(quantity, 1) ELSE 0 END) AS c_inst,
+                              SUM(CASE WHEN rule = 'likely_non_instant_online_sale' THEN COALESCE(quantity, 1) ELSE 0 END) AS c_non_inst
+                            FROM sales
+                            WHERE item_variant_id = ?
+                              AND reverted_at_utc IS NULL
+                              AND rule IN ('confirmed_transfer', 'likely_instant_sale', 'likely_non_instant_online_sale')
+                            GROUP BY item_poll_id
+                            """,
+                            (variant_id,),
+                        ).fetchall()
+                        for r in sale_rollups:
+                            con.execute(
+                                """
+                                UPDATE item_polls
+                                SET
+                                  inf_confirmed_transfer = ?,
+                                  inf_likely_instant_sale = ?,
+                                  inf_likely_non_instant_online = ?
+                                WHERE id = ?
+                                  AND item_variant_id = ?
+                                """,
+                                (
+                                    int(r["c_xfer"] or 0),
+                                    int(r["c_inst"] or 0),
+                                    int(r["c_non_inst"] or 0),
+                                    int(r["item_poll_id"]),
+                                    variant_id,
+                                ),
+                            )
+
                         con.commit()
                         body = json.dumps(
                             {
@@ -1582,7 +1636,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                     "inferencePending": 0,
                                     "inferenceSignals": 0,
                                 },
-                                "updated": {"pollsReset": 0},
+                                "updated": {"pollsReset": polls_recalculated},
                             },
                             allow_nan=False,
                         ).encode("utf-8")
