@@ -1064,7 +1064,7 @@ button.admin-db-list-item {
 .admin-json-pretty {
   margin: 0;
   padding: 12px;
-  min-height: 240px;
+  min-height: 750px;
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
     monospace;
   font-size: 13px;
