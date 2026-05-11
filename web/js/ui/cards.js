@@ -8,7 +8,11 @@ import {
     saveFavorites,
     state,
 } from "../core/state.js";
-import { aggregateInferenceSignalsOverWindow, formatEstimatedSoldLine } from "../domain/inferenceStats.js";
+import {
+  aggregateInferenceSignalsOverWindow,
+  estimatedSoldForItemWindow,
+  formatEstimatedSoldLine,
+} from "../domain/inferenceStats.js";
 import {
   getDisplayHighestMirror,
   getDisplayLowestMirror,
@@ -623,7 +627,12 @@ export function updateCard(item, onFavoriteToggle) {
 
   const spanMs = getChartTimespanMs();
   const agg = aggregateInferenceSignalsOverWindow(item.points, spanMs);
-  const soldLine = formatEstimatedSoldLine(agg);
+  const chartWindowSalesCount = Array.isArray(entry.pendingSalesView?.points)
+    ? entry.pendingSalesView.points.length
+    : null;
+  const soldCount =
+    chartWindowSalesCount != null ? chartWindowSalesCount : estimatedSoldForItemWindow(item, spanMs);
+  const soldLine = agg?.pollsInWindow > 0 ? `Est. sold: ~${soldCount}` : formatEstimatedSoldLine(agg);
   if (soldLine) {
     salesSummary.textContent = soldLine;
     salesSummary.hidden = false;

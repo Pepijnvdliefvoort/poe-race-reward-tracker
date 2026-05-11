@@ -1,5 +1,5 @@
 import { getChartTimespanMs } from "../core/state.js";
-import { aggregateInferenceSignalsOverWindow, estimatedSoldCount } from "./inferenceStats.js";
+import { estimatedSoldForItemWindow } from "./inferenceStats.js";
 import { getAvailableLowestPrice } from "./pricing.js";
 import { getTrendDirection, getTrendPercentage } from "./trends.js";
 
@@ -52,8 +52,7 @@ function compareTrendLowest(a, b) {
 
 function estimatedSoldForChartWindow(item) {
   const spanMs = getChartTimespanMs();
-  const agg = aggregateInferenceSignalsOverWindow(item?.points, spanMs);
-  return estimatedSoldCount(agg);
+  return estimatedSoldForItemWindow(item, spanMs);
 }
 
 function compareSoldHigh(a, b) {

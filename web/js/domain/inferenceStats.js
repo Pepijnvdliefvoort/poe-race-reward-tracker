@@ -39,6 +39,28 @@ export function aggregateInferenceSignalsOverWindow(points, spanMs) {
   };
 }
 
+function salesInTimeWindow(sale, cutoffMs) {
+  const t = sale?.time;
+  if (t == null || Number.isNaN(t)) {
+    return false;
+  }
+  if (cutoffMs == null) {
+    return true;
+  }
+  return t >= cutoffMs;
+}
+
+/**
+ * Count visible sale rows over the active chart window.
+ * This matches the sales chart source (non-reverted rows from backend).
+ */
+export function countSalesRowsOverWindow(sales, spanMs) {
+  const now = Date.now();
+  const cutoffMs =
+    typeof spanMs === "number" && Number.isFinite(spanMs) && spanMs !== Infinity ? now - spanMs : null;
+  return (sales || []).filter((s) => salesInTimeWindow(s, cutoffMs)).length;
+}
+
 /**
  * Rough sold count: confirmed transfers + likely instant sales + non-instant/online heuristic
  * (same signals as the rules engine). Other counters are excluded — not treated as sales.
@@ -52,6 +74,19 @@ export function estimatedSoldCount(agg) {
     (Number(agg.instant) || 0) +
     (Number(agg.nonInstOnline) || 0)
   );
+}
+
+/**
+ * Preferred estimator for UI consistency: count visible sales rows in-window.
+ * Falls back to poll-level inference counters when sales rows are unavailable.
+ */
+export function estimatedSoldForItemWindow(item, spanMs) {
+  const salesRows = item?.sales;
+  if (Array.isArray(salesRows)) {
+    return countSalesRowsOverWindow(salesRows, spanMs);
+  }
+  const agg = aggregateInferenceSignalsOverWindow(item?.points, spanMs);
+  return estimatedSoldCount(agg);
 }
 
 export function formatEstimatedSoldLine(agg) {

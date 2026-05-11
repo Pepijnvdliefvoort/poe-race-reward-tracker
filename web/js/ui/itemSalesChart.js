@@ -231,10 +231,17 @@ function makeExpandedConfig(view) {
       responsive: true,
       animation: false,
       layout: { padding: { top: 4, right: 4, left: 0, bottom: 0 } },
+      interaction: {
+        mode: "nearest",
+        axis: "xy",
+        intersect: true,
+      },
       plugins: {
         halfMirrorGrid: { enabled: useHalf, color: HALF_GRID_COLOR },
         legend: { display: false },
         tooltip: {
+          mode: "nearest",
+          intersect: true,
           displayColors: false,
           callbacks: {
             label(ctx) {
