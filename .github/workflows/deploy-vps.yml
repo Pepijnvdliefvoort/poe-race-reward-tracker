@@ -19,6 +19,7 @@ jobs:
       DISCORD_WEBHOOK_URL_SALES: ${{ secrets.DISCORD_WEBHOOK_URL_SALES }}
       DISCORD_WEBHOOK_URL_REPRICES: ${{ secrets.DISCORD_WEBHOOK_URL_REPRICES }}
       DISCORD_WEBHOOK_URL_DB_EXPORT: ${{ secrets.DISCORD_WEBHOOK_URL_DB_EXPORT }}
+      DISCORD_WEBHOOK_URL_OPS: ${{ secrets.DISCORD_WEBHOOK_URL_OPS }}
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
     steps:
       - name: Run deploy script over SSH
@@ -28,7 +29,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          envs: DISCORD_WEBHOOK_URL,DISCORD_WEBHOOK_URL_SALES,DISCORD_WEBHOOK_URL_REPRICES,DISCORD_WEBHOOK_URL_DB_EXPORT,ADMIN_TOKEN
+          envs: DISCORD_WEBHOOK_URL,DISCORD_WEBHOOK_URL_SALES,DISCORD_WEBHOOK_URL_REPRICES,DISCORD_WEBHOOK_URL_DB_EXPORT,DISCORD_WEBHOOK_URL_OPS,ADMIN_TOKEN
           script_stop: true
           script: |
             set -euo pipefail

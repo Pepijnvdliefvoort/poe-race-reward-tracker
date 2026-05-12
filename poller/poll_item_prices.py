@@ -47,6 +47,7 @@ EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
 PRICE_EPSILON = 1e-6
 CSV_HEADER: list[str] = []  # legacy (no longer written)
+OPS_DISCORD_ROLE_ID = "1503672022163525744"
 
 # Proactive safety margin over the natural allowed request pace.
 RATE_LIMIT_SAFETY = 1.1
@@ -86,6 +87,15 @@ class AlertConfig:
     low_liquidity_extra_drop_pct: float
     cooldown_cycles: int
     webhook_url: str
+
+
+@dataclass
+class OpsHealthConfig:
+    enabled: bool
+    webhook_url: str
+    stale_poll_seconds: int
+    db_quick_check_every_cycles: int
+    alert_cooldown_seconds: int
 
 
 @dataclass(frozen=True)
@@ -144,6 +154,169 @@ def load_discord_db_export_webhook_url_from_env() -> str:
         if value:
             return value
     return ""
+
+
+def load_discord_ops_webhook_url_from_env() -> str:
+    """
+    Webhook URL for operational health alerts (API failures, stale polling, DB integrity).
+    """
+    for env_name in ("DISCORD_WEBHOOK_URL_OPS", "POE_DISCORD_WEBHOOK_URL_OPS"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def load_ops_health_config(storage: StorageService, poll_interval_seconds: int) -> OpsHealthConfig:
+    webhook_url = load_discord_ops_webhook_url_from_env()
+    auto_stale_seconds = max(900, int(poll_interval_seconds) * 3) if poll_interval_seconds > 0 else 1800
+    try:
+        data = storage.get_config(key="market") or {}
+    except Exception:
+        data = {}
+
+    def _to_int(name: str, default: int, low: int, high: int) -> int:
+        try:
+            value = int(float(data.get(name, default)))
+        except Exception:
+            value = int(default)
+        return max(low, min(high, value))
+
+    cooldown_seconds = _to_int("ops_alert_cooldown_seconds", 1800, 30, 86400)
+    if "ops_alert_cooldown_seconds" not in data and "ops_alert_cooldown_minutes" in data:
+        cooldown_seconds = _to_int("ops_alert_cooldown_minutes", 30, 1, 1440) * 60
+
+    enabled_default = bool(webhook_url)
+    try:
+        enabled = bool(data.get("ops_health_enabled", enabled_default))
+    except Exception:
+        enabled = enabled_default
+
+    return OpsHealthConfig(
+        enabled=enabled,
+        webhook_url=webhook_url,
+        stale_poll_seconds=_to_int("ops_stale_poll_seconds", auto_stale_seconds, 60, 86400 * 30),
+        db_quick_check_every_cycles=_to_int("ops_db_quick_check_every_cycles", 12, 1, 100000),
+        alert_cooldown_seconds=cooldown_seconds,
+    )
+
+
+def send_ops_alert(
+    session: requests.Session,
+    webhook_url: str,
+    *,
+    title: str,
+    details: str,
+    severity: str,
+) -> None:
+    if not webhook_url:
+        return
+    level = (severity or "warning").strip().lower()
+    color = 0x3498DB
+    if level == "warning":
+        color = 0xF39C12
+    elif level == "critical":
+        color = 0xE74C3C
+    embed = {
+        "title": f"OPS: {title}",
+        "description": details,
+        "color": color,
+    }
+    payload = {
+        "content": f"<@&{OPS_DISCORD_ROLE_ID}>",
+        "allowed_mentions": {"parse": [], "roles": [OPS_DISCORD_ROLE_ID]},
+        "embeds": [embed],
+    }
+    response = session.post(webhook_url, json=payload, timeout=10.0)
+    response.raise_for_status()
+
+
+def notify_ops_alert_once(
+    session: requests.Session,
+    cfg: OpsHealthConfig,
+    dedupe_state: dict[str, float],
+    *,
+    key: str,
+    title: str,
+    details: str,
+    severity: str,
+) -> None:
+    if not cfg.enabled or not cfg.webhook_url:
+        return
+    now = time.monotonic()
+    last = float(dedupe_state.get(key, 0.0))
+    if last > 0.0 and (now - last) < float(cfg.alert_cooldown_seconds):
+        return
+    try:
+        send_ops_alert(
+            session,
+            cfg.webhook_url,
+            title=title,
+            details=details,
+            severity=severity,
+        )
+        dedupe_state[key] = now
+        log_line("ops", f"Alert sent: {title} ({key})")
+    except Exception as exc:  # noqa: BLE001
+        log_line("warn", f"Failed ops Discord webhook ({key}): {exc}")
+
+
+def _parse_utc_iso(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def maybe_run_ops_health_checks(
+    session: requests.Session,
+    storage: StorageService,
+    cfg: OpsHealthConfig,
+    dedupe_state: dict[str, float],
+    *,
+    cycle: int,
+) -> None:
+    if not cfg.enabled or not cfg.webhook_url:
+        return
+
+    latest = storage.latest_item_poll_requested_at_utc(league=DEFAULT_LEAGUE)
+    if latest:
+        latest_dt = _parse_utc_iso(latest)
+        if latest_dt is not None:
+            age_seconds = (datetime.now(timezone.utc) - latest_dt).total_seconds()
+            if age_seconds > float(cfg.stale_poll_seconds):
+                notify_ops_alert_once(
+                    session,
+                    cfg,
+                    dedupe_state,
+                    key="stale-polling",
+                    title="Polling appears stale",
+                    details=(
+                        f"Latest stored item poll is {int(age_seconds)}s old, exceeding threshold "
+                        f"{int(cfg.stale_poll_seconds)}s. Latest timestamp: {latest_dt.isoformat()}"
+                    ),
+                    severity="warning",
+                )
+
+    if cycle <= 1 or (cycle % int(cfg.db_quick_check_every_cycles)) == 0:
+        ok, detail = storage.quick_integrity_check()
+        if not ok:
+            notify_ops_alert_once(
+                session,
+                cfg,
+                dedupe_state,
+                key="db-integrity",
+                title="SQLite integrity check failed",
+                details=detail,
+                severity="critical",
+            )
+
 
 
 def load_sales_discord_window_days(storage: StorageService) -> int:
@@ -2549,6 +2722,8 @@ def main() -> None:
     logged_sales_webhook_cfg = False
     logged_reprices_webhook_cfg = False
     logged_db_export_webhook_cfg = False
+    logged_ops_webhook_cfg = False
+    ops_alert_last_sent: dict[str, float] = {}
     log_line(
         "cycle",
         "Alert config: "
@@ -2604,6 +2779,13 @@ def main() -> None:
             "Set DISCORD_WEBHOOK_URL_DB_EXPORT (or POE_DISCORD_WEBHOOK_URL_DB_EXPORT).",
         )
 
+    if not load_discord_ops_webhook_url_from_env():
+        log_line(
+            "warn",
+            "Ops health alerts are disabled (no webhook secret set). "
+            "Set DISCORD_WEBHOOK_URL_OPS (or POE_DISCORD_WEBHOOK_URL_OPS).",
+        )
+
     while cfg.max_cycles is None or cycles_done < cfg.max_cycles:
         cycle += 1
         cycles_done += 1
@@ -2620,6 +2802,7 @@ def main() -> None:
         reprices_webhook_url, reprices_webhook_dedicated = load_discord_reprices_webhook_url_from_env()
         sales_window_days = load_sales_discord_window_days(storage)
         db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
+        ops_health_cfg = load_ops_health_config(storage, cfg.poll_interval)
         if sales_webhook_url and not logged_sales_webhook_cfg:
             msg = f"Sales Discord webhook active; est.-sold window={sales_window_days}d"
             if not sales_webhook_dedicated:
@@ -2639,6 +2822,24 @@ def main() -> None:
         if db_export_webhook_url and not logged_db_export_webhook_cfg:
             log_line("cycle", "DB export webhook active; will upload a DB snapshot once every 24h.")
             logged_db_export_webhook_cfg = True
+        if ops_health_cfg.enabled and ops_health_cfg.webhook_url and not logged_ops_webhook_cfg:
+            log_line(
+                "cycle",
+                (
+                    "Ops health webhook active; checks API failures/stale polling/DB integrity "
+                    f"(stale>{ops_health_cfg.stale_poll_seconds}s, db_check_every={ops_health_cfg.db_quick_check_every_cycles} cycles, "
+                    f"cooldown={ops_health_cfg.alert_cooldown_seconds}s)."
+                ),
+            )
+            logged_ops_webhook_cfg = True
+
+        maybe_run_ops_health_checks(
+            session,
+            storage,
+            ops_health_cfg,
+            ops_alert_last_sent,
+            cycle=cycle,
+        )
 
         if db_export_webhook_url:
             maybe_export_db_to_discord(
@@ -2667,10 +2868,37 @@ def main() -> None:
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "?"
             log_line("error", f"HTTP error during cycle {cycle}: status={status} error={exc}")
+            notify_ops_alert_once(
+                session,
+                ops_health_cfg,
+                ops_alert_last_sent,
+                key=f"api-http-{status}",
+                title="Trade API HTTP error",
+                details=f"Cycle {cycle} failed with HTTP status {status}: {exc}",
+                severity="warning",
+            )
         except requests.RequestException as exc:
             log_line("error", f"Request error during cycle {cycle}: {exc}")
+            notify_ops_alert_once(
+                session,
+                ops_health_cfg,
+                ops_alert_last_sent,
+                key="api-request-exception",
+                title="Trade API request error",
+                details=f"Cycle {cycle} request failed: {exc}",
+                severity="warning",
+            )
         except Exception as exc:  # noqa: BLE001
             log_line("error", f"Unexpected error during cycle {cycle}: {exc}")
+            notify_ops_alert_once(
+                session,
+                ops_health_cfg,
+                ops_alert_last_sent,
+                key="poller-unexpected-exception",
+                title="Poller unexpected exception",
+                details=f"Cycle {cycle} raised an unexpected exception: {exc}",
+                severity="critical",
+            )
 
         if cfg.max_cycles is not None and cycles_done >= cfg.max_cycles:
             log_line("cycle", f"Reached max-cycles ({cfg.max_cycles}). Stopping.")

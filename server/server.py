@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from env_loader import load_local_env
+
+load_local_env()
+
 from .structured_logging import install_structured_logging
 
 install_structured_logging("server", "server.log")

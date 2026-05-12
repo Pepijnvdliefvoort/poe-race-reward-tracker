@@ -77,6 +77,14 @@ def _load_discord_db_export_webhook_url_from_env() -> str:
     return ""
 
 
+def _load_discord_ops_webhook_url_from_env() -> str:
+    for env_name in ("DISCORD_WEBHOOK_URL_OPS", "POE_DISCORD_WEBHOOK_URL_OPS"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _load_discord_sales_webhook_url_from_env() -> str:
     sales = os.getenv("DISCORD_WEBHOOK_URL_SALES", "").strip()
     if sales:

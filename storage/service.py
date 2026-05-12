@@ -136,6 +136,46 @@ class StorageService:
         finally:
             con.close()
 
+    def latest_item_poll_requested_at_utc(self, *, league: str) -> str | None:
+        """Return latest item_polls.requested_at_utc for a league, else None."""
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            row = con.execute(
+                """
+                SELECT MAX(ip.requested_at_utc) AS ts
+                FROM item_polls ip
+                JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                WHERE pr.league = ?
+                """,
+                (str(league),),
+            ).fetchone()
+            if not row:
+                return None
+            raw = row["ts"]
+            if raw is None:
+                return None
+            value = str(raw).strip()
+            return value or None
+        finally:
+            con.close()
+
+    def quick_integrity_check(self) -> tuple[bool, str]:
+        """
+        Run SQLite PRAGMA quick_check and return (ok, detail).
+        """
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            row = con.execute("PRAGMA quick_check(1)").fetchone()
+            raw = row[0] if row is not None and len(row) > 0 else ""
+            detail = str(raw or "").strip() or "unknown"
+            return (detail.lower() == "ok", detail)
+        except Exception as exc:  # noqa: BLE001
+            return (False, f"quick_check failed: {exc}")
+        finally:
+            con.close()
+
     def has_any_item_polls(self, *, variant_id: int) -> bool:
         """Whether we have ever stored an `item_polls` row for this variant."""
         if int(variant_id) <= 0:

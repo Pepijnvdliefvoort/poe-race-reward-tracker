@@ -35,6 +35,23 @@ Install dependency:
 pip install requests
 ```
 
+## Local .env Support
+
+For local testing, you can create a root `.env` file. The poller (`python -m poller`) and server (`python -m server.server`) load `.env.local` first, then `.env`, at startup.
+
+Example keys:
+
+```text
+DISCORD_WEBHOOK_URL=
+DISCORD_WEBHOOK_URL_SALES=
+DISCORD_WEBHOOK_URL_REPRICES=
+DISCORD_WEBHOOK_URL_DB_EXPORT=
+DISCORD_WEBHOOK_URL_OPS=
+ADMIN_TOKEN=
+```
+
+See `.env.example` for a template. Existing exported environment variables still take precedence over `.env` values.
+
 ## Quick Start (Windows PowerShell)
 
 1. Create and activate a virtual environment:
@@ -170,6 +187,10 @@ Optional separate webhook for repricing notifications (Rule 5 same-seller meanin
 Optional separate webhook for the admin DB export button:
 
 - `DISCORD_WEBHOOK_URL_DB_EXPORT`
+
+Optional separate webhook for operational health alerts (API failures, stale polling, DB integrity issues):
+
+- `DISCORD_WEBHOOK_URL_OPS`
 
 Optional `app_config.market` key `sales_discord_window_days` (default `90`) sets the rolling window for the total in that message (sum of per-poll signals, same idea as the chart est. sold line).
 
