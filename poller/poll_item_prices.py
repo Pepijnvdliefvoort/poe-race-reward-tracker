@@ -150,6 +150,20 @@ def load_discord_reprices_webhook_url_from_env() -> tuple[str, bool]:
     return load_discord_sales_webhook_url_from_env()[0], False
 
 
+def load_discord_new_listings_webhook_url_from_env() -> str:
+    """
+    Webhook URL for generic new-listing notifications.
+
+    This is intentionally separate from reprices/sales so new listings can go to a
+    dedicated Discord channel.
+    """
+    for env_name in ("DISCORD_WEBHOOK_URL_NEW_LISTINGS", "POE_DISCORD_WEBHOOK_URL_NEW_LISTINGS"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
+
+
 def load_discord_db_export_webhook_url_from_env() -> str:
     """
     Webhook URL for daily DB export uploads.
@@ -344,6 +358,30 @@ def _new_item_under_cut_lines(
         )
 
     return lines, mention_ids
+
+
+def _new_listing_lines(
+    *,
+    prev_signals: list[dict[str, Any]],
+    curr_signals: list[dict[str, Any]],
+) -> list[str]:
+    if not prev_signals or not curr_signals:
+        return []
+
+    prev_keys = {_signal_key(signal) for signal in prev_signals}
+    new_signals = [signal for signal in curr_signals if _signal_key(signal) not in prev_keys]
+    if not new_signals:
+        return []
+
+    lines: list[str] = []
+    for signal in new_signals:
+        seller_name = str(signal.get("seller") or "unknown")
+        price = _signal_price(signal)
+        if price is None:
+            lines.append(f"Seller **{seller_name}** listed a new item.")
+            continue
+        lines.append(f"Seller **{seller_name}** listed **{format_amount(price)} mirrors**.")
+    return lines
 
 
 def load_ops_health_config(storage: StorageService, poll_interval_seconds: int) -> OpsHealthConfig:
@@ -2451,6 +2489,7 @@ def run_cycle(
     inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
     sales_webhook_url: str = "",
     reprices_webhook_url: str = "",
+    new_listings_webhook_url: str = "",
     sales_window_days: int = 90,
     icon_urls_by_key: dict[str, str | None] | None = None,
     discord_watch_users: list[DiscordWatchUser] | None = None,
@@ -2783,6 +2822,31 @@ def run_cycle(
                 except Exception as exc:  # noqa: BLE001
                     log_line("warn", f"Failed new-item Discord webhook for {item.name}: {exc}")
 
+            if new_listings_webhook_url:
+                try:
+                    all_new_listing_lines = _new_listing_lines(
+                        prev_signals=prev_signals,
+                        curr_signals=curr_signals,
+                    )
+                    if all_new_listing_lines:
+                        log_line(
+                            "alert",
+                            (
+                                f"New-listings alert fired: {item.name} +{len(all_new_listing_lines)} "
+                                "new listing(s); sending Discord webhook"
+                            ),
+                        )
+                        send_new_item_notification(
+                            session,
+                            webhook_url=new_listings_webhook_url,
+                            item_name=item.name,
+                            item_image_url=cheapest_icon_url,
+                            new_item_count=len(all_new_listing_lines),
+                            new_item_lines=all_new_listing_lines,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    log_line("warn", f"Failed new-listings Discord webhook for {item.name}: {exc}")
+
         cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
         # --- Alert check ---
@@ -2957,6 +3021,7 @@ def main() -> None:
     log_line("cycle", f"Loaded {len(alert_state)} persisted price-alert cooldown entries.")
     logged_sales_webhook_cfg = False
     logged_reprices_webhook_cfg = False
+    logged_new_listings_webhook_cfg = False
     logged_db_export_webhook_cfg = False
     logged_ops_webhook_cfg = False
     ops_alert_last_sent: dict[str, float] = {}
@@ -2983,6 +3048,7 @@ def main() -> None:
     # Other optional Discord webhooks (warn once at startup if missing).
     sales_webhook_url, sales_webhook_dedicated = load_discord_sales_webhook_url_from_env()
     reprices_webhook_url, reprices_webhook_dedicated = load_discord_reprices_webhook_url_from_env()
+    new_listings_webhook_url = load_discord_new_listings_webhook_url_from_env()
     if not sales_webhook_url:
         log_line(
             "warn",
@@ -3006,6 +3072,13 @@ def main() -> None:
             "warn",
             "DISCORD_WEBHOOK_URL_REPRICES is not set; repricing notifications will use sales/main webhook fallback. "
             "Set DISCORD_WEBHOOK_URL_REPRICES for a separate channel.",
+        )
+
+    if not new_listings_webhook_url:
+        log_line(
+            "warn",
+            "New-listings Discord notifications are disabled (no webhook secret set). "
+            "Set DISCORD_WEBHOOK_URL_NEW_LISTINGS (or POE_DISCORD_WEBHOOK_URL_NEW_LISTINGS).",
         )
 
     if not load_discord_db_export_webhook_url_from_env():
@@ -3036,6 +3109,7 @@ def main() -> None:
         alert_config = load_alert_config()
         sales_webhook_url, sales_webhook_dedicated = load_discord_sales_webhook_url_from_env()
         reprices_webhook_url, reprices_webhook_dedicated = load_discord_reprices_webhook_url_from_env()
+        new_listings_webhook_url = load_discord_new_listings_webhook_url_from_env()
         sales_window_days = load_sales_discord_window_days(storage)
         db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
         ops_health_cfg = load_ops_health_config(storage, cfg.poll_interval)
@@ -3058,6 +3132,9 @@ def main() -> None:
                 msg += f"; watch-users={len(discord_watch_users)}"
             log_line("cycle", msg)
             logged_reprices_webhook_cfg = True
+        if new_listings_webhook_url and not logged_new_listings_webhook_cfg:
+            log_line("cycle", "New-listings Discord webhook active; posting every detected new listing row.")
+            logged_new_listings_webhook_cfg = True
         if db_export_webhook_url and not logged_db_export_webhook_cfg:
             log_line("cycle", "DB export webhook active; will upload a DB snapshot once every 24h.")
             logged_db_export_webhook_cfg = True
@@ -3101,6 +3178,7 @@ def main() -> None:
                 inference_fetch_cap=cfg.inference_fetch_cap,
                 sales_webhook_url=sales_webhook_url,
                 reprices_webhook_url=reprices_webhook_url,
+                new_listings_webhook_url=new_listings_webhook_url,
                 sales_window_days=sales_window_days,
                 icon_urls_by_key=icon_urls_by_key,
                 discord_watch_users=discord_watch_users,

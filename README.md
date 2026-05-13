@@ -45,6 +45,7 @@ Example keys:
 DISCORD_WEBHOOK_URL=
 DISCORD_WEBHOOK_URL_SALES=
 DISCORD_WEBHOOK_URL_REPRICES=
+DISCORD_WEBHOOK_URL_NEW_LISTINGS=
 DISCORD_WEBHOOK_URL_DB_EXPORT=
 DISCORD_WEBHOOK_URL_OPS=
 ADMIN_TOKEN=
@@ -183,6 +184,10 @@ Optional separate webhook when inferred estimated sales change on a poll (confir
 Optional separate webhook for repricing notifications (Rule 5 same-seller listed price changes):
 
 - `DISCORD_WEBHOOK_URL_REPRICES`
+
+Optional separate webhook for new-listing notifications (posts every detected new listing row):
+
+- `DISCORD_WEBHOOK_URL_NEW_LISTINGS`
 
 Optional separate webhook for the admin DB export button:
 
