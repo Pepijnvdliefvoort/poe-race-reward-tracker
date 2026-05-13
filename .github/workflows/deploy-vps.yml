@@ -1,3 +1,5 @@
+# SSH to VPS and runs deploy/deploy_on_vps.sh (pull, deps, systemd, restart).
+# Dashboard service must target server/server.py (not web/server.py).
 name: Deploy to VPS
 
 on:
@@ -13,7 +15,12 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      DISCORD_WEBHOOK_URL: ${{ secrets['DISCORD_WEBHOOK_URL'] }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      DISCORD_WEBHOOK_URL_SALES: ${{ secrets.DISCORD_WEBHOOK_URL_SALES }}
+      DISCORD_WEBHOOK_URL_REPRICES: ${{ secrets.DISCORD_WEBHOOK_URL_REPRICES }}
+      DISCORD_WEBHOOK_URL_DB_EXPORT: ${{ secrets.DISCORD_WEBHOOK_URL_DB_EXPORT }}
+      DISCORD_WEBHOOK_URL_OPS: ${{ secrets.DISCORD_WEBHOOK_URL_OPS }}
+      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
     steps:
       - name: Run deploy script over SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -22,10 +29,9 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          envs: DISCORD_WEBHOOK_URL
+          envs: DISCORD_WEBHOOK_URL,DISCORD_WEBHOOK_URL_SALES,DISCORD_WEBHOOK_URL_REPRICES,DISCORD_WEBHOOK_URL_DB_EXPORT,DISCORD_WEBHOOK_URL_OPS,ADMIN_TOKEN
           script_stop: true
           script: |
             set -euo pipefail
             cd /opt/poe-market-flips
-            git pull --ff-only
             bash deploy/deploy_on_vps.sh

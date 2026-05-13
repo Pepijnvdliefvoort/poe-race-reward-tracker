@@ -1,0 +1,30 @@
+:root {
+  --bg: #090c12;
+  --surface: rgba(17, 24, 36, 0.78);
+  --surface-strong: rgba(20, 29, 44, 0.95);
+  --line: rgba(139, 163, 194, 0.22);
+  --ink: #f0f6ff;
+  --ink-soft: #9eb2cc;
+  --accent: #ff7a2f;
+  --accent-2: #2ab7bf;
+  --ok: #26b96d;
+  --warn: #ff8f4c;
+  --error: #ff4d4f;
+  --shadow: 0 14px 34px rgba(3, 6, 14, 0.56);
+  color-scheme: dark;
+}
+:root.light-theme {
+  --bg: #f5f7fa;
+  --surface: rgba(255, 255, 255, 0.9);
+  --surface-strong: rgba(245, 247, 250, 0.98);
+  --line: rgba(100, 130, 170, 0.18);
+  --ink: #1a2332;
+  --ink-soft: #5a6b7d;
+  --accent: #ff7a2f;
+  --accent-2: #2ab7bf;
+  --ok: #26b96d;
+  --warn: #ff8f4c;
+  --error: #ff4d4f;
+  --shadow: 0 14px 34px rgba(3, 6, 14, 0.12);
+  color-scheme: light;
+}

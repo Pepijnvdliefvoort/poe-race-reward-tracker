@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Deploy script run on the VPS (see .github/workflows/deploy-vps.yml).
+# Expects repo at APP_DIR with:
+#   - Dashboard: python -m server.server (WorkingDirectory=APP_DIR; static files from web/)
+#   - Poller:    python -m poller (package under poller/)
 set -euo pipefail
 
 APP_DIR="/opt/poe-market-flips"
@@ -20,25 +24,43 @@ echo "[2/6] Install/update Python dependencies"
 
 echo "[3/6] Sync runtime secrets"
 mkdir -p "$SECRETS_DIR"
-if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
+FINAL_DISCORD="${DISCORD_WEBHOOK_URL:-}"
+FINAL_DISCORD_SALES="${DISCORD_WEBHOOK_URL_SALES:-}"
+FINAL_DISCORD_REPRICES="${DISCORD_WEBHOOK_URL_REPRICES:-}"
+FINAL_DISCORD_DB_EXPORT="${DISCORD_WEBHOOK_URL_DB_EXPORT:-}"
+FINAL_DISCORD_OPS="${DISCORD_WEBHOOK_URL_OPS:-}"
+FINAL_ADMIN="${ADMIN_TOKEN:-}"
+if [ -f "$SECRETS_FILE" ]; then
+  [ -z "$FINAL_DISCORD" ] && FINAL_DISCORD="$(grep '^DISCORD_WEBHOOK_URL=' "$SECRETS_FILE" 2>/dev/null | sed 's/^DISCORD_WEBHOOK_URL=//' | head -1)" || true
+  [ -z "$FINAL_DISCORD_SALES" ] && FINAL_DISCORD_SALES="$(grep '^DISCORD_WEBHOOK_URL_SALES=' "$SECRETS_FILE" 2>/dev/null | sed 's/^DISCORD_WEBHOOK_URL_SALES=//' | head -1)" || true
+  [ -z "$FINAL_DISCORD_REPRICES" ] && FINAL_DISCORD_REPRICES="$(grep '^DISCORD_WEBHOOK_URL_REPRICES=' "$SECRETS_FILE" 2>/dev/null | sed 's/^DISCORD_WEBHOOK_URL_REPRICES=//' | head -1)" || true
+  [ -z "$FINAL_DISCORD_DB_EXPORT" ] && FINAL_DISCORD_DB_EXPORT="$(grep '^DISCORD_WEBHOOK_URL_DB_EXPORT=' "$SECRETS_FILE" 2>/dev/null | sed 's/^DISCORD_WEBHOOK_URL_DB_EXPORT=//' | head -1)" || true
+  [ -z "$FINAL_DISCORD_OPS" ] && FINAL_DISCORD_OPS="$(grep '^DISCORD_WEBHOOK_URL_OPS=' "$SECRETS_FILE" 2>/dev/null | sed 's/^DISCORD_WEBHOOK_URL_OPS=//' | head -1)" || true
+  [ -z "$FINAL_ADMIN" ] && FINAL_ADMIN="$(grep '^ADMIN_TOKEN=' "$SECRETS_FILE" 2>/dev/null | sed 's/^ADMIN_TOKEN=//' | head -1)" || true
+fi
+if [ -n "${DISCORD_WEBHOOK_URL:-}" ] || [ -n "${DISCORD_WEBHOOK_URL_SALES:-}" ] || [ -n "${DISCORD_WEBHOOK_URL_REPRICES:-}" ] || [ -n "${DISCORD_WEBHOOK_URL_DB_EXPORT:-}" ] || [ -n "${DISCORD_WEBHOOK_URL_OPS:-}" ] || [ -n "${ADMIN_TOKEN:-}" ] || { [ -n "$FINAL_DISCORD" ] || [ -n "$FINAL_DISCORD_SALES" ] || [ -n "$FINAL_DISCORD_REPRICES" ] || [ -n "$FINAL_DISCORD_DB_EXPORT" ] || [ -n "$FINAL_DISCORD_OPS" ] || [ -n "$FINAL_ADMIN" ]; }; then
   umask 077
-  cat > "$SECRETS_FILE" <<EOF
-DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-EOF
+  MERGE_TMP="$(mktemp)"
+  {
+    [ -n "$FINAL_DISCORD" ] && printf '%s\n' "DISCORD_WEBHOOK_URL=$FINAL_DISCORD"
+    [ -n "$FINAL_DISCORD_SALES" ] && printf '%s\n' "DISCORD_WEBHOOK_URL_SALES=$FINAL_DISCORD_SALES"
+    [ -n "$FINAL_DISCORD_REPRICES" ] && printf '%s\n' "DISCORD_WEBHOOK_URL_REPRICES=$FINAL_DISCORD_REPRICES"
+    [ -n "$FINAL_DISCORD_DB_EXPORT" ] && printf '%s\n' "DISCORD_WEBHOOK_URL_DB_EXPORT=$FINAL_DISCORD_DB_EXPORT"
+    [ -n "$FINAL_DISCORD_OPS" ] && printf '%s\n' "DISCORD_WEBHOOK_URL_OPS=$FINAL_DISCORD_OPS"
+    [ -n "$FINAL_ADMIN" ] && printf '%s\n' "ADMIN_TOKEN=$FINAL_ADMIN"
+  } > "$MERGE_TMP"
+  mv "$MERGE_TMP" "$SECRETS_FILE"
   chmod 600 "$SECRETS_FILE"
-  echo "Updated $SECRETS_FILE from GitHub secret DISCORD_WEBHOOK_URL"
+  echo "Updated $SECRETS_FILE (merge GitHub env with existing values)"
 else
-  if [ -f "$SECRETS_FILE" ]; then
-    echo "DISCORD_WEBHOOK_URL not provided by workflow; keeping existing $SECRETS_FILE"
-  else
-    echo "DISCORD_WEBHOOK_URL not provided and no existing $SECRETS_FILE; alerts will remain disabled"
-  fi
+  echo "No secrets in workflow or on disk; skipping $SECRETS_FILE"
 fi
 
-echo "[4/6] Sync systemd unit files"
+echo "[4/6] Sync systemd unit files (dashboard: python -m server.server)"
 cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 systemctl daemon-reload
+grep '^ExecStart=' /etc/systemd/system/poe-market-server.service | head -n1 || true
 
 echo "[5/6] Restart app services"
 systemctl restart poe-market-server

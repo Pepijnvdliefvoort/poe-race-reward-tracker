@@ -10,15 +10,16 @@ It has 2 parts:
 
 ## Project Layout
 
-- `poll_item_prices.py`: polling loop and CSV writer
+- `poller/`: trade API polling package — run as `python -m poller` from the repo root (`poll_item_prices.py`, `sale_inference_engine.py`)
 - `items.txt`: tracked items (one per line, with optional mode)
-- `price_poll.csv`: generated historical output
-- `web/server.py`: server entrypoint
-- `web/http_handler.py`: HTTP handler and `/api/prices` route wiring
-- `web/data_service.py`: CSV + items parsing, API payload shaping
-- `web/index.html`, `web/styles.css`: dashboard shell and styling
-- `web/app.js`: dashboard entrypoint/orchestrator
-- `web/js/state.js`, `web/js/cards.js`, `web/js/utils.js`: reusable UI modules
+- `price_poll.csv`: legacy output (no longer written; SQLite is the source of truth)
+- `server/`: dashboard HTTP server (`python -m server.server` entrypoint), `http_handler.py`, and `data_service.py`
+- `web/index.html`, `web/css/*.css`: dashboard shell and modular styling (layout, filters, cards, mobile/desktop breakpoints)
+- `web/js/app.js`: dashboard entrypoint (module graph under `web/js/`)
+- `web/js/core/`: shared state and utilities
+- `web/js/ui/`: renderer, filters, cards, theme, and filter UI wiring
+- `web/js/domain/`: pricing, sorting, and trend helpers
+- `web/js/cards/`: listings popover module
 - `web/assets/icons/`: local item icons used by the dashboard
 
 ## Requirements
@@ -34,6 +35,23 @@ Install dependency:
 pip install requests
 ```
 
+## Local .env Support
+
+For local testing, you can create a root `.env` file. The poller (`python -m poller`) and server (`python -m server.server`) load `.env.local` first, then `.env`, at startup.
+
+Example keys:
+
+```text
+DISCORD_WEBHOOK_URL=
+DISCORD_WEBHOOK_URL_SALES=
+DISCORD_WEBHOOK_URL_REPRICES=
+DISCORD_WEBHOOK_URL_DB_EXPORT=
+DISCORD_WEBHOOK_URL_OPS=
+ADMIN_TOKEN=
+```
+
+See `.env.example` for a template. Existing exported environment variables still take precedence over `.env` values.
+
 ## Quick Start (Windows PowerShell)
 
 1. Create and activate a virtual environment:
@@ -44,22 +62,48 @@ python -m venv .venv
 pip install requests
 ```
 
-2. Run the poller (writes to `price_poll.csv`):
+2. Run the poller (writes to `price_poll.csv`; working directory must be the repo root):
 
 ```powershell
-python poll_item_prices.py
+python -m poller
 ```
 
 Optional custom interval (seconds):
 
 ```powershell
-python poll_item_prices.py --poll-interval 1800
+python -m poller --poll-interval 1800
 ```
+
+Run exactly one cycle (useful for local testing):
+
+```powershell
+python -m poller --max-cycles 1
+```
+
+Override sale-inference fetch cap for this run (`0` disables inference fetches):
+
+```powershell
+python -m poller --inference-cap 50
+```
+
+Prioritize specific items by name substring (case-insensitive):
+
+```powershell
+python -m poller --only Mokou --max-cycles 1
+python -m poller --only "Demigod's" Headhunter --max-cycles 1
+```
+
+Poller CLI arguments summary:
+
+- `--poll-interval <seconds>`: sleep between cycles (default `3600`, use `0` for back-to-back)
+- `--max-cycles <n>`: stop after `n` cycles
+- `--inference-cap <n>`: max listing IDs fetched for inference (`0` disables)
+- `--only <substr...>`: move matching item names to the front of each cycle
 
 3. In another terminal, run the dashboard server:
 
 ```powershell
-python web/server.py
+python -m server.server
 ```
 
 4. Open the dashboard:
@@ -94,6 +138,7 @@ Headhunter|any
 - query id
 - total/used listings
 - mirror and divine low/median/high summaries
+- sale inference counts from `poller/sale_inference_engine.py` (see `sale_inference_state.json` beside the CSV): `inference_confirmed_transfer`, `inference_likely_instant_sale`, `inference_relist_same_seller`, `inference_non_instant_removed`, `inference_reprice_same_seller`, `inference_multi_seller_same_fingerprint`, `inference_new_listing_rows` (inference fetches listing payloads for every search `result` id up to PoE’s cap (`TRADE_SEARCH_RESULT_MAX` in `poller/poll_item_prices.py`, default 100), further limited by app config `inference_listings_fetch_cap` if set lower; pricing and the listing hover preview stay on the top `TOP_IDS_LIMIT` fetches)
 
 If the CSV header does not match the current schema, the poller creates a backup and writes a fresh file with the expected header.
 
@@ -113,6 +158,8 @@ Examples:
 - `5, 5, 8, 8, 8` does not alert because buying one `5` mirror listing still leaves another `5` mirror competitor, so there is no profitable undercut price
 - `11, 12, 12, 14, 16` does not alert because the best whole-mirror relist below `12` is `11`, which leaves no profit
 
+Copy `config.example.json` to `config.json` to override defaults on a given machine (bootstrap only; DB is the source of truth after first run).
+
 You can tune these `config.json` keys to reduce noise:
 
 - `alert_min_total_results` (default `10`): requires enough total market listings before alerts can fire.
@@ -129,18 +176,37 @@ Set it through an environment secret:
 - `DISCORD_WEBHOOK_URL` (preferred)
 - `POE_DISCORD_WEBHOOK_URL` (fallback alias)
 
+Optional separate webhook when inferred estimated sales change on a poll (confirmed transfer + likely instant, including relist undo negatives):
+
+- `DISCORD_WEBHOOK_URL_SALES`
+
+Optional separate webhook for repricing notifications (Rule 5 same-seller meaningful price changes):
+
+- `DISCORD_WEBHOOK_URL_REPRICES`
+
+Optional separate webhook for the admin DB export button:
+
+- `DISCORD_WEBHOOK_URL_DB_EXPORT`
+
+Optional separate webhook for operational health alerts (API failures, stale polling, DB integrity issues):
+
+- `DISCORD_WEBHOOK_URL_OPS`
+
+Optional `app_config.market` key `sales_discord_window_days` (default `90`) sets the rolling window for the total in that message (sum of per-poll signals, same idea as the chart est. sold line).
+
 ## Notes
 
+- Run the poller with `python -m poller` from the **repository root** so `items.txt`, `config.json`, and `web/listings_cache.json` resolve as before. The dashboard’s in-process poller and the VPS systemd unit use the same form.
 - Poll timing is aligned to a fixed start-time grid, not just "sleep N seconds after completion".
-- The script includes adaptive rate-limit pacing using response headers.
+- The poller includes adaptive rate-limit pacing using response headers.
 - Stop either process with `Ctrl+C`.
 
 ## Deploy On A VPS
 
 This project runs well on a small VPS with two always-on services:
 
-- `web/server.py` (dashboard + API)
-- `poll_item_prices.py` (CSV poller)
+- `python -m server.server` (dashboard + API)
+- `python -m poller` (CSV poller; systemd unit uses this form)
 
 Use the full step-by-step deployment guide here:
 
@@ -152,10 +218,15 @@ Quick update commands after you push new code:
 cd /opt/poe-market-flips
 git pull
 .venv/bin/pip install -r requirements.txt
+sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
+sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl restart poe-market-server
 sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
+
+Re-copying the unit files keeps systemd aligned with the repo (for example the dashboard entrypoint `python -m server.server` and the poller’s `python -m poller` `ExecStart`).
 
 Automatic deploy is also supported via GitHub Actions. See:
 

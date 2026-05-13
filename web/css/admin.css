@@ -1,0 +1,1799 @@
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+:root {
+  --admin-log-console-body-h: 420px;
+  /* Titlebar + toolbar + borders/padding (approx). Keep placeholder stable. */
+  --admin-log-console-chrome-h: 96px;
+}
+
+.admin-bg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(42, 183, 191, 0.12), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 50%, rgba(255, 122, 47, 0.06), transparent);
+  z-index: 0;
+}
+
+.admin-header,
+.admin-section,
+.admin-footer,
+.admin-hint {
+  position: relative;
+  z-index: 1;
+}
+
+.admin-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.25rem;
+  padding: 1.5rem clamp(1rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-header-brand {
+  align-self: flex-start;
+}
+
+.admin-header-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.admin-eyebrow {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.admin-header h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.admin-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.admin-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: linear-gradient(135deg, rgba(255, 122, 47, 0.2), rgba(42, 183, 191, 0.12));
+  color: var(--ink);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: 0.9rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.admin-btn-secondary {
+  background: var(--surface-strong);
+}
+
+.admin-btn-danger {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: linear-gradient(135deg, rgba(248, 113, 113, 0.22), rgba(248, 113, 113, 0.08));
+}
+
+.admin-btn-danger:hover {
+  filter: brightness(1.06);
+  border-color: rgba(248, 113, 113, 0.55);
+}
+
+.admin-btn-ghost {
+  background: transparent;
+}
+
+.admin-btn:hover {
+  filter: brightness(1.08);
+}
+
+.admin-hint {
+  margin: 0;
+  padding: 0.45rem clamp(1rem, 4vw, 2.5rem);
+  font-size: 0.85rem;
+  color: var(--warn);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.admin-section {
+  padding: 1.25rem clamp(1rem, 4vw, 2.5rem) 2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-section-head h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.15rem;
+}
+
+.admin-section-head-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.admin-muted {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.admin-muted code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--surface-strong);
+}
+
+.admin-console-split {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 1rem;
+  min-width: 0;
+  position: relative;
+  min-height: calc(var(--admin-log-console-body-h) + var(--admin-log-console-chrome-h));
+}
+
+.admin-console-split .admin-console-wrap {
+  flex: 1 1 0;
+}
+
+.admin-split-handle {
+  width: 14px;
+  margin: 0 0.5rem;
+  border-radius: 999px;
+  cursor: col-resize;
+  position: relative;
+  background: linear-gradient(
+    180deg,
+    rgba(148, 163, 184, 0.10) 0%,
+    rgba(148, 163, 184, 0.04) 50%,
+    rgba(148, 163, 184, 0.10) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+  flex: 0 0 auto;
+}
+
+.admin-split-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.35);
+}
+
+.admin-split-handle:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(42, 183, 191, 0.18) 0%,
+    rgba(255, 122, 47, 0.08) 100%
+  );
+  border-color: rgba(42, 183, 191, 0.25);
+}
+
+.admin-split-handle:active,
+.admin-split-handle[data-dragging="true"] {
+  background: linear-gradient(
+    180deg,
+    rgba(42, 183, 191, 0.26) 0%,
+    rgba(255, 122, 47, 0.14) 100%
+  );
+  border-color: rgba(42, 183, 191, 0.45);
+}
+
+.admin-split-handle:focus-visible {
+  outline: 2px solid rgba(42, 183, 191, 0.65);
+  outline-offset: 2px;
+}
+
+.admin-console-wrap {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow);
+  min-width: 0;
+  transform-origin: top center;
+  transition:
+    opacity 240ms ease,
+    transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 300ms ease;
+  will-change: opacity, transform;
+}
+
+.admin-console-wrap--anim-hide {
+  opacity: 0;
+  transform: translateY(-10px) scale(0.985);
+  filter: saturate(0.92) brightness(0.96);
+  pointer-events: none;
+}
+
+.admin-console-wrap--anim-to-tray {
+  opacity: 0;
+  transform: translate(var(--tray-dx, 0px), var(--tray-dy, 0px)) scale(0.18);
+  filter: saturate(0.92) brightness(0.96);
+  pointer-events: none;
+}
+
+.admin-console-wrap--anim-show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: none;
+}
+
+.admin-console-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 0.75rem;
+  background: linear-gradient(180deg, #2a3142 0%, #1a1f2b 100%);
+  border-bottom: 1px solid #0d0f14;
+}
+
+.admin-console-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3d4556;
+  border: none;
+  padding: 0;
+  display: inline-block;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.admin-console-dot:hover {
+  filter: brightness(1.08);
+}
+
+.admin-console-dot:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.25) brightness(0.9);
+  opacity: 0.7;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.admin-console-dot:disabled:hover {
+  filter: grayscale(0.25) brightness(0.9);
+}
+
+.admin-console-dot:active {
+  transform: translateY(0.5px);
+}
+
+.admin-console-dot:focus-visible {
+  outline: 2px solid rgba(226, 232, 240, 0.75);
+  outline-offset: 2px;
+}
+
+.admin-console-dot--red {
+  background: #ff5f57;
+}
+.admin-console-dot--yellow {
+  background: #febc2e;
+}
+.admin-console-dot--green {
+  background: #28c840;
+}
+
+.admin-console-title {
+  margin-left: auto;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.admin-console-empty {
+  margin-top: 0;
+  border-radius: 12px;
+  border: 2px dotted rgba(148, 163, 184, 0.45);
+  padding: 0;
+  min-height: 100%;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(226, 232, 240, 0.65);
+  font-family: "IBM Plex Mono", monospace;
+  background: rgba(11, 13, 16, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 240ms ease, transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: opacity, transform;
+  z-index: 3;
+}
+
+.admin-console-empty[hidden] {
+  display: none !important;
+}
+
+.admin-console-empty--anim-hide {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.admin-console-taskbar {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.6rem;
+  justify-content: center;
+  padding: 0.65rem 0.75rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: linear-gradient(180deg, rgba(11, 13, 16, 0.88), rgba(11, 13, 16, 0.78));
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 10px 30px rgba(0, 0, 0, 0.24);
+  position: relative;
+  z-index: 5;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 240ms ease, transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: opacity, transform;
+}
+
+.admin-console-taskbar--anim-hide {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.admin-console-taskbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(226, 232, 240, 0.92);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  padding: 0.45rem 0.65rem;
+  cursor: pointer;
+  min-height: 34px;
+  position: relative;
+  user-select: none;
+}
+
+.admin-console-taskbar-btn > span:nth-child(2) {
+  white-space: nowrap;
+}
+
+/* --- DB Explorer --- */
+.admin-db-shell {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.62), rgba(2, 6, 23, 0.34));
+  box-shadow:
+    0 26px 80px rgba(0, 0, 0, 0.32),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+
+.admin-db-shell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.40), rgba(15, 23, 42, 0.10));
+}
+
+.admin-db-shell-title {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-db-shell-k {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.92);
+}
+
+.admin-db-shell-v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(226, 232, 240, 0.94);
+}
+
+.admin-db-shell-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admin-db-shell-hint code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85em;
+  padding: 0.08em 0.35em;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.admin-db-layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 0;
+  align-items: stretch;
+  background: transparent;
+}
+
+@media (max-width: 980px) {
+  .admin-db-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-db-sidebar {
+  position: relative;
+  padding: 14px 12px;
+  background: rgba(2, 6, 23, 0.22);
+  border-right: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+@media (max-width: 980px) {
+  .admin-db-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  }
+}
+
+.admin-db-main {
+  min-width: 0;
+  padding: 14px 14px 16px;
+  background: rgba(0, 0, 0, 0.10);
+}
+
+.admin-db-main-surface {
+  background: rgba(2, 6, 23, 0.32);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 16px;
+  padding: 12px 12px 14px;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.22),
+    0 16px 45px rgba(0, 0, 0, 0.18);
+}
+
+.admin-db-side-section + .admin-db-side-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.10);
+}
+
+.admin-db-side-section {
+  border-radius: 14px;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.34), rgba(15, 23, 42, 0.20));
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.admin-db-side-section + .admin-db-side-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 0;
+}
+
+.admin-db-side-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.admin-db-side-title {
+  font-weight: 650;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.admin-db-side-sub {
+  font-size: 0.85rem;
+}
+
+.admin-db-list {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-db-attach-row {
+  appearance: none;
+  width: 100%;
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(15, 23, 42, 0.24);
+  color: rgba(226, 232, 240, 0.92);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-db-attach-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.admin-db-attach-row:focus-visible {
+  outline: 2px solid rgba(42, 183, 191, 0.65);
+  outline-offset: 2px;
+}
+
+.admin-db-attach-name,
+.admin-db-attach-file {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-db-attach-arrow {
+  opacity: 0.9;
+}
+
+.admin-db-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(15, 23, 42, 0.24);
+  color: rgba(226, 232, 240, 0.92);
+  text-align: left;
+  font: inherit;
+}
+
+button.admin-db-list-item {
+  cursor: pointer;
+}
+
+.admin-db-list-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.admin-db-list-item--active {
+  border-color: rgba(42, 183, 191, 0.55);
+  background: rgba(42, 183, 191, 0.10);
+  box-shadow: inset 0 0 0 1px rgba(42, 183, 191, 0.14);
+}
+
+.admin-db-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  margin: 0 -2px 12px;
+  padding: 2px 2px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.admin-db-tabs::-webkit-scrollbar {
+  height: 0;
+}
+
+.admin-db-panel {
+  min-height: 240px;
+  padding-top: 6px;
+}
+
+.admin-db-tabs .admin-pill {
+  border-radius: 12px 12px 0 0;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.76rem;
+  letter-spacing: 0.01em;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-bottom: 0;
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(226, 232, 240, 0.78);
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 34px;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.admin-db-tabs .admin-pill[aria-selected="true"] {
+  background: rgba(2, 6, 23, 0.78);
+  border-color: rgba(42, 183, 191, 0.34);
+  color: rgba(226, 232, 240, 0.98);
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.32),
+    inset 0 0 0 1px rgba(42, 183, 191, 0.12);
+  margin-bottom: -1px;
+  border-bottom: 1px solid rgba(2, 6, 23, 0.78);
+  z-index: 2;
+}
+
+.admin-db-tabs .admin-pill[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(42, 183, 191, 0.95), rgba(255, 122, 47, 0.85));
+  pointer-events: none;
+}
+
+.admin-db-tabs .admin-pill[aria-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  bottom: -1px;
+  height: 2px;
+  background: rgba(2, 6, 23, 0.78);
+  pointer-events: none;
+}
+
+.admin-db-tabs .admin-pill:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(226, 232, 240, 0.90);
+}
+
+.admin-db-tabs .admin-pill[aria-selected="true"]:hover {
+  background: rgba(2, 6, 23, 0.74);
+}
+
+.admin-db-tabs .admin-pill:focus-visible {
+  outline: 2px solid rgba(42, 183, 191, 0.65);
+  outline-offset: 2px;
+}
+
+.admin-db-er {
+  margin-top: 12px;
+}
+
+.admin-db-er-diagram {
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(2, 6, 23, 0.28);
+  padding: 12px;
+  overflow: auto;
+}
+
+.admin-db-er-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.admin-db-h3 {
+  margin: 12px 0 6px 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.admin-db-h3--spaced {
+  margin-top: 18px;
+}
+
+.admin-db-sqlbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.admin-db-sqlwrap {
+  position: relative;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.admin-db-sql {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 200px;
+  resize: vertical;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.30);
+  color: rgba(226, 232, 240, 0.92);
+  padding: 12px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+}
+
+.admin-db-sql:focus {
+  border-color: rgba(42, 183, 191, 0.55);
+  box-shadow: 0 0 0 3px rgba(42, 183, 191, 0.12);
+}
+
+.admin-db-suggest {
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  background: rgba(2, 6, 23, 0.94);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  padding: 6px;
+  z-index: 50;
+  max-height: 260px;
+  overflow: auto;
+  min-width: 220px;
+  max-width: min(520px, calc(100% - 24px));
+}
+
+.admin-db-suggest-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.admin-db-suggest-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.admin-db-suggest-item--active {
+  background: rgba(42, 183, 191, 0.10);
+  border-color: rgba(42, 183, 191, 0.35);
+}
+
+.admin-db-suggest-k {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 12.5px;
+  color: rgba(226, 232, 240, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-db-suggest-tag {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.9);
+  white-space: nowrap;
+}
+
+.admin-db-limit {
+  width: 92px;
+  margin-left: 6px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.28);
+  color: rgba(226, 232, 240, 0.92);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+}
+
+/* --- App config editor --- */
+.admin-appconfig-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+@media (max-width: 980px) {
+  .admin-appconfig-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-appconfig-card {
+  background: rgba(2, 6, 23, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(10px);
+  min-width: 0;
+}
+
+/* Extra breathing room for data tools blocks under section header. */
+.admin-section > .admin-appconfig-card.admin-data-tools {
+  margin-top: 14px;
+}
+
+.admin-appconfig-card--full {
+  grid-column: 1 / -1;
+}
+
+.admin-appconfig-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+@media (max-width: 520px) {
+  .admin-appconfig-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-appconfig-select,
+.admin-appconfig-input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--ink);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+}
+
+.admin-appconfig-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.admin-appconfig-field {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.admin-appconfig-field:last-child {
+  border-bottom: 0;
+}
+
+.admin-appconfig-k {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 12.5px;
+  color: rgba(226, 232, 240, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-appconfig-num {
+  max-width: 220px;
+}
+
+/* --- Market config editor (modern) --- */
+.admin-marketcfg {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+@media (max-width: 980px) {
+  .admin-marketcfg {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-marketcfg-card {
+  background: rgba(2, 6, 23, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+  min-width: 0;
+}
+
+.admin-marketcfg-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 980px) {
+  .admin-marketcfg-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-marketcfg-field {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.22);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.admin-marketcfg-field:last-child {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.admin-marketcfg-label {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-marketcfg-label strong {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.admin-marketcfg-help {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.admin-marketcfg-control {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-marketcfg-control .admin-appconfig-input,
+.admin-marketcfg-control .admin-db-sql {
+  width: 100%;
+}
+
+.admin-marketcfg-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.35);
+  width: 100%;
+  justify-content: flex-start;
+  user-select: none;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.admin-marketcfg-toggle input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.admin-marketcfg-toggle span {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.admin-marketcfg-summary {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  padding: 10px 0;
+}
+
+.admin-marketcfg-advanced-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* Status text next to "Save" button */
+.admin-marketcfg-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(560px, 55vw);
+}
+
+/* JSON syntax highlight overlay (textarea stays editable) */
+.admin-json-editor {
+  position: relative;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.4);
+  overflow: hidden;
+}
+
+.admin-json-pretty {
+  margin: 0;
+  padding: 12px;
+  min-height: 750px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+}
+
+.admin-json-textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: transparent; /* hide raw text, show highlighted pre below */
+  caret-color: var(--ink);
+  padding: 12px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow: auto;
+}
+
+.admin-json-textarea::selection {
+  background: rgba(42, 183, 191, 0.22);
+}
+
+.admin-json-k {
+  color: #7dd3fc; /* keys */
+}
+.admin-json-s {
+  color: #fda4af; /* strings */
+}
+.admin-json-n {
+  color: #fdba74; /* numbers */
+}
+.admin-json-b {
+  color: #a7f3d0; /* booleans */
+}
+.admin-json-null {
+  color: #cbd5e1; /* null */
+  opacity: 0.85;
+}
+.admin-json-p {
+  color: rgba(148, 163, 184, 0.9); /* punctuation */
+}
+
+.admin-console-dock-actions {
+  margin-left: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.admin-poller-pane-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.admin-console-dock-action {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(226, 232, 240, 0.85);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.admin-console-dock-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.admin-console-dock-action:focus-visible {
+  outline: 2px solid rgba(42, 183, 191, 0.65);
+  outline-offset: 2px;
+}
+
+.admin-console-dock-action--stop {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.30);
+}
+
+.admin-console-dock-action--stop:hover {
+  background: rgba(248, 113, 113, 0.18);
+}
+
+.admin-console-dock-action--restart {
+  background: rgba(42, 183, 191, 0.12);
+  border-color: rgba(42, 183, 191, 0.32);
+}
+
+.admin-console-dock-action--restart:hover {
+  background: rgba(42, 183, 191, 0.18);
+}
+
+.admin-console-dock-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: grayscale(0.2);
+}
+
+.admin-console-taskbar-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.admin-console-taskbar-btn--closed {
+  opacity: 0.85;
+  border-style: dashed;
+}
+
+.admin-console-taskbar-btn--open {
+  background: rgba(42, 183, 191, 0.10);
+  border-color: rgba(42, 183, 191, 0.35);
+}
+
+.admin-console-taskbar-btn--open::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 6px;
+  height: 6px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.72);
+  box-shadow: 0 0 0 2px rgba(11, 13, 16, 0.55);
+}
+
+.admin-console-taskbar-btn--minimized {
+  opacity: 0.95;
+}
+
+.admin-console-taskbar-btn:focus-visible {
+  outline: 2px solid rgba(42, 183, 191, 0.65);
+  outline-offset: 2px;
+}
+
+.admin-console-taskbar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.admin-console-toolbar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  background: #0b0d10;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  pointer-events: auto;
+}
+
+.admin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.35rem 0.55rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.admin-pill:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.admin-pill[aria-pressed="true"] {
+  border-color: rgba(42, 183, 191, 0.55);
+  background: rgba(42, 183, 191, 0.14);
+  color: #d1fae5;
+}
+
+.admin-pill--warn[aria-pressed="true"] {
+  border-color: rgba(250, 204, 21, 0.6);
+  background: rgba(250, 204, 21, 0.12);
+  color: #fde68a;
+}
+
+.admin-pill--error[aria-pressed="true"] {
+  border-color: rgba(248, 113, 113, 0.6);
+  background: rgba(248, 113, 113, 0.12);
+  color: #fecaca;
+}
+
+.admin-pill-input {
+  min-width: min(220px, 55vw);
+  flex: 1 1 220px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: #e2e8f0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  padding: 0.38rem 0.6rem;
+  outline: none;
+}
+
+.admin-pill-input::placeholder {
+  color: rgba(226, 232, 240, 0.55);
+}
+
+.admin-console {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  box-sizing: border-box;
+  height: var(--admin-log-console-body-h);
+  min-height: var(--admin-log-console-body-h);
+  max-height: var(--admin-log-console-body-h);
+  overflow: auto;
+  padding: 0.75rem 1rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #d1fae5;
+  background: #0b0d10;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 100% 1.45em;
+  background-attachment: local;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-panel-body {
+  box-sizing: border-box;
+  height: calc(var(--admin-log-console-body-h) + 1px);
+  overflow: auto;
+  padding: 0.75rem 0.85rem;
+  background: #0b0d10;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.admin-panel-hint {
+  margin: 0 0 0.5rem;
+}
+
+.admin-stats-grid.admin-stats-grid--panel {
+  margin-top: 0;
+  gap: 0.6rem;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+}
+
+.admin-stats-grid--panel .admin-stats-card {
+  padding: 0.65rem 0.75rem;
+}
+
+.admin-stats-grid--panel .admin-stats-v {
+  font-size: 0.98rem;
+}
+
+.admin-stats-grid--panel .admin-stats-card--cpu,
+.admin-stats-grid--panel .admin-stats-card--uptime {
+  grid-column: span 5;
+}
+
+.admin-stats-grid--panel .admin-stats-card--sinceDeploy {
+  grid-column: span 3;
+}
+
+.admin-stats-grid--panel .admin-stats-card--swap {
+  grid-column: span 7;
+}
+
+.admin-stats-grid--panel .admin-stats-card--ram,
+.admin-stats-grid--panel .admin-stats-card--net {
+  grid-column: span 10;
+}
+
+.log-line {
+  display: inline;
+}
+
+.log-line--info {
+  color: #d1fae5;
+}
+
+.log-line--warn {
+  color: #fde68a;
+}
+
+.log-line--error {
+  color: #fecaca;
+}
+
+.log-line--muted {
+  color: rgba(226, 232, 240, 0.6);
+}
+
+.admin-map {
+  height: 380px;
+  min-height: 220px;
+  margin-top: 1rem;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  touch-action: manipulation;
+  min-width: 0;
+}
+
+.admin-table-wrap {
+  margin-top: 1rem;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.admin-table {
+  width: 100%;
+  min-width: 320px;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.admin-table td:nth-child(1) code {
+  word-break: break-all;
+}
+
+.admin-table th {
+  background: var(--surface-strong);
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.admin-table-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-table-sort::after {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 0.28rem solid transparent;
+  border-right: 0.28rem solid transparent;
+  border-top: 0.36rem solid currentColor;
+  opacity: 0.28;
+  transform: translateY(0.08rem);
+}
+
+.admin-table th[aria-sort="ascending"] .admin-table-sort::after {
+  opacity: 0.92;
+  transform: rotate(180deg) translateY(-0.08rem);
+}
+
+.admin-table th[aria-sort="descending"] .admin-table-sort::after {
+  opacity: 0.92;
+}
+
+.admin-table-sort.is-active {
+  color: var(--ink);
+}
+
+.admin-table-sort:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 78%, white 22%);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.admin-table tbody tr:hover {
+  background: rgba(42, 183, 191, 0.06);
+}
+
+.admin-table code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85em;
+}
+
+.admin-footer {
+  padding: 1.5rem clamp(1rem, 4vw, 2.5rem) 2.5rem;
+}
+
+.admin-footer .admin-muted {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: clamp(0.8rem, 3.2vw, 0.9rem);
+  line-height: 1.5;
+}
+
+.admin-stats-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.admin-stats-card--cpu {
+  grid-column: span 6;
+}
+
+.admin-stats-card--ram {
+  grid-column: 1 / -1;
+}
+
+.admin-stats-card--uptime {
+  grid-column: span 6;
+}
+
+.admin-stats-card--sinceDeploy {
+  grid-column: 1 / -1;
+}
+
+.admin-stats-card--swap {
+  grid-column: 1 / -1;
+}
+
+.admin-stats-card--net {
+  grid-column: span 12;
+}
+
+.admin-stats-card {
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: var(--shadow);
+  padding: 0.75rem 0.85rem;
+  min-width: 0;
+}
+
+.admin-stats-k {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.admin-stats-v {
+  margin: 0.35rem 0 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1.05rem;
+  color: rgba(226, 232, 240, 0.94);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.admin-stats-v strong {
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.98);
+}
+
+.admin-stats-list {
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.6rem 0.75rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  color: rgba(226, 232, 240, 0.88);
+  min-width: 0;
+}
+
+.admin-stats-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.35rem 0;
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.22);
+}
+
+.admin-stats-row:last-child {
+  border-bottom: none;
+}
+
+.admin-stats-row code {
+  font-family: inherit;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+@media (max-width: 768px) {
+  .admin-header {
+    gap: 1rem;
+    padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  }
+
+  .admin-header-nav,
+  .admin-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .admin-header-nav .admin-btn,
+  .admin-header-actions .admin-btn {
+    flex: 1;
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+
+  .admin-header h1 {
+    font-size: clamp(1.35rem, 5vw, 1.75rem);
+  }
+
+  .admin-section-head-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-section-head-row .admin-header-actions {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .admin-section-head-row .admin-btn {
+    width: 100%;
+    min-height: 44px;
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .admin-console-split {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .admin-split-handle {
+    display: none;
+  }
+
+  /* Force one console per row on mobile (avoid ratio-based flex collapse). */
+  .admin-console-split .admin-console-wrap {
+    width: 100%;
+    flex: 0 0 auto !important;
+    height: calc(var(--admin-log-console-body-h) + var(--admin-log-console-chrome-h));
+    min-height: calc(var(--admin-log-console-body-h) + var(--admin-log-console-chrome-h));
+    max-height: calc(var(--admin-log-console-body-h) + var(--admin-log-console-chrome-h));
+  }
+
+  .admin-stats-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  /* Compact stats panel so it fits the fixed mobile pane height. */
+  .admin-stats-grid.admin-stats-grid--panel {
+    gap: 0.5rem;
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+  }
+
+  .admin-panel-body {
+    padding: 0.65rem 0.7rem;
+  }
+
+  .admin-stats-grid--panel .admin-stats-card {
+    padding: 0.55rem 0.65rem;
+  }
+
+  .admin-stats-grid--panel .admin-stats-k {
+    font-size: 0.7rem;
+  }
+
+  .admin-stats-grid--panel .admin-stats-v {
+    margin-top: 0.25rem;
+    font-size: 0.92rem;
+  }
+
+  /* Use the available width better on mobile: sinceDeploy + swap share a row. */
+  .admin-stats-grid--panel .admin-stats-card--cpu,
+  .admin-stats-grid--panel .admin-stats-card--uptime {
+    grid-column: span 5;
+  }
+
+  .admin-stats-grid--panel .admin-stats-card--sinceDeploy {
+    grid-column: span 3;
+  }
+
+  .admin-stats-grid--panel .admin-stats-card--swap {
+    grid-column: span 7;
+  }
+
+  .admin-stats-grid--panel .admin-stats-card--ram,
+  .admin-stats-grid--panel .admin-stats-card--net {
+    grid-column: span 10;
+  }
+
+  /* Keep toolbar a fixed-height row; scroll horizontally instead of wrapping. */
+  .admin-console-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-console-toolbar > * {
+    flex: 0 0 auto;
+  }
+
+  .admin-stats-card--cpu,
+  .admin-stats-card--uptime {
+    grid-column: span 3;
+  }
+
+  .admin-stats-card--ram,
+  .admin-stats-card--swap {
+    grid-column: span 6;
+  }
+
+  .admin-stats-card--net {
+    grid-column: span 6;
+  }
+
+  /* (no subgrid on mobile; cards only) */
+
+  /* Mobile dock: ensure 3 items always fit. */
+  .admin-console-taskbar {
+    justify-content: stretch;
+    gap: 0.45rem;
+    padding: 0.55rem 0.6rem;
+  }
+
+  .admin-console-taskbar-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.42rem 0.5rem;
+    font-size: 0.7rem;
+  }
+
+  .admin-console-taskbar-btn > span:nth-child(2) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .admin-poller-pane-controls .admin-console-dock-action {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --admin-log-console-body-h: 320px;
+  }
+
+  .admin-section {
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  }
+
+  .admin-header {
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  }
+
+  .admin-hint {
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  }
+
+  .admin-footer {
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .admin-console {
+    font-size: 0.7rem;
+  }
+
+  .admin-map {
+    height: min(52vh, 320px);
+    min-height: 200px;
+  }
+
+  .admin-table {
+    font-size: 0.8rem;
+  }
+
+  .admin-table th,
+  .admin-table td {
+    padding: 0.45rem 0.5rem;
+  }
+
+  .admin-muted {
+    font-size: 0.85rem;
+  }
+
+  #visitorStats {
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+}
+
+@media (max-width: 380px) {
+  .admin-console-titlebar .admin-console-title {
+    font-size: 0.65rem;
+  }
+}

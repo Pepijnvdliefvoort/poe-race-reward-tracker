@@ -1,13 +1,7 @@
-# To do feature list
-
-## Operational
-- [ ] Admin panel: Web UI to add/remove items and adjust settings without SSH/config edits
-- [ ] Metrics dashboard: Track API health, request counts, error rates, uptime
-- [ ] Log viewer: In-browser log inspection for debugging
-- [ ] Polling statistics: Show how many items checked, success/failure rates
-
-## Code Quality & DevOps
-- [ ] Test coverage: Add unit/integration tests for the poller and API
-- [ ] API versioning: Prepare for breaking changes in the PoE trade API
-- [ ] Docker containerization: Simplify deployment beyond the current systemd setup
-- [ ] Monitoring/alerting: Add uptime checks and automatic restart on crash
+# TODO
+- Backtesting Mode
+	Replay historical snapshots and evaluate “if I bought alerts from last 30/60/90 days, what would happen?” This will quickly tune alert
+- Test Suite Expansion
+	Unit tests for pricing/inference rules and integration tests for API responses to prevent regressions.
+- ML-assisted ranking
+	Train a simple model on historical outcomes to predict “chance of profitable flip in N days.”

@@ -7,10 +7,13 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/opt/poe-market-flips
-ExecStart=/opt/poe-market-flips/.venv/bin/python web/server.py
+ExecStart=/opt/poe-market-flips/.venv/bin/python -m server.server
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=POE_POLLER_RESTART_STRATEGY=systemd
+Environment=POE_POLLER_SYSTEMD_SERVICE=poe-market-poller
+EnvironmentFile=-/etc/poe-market-flips/secrets.env
 
 [Install]
 WantedBy=multi-user.target

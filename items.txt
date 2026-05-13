@@ -1,129 +1,130 @@
 # Individual alt arts
-Tabula Rasa
-Queen's Decree
-Storm Cloud
-Headhunter
-Alpha's Howl
-Demigod's Stride
-Demigod's Touch
-Demigod's Immortality
-Demigod's Triumph
-Demigod's Bounty
-Demigod's Eye
-Demigod's Beacon
-Demigod's Dominance
-Talisman of the Victor
-Demigod's Presence|normal
-Demigod's Stride|normal
-Demigod's Immortality|normal
-Demigod's Triumph|normal
-Demigod's Bounty|normal
-Demigod's Eye|normal
-Demigod's Beacon|normal
-Demigod's Dominance|normal
-Talisman of the Victor|normal
-Atziri's Mirror
-Astramentis
-Taryn's Shiver
-Carcass Jack
-Auxium
-Void Battery
-Berek's Respite
-The Taming
-Voll's Devotion
-Taste of Hate
-Warped Timepiece
-Emberwake
-Bloodgrip
-Soulthirst
-Winterheart
-Dream Fragments
-Rainbowstride
-Hrimnor's Resolve
-Perandus Signet
-Ming's Heart
-Starkonja's Head
-Saffell's Frame
-Andvarius
-Daresso's Salute
-Bino's Kitchen Knife
-Rathpith Globe
-Shadows and Dust
-Soul Taker
-Call of the Brotherhood
-Natural Hierarchy
-Windscream
-Divinarius
-Sidhebreath
-Berek's Grip
-Ungil's Gauche
-Kikazaru
-Rumi's Concoction
-Doedre's Damning
-Malachai's Artifice
-Rashkaldor's Patience
-The Blood Dance
-Lavianga's Spirit
-Dyadian Dawn
-Victario's Acuity
-Facebreaker
-Reaper's Pursuit
-Atziri's Foible
-Le Heup of All
-Meginord's Girdle
-Thief's Torment
-Carnage Heart
-Sundance
-Cloak of Flame
-Divination Distillate
-Immortal Flesh
-Goldrim
-Death's Harp
-The Anvil
-Geofri's Baptism
-Pyre
-Cybil's Paw
-Maligaro's Virtuosity
-Edge of Madness
-Crest of Perandus
-The Whispering Ice
-Tear of Purity
-Blood of Corruption
-Eye of Chayula
-The Searing Touch
-Gifts from Above
-Death Rush
-Prismatic Eclipse
-The Three Dragons
-Brightbeak
-Fairgraves' Tricorne
-Goldwyrm
-Thousand Ribbons
-Berek's Pass
-Shavronne's Pace
-Quill Rain
-Night's Hold
-Sin Trek
-Heatshiver
-Aurumvorax
-Blackgleam
-Pillar of the Caged God
-Shiversting
-Redbeak
-Mindspiral
-Wanderlust
-Ungil's Harmony
-The Blood Thorn
-The Princess
-Asphyxia's Wrath
-Stone of Lazhwar
-Wurm's Molt
-Perandus Blazon
-Blackheart
-The Ignomon
-Karui Ward
-Kaom's Sign
-Mokou's Embrace
-Fencoil
-Ngamahu Tiki
-Lifesprig
+Tabula Rasa|aa|Body Armour
+Queen's Decree|aa|Two-Handed Sword
+Storm Cloud|aa|Bow
+Headhunter|aa|Belt
+Alpha's Howl|aa|Helmet
+Demigod's Stride|aa|Boots
+Demigod's Touch|aa|Gloves
+Demigod's Immortality|aa|Helmet
+Demigod's Triumph|aa|Helmet
+Demigod's Bounty|aa|Belt
+Demigod's Eye|aa|Ring
+Demigod's Beacon|aa|Shield
+Demigod's Dominance|aa|Body Armour
+Talisman of the Victor|aa|Amulet
+Demigod's Presence|normal|Amulet
+Demigod's Authority|normal|One-Handed Sword
+Demigod's Stride|normal|Boots
+Demigod's Immortality|normal|Helmet
+Demigod's Triumph|normal|Helmet
+Demigod's Bounty|normal|Belt
+Demigod's Eye|normal|Ring
+Demigod's Beacon|normal|Shield
+Demigod's Dominance|normal|Body Armour
+Talisman of the Victor|normal|Amulet
+Atziri's Mirror|aa|Shield
+Astramentis|aa|Amulet
+Taryn's Shiver|aa|Staff
+Carcass Jack|aa|Body Armour
+Auxium|aa|Belt
+Void Battery|aa|Wand
+Berek's Respite|aa|Ring
+The Taming|aa|Ring
+Voll's Devotion|aa|Amulet
+Taste of Hate|aa|Sapphire Flask
+Warped Timepiece|aa|Amulet
+Emberwake|aa|Ring
+Bloodgrip|aa|Amulet
+Soulthirst|aa|Belt
+Winterheart|aa|Amulet
+Dream Fragments|aa|Ring
+Rainbowstride|aa|Boots
+Hrimnor's Resolve|aa|Helmet
+Perandus Signet|aa|Ring
+Ming's Heart|aa|Ring
+Starkonja's Head|aa|Helmet
+Saffell's Frame|aa|Shield
+Andvarius|aa|Ring
+Daresso's Salute|aa|Amulet
+Bino's Kitchen Knife|aa|Dagger
+Rathpith Globe|aa|Shield
+Shadows and Dust|aa|Gloves
+Soul Taker|aa|One-Handed Axe
+Call of the Brotherhood|aa|Ring
+Natural Hierarchy|aa|Amulet
+Windscream|aa|Boots
+Divinarius|aa|Dagger
+Sidhebreath|aa|Amulet
+Berek's Grip|aa|Ring
+Ungil's Gauche|aa|Dagger
+Kikazaru|aa|Ring
+Rumi's Concoction|aa|Granite Flask
+Doedre's Damning|aa|Ring
+Malachai's Artifice|aa|Ring
+Rashkaldor's Patience|aa|Amulet
+The Blood Dance|aa|Boots
+Lavianga's Spirit|aa|Sanctified Mana Flask
+Dyadian Dawn|aa|Belt
+Victario's Acuity|aa|Amulet
+Facebreaker|aa|Gloves
+Reaper's Pursuit|aa|Two-Handed Axe
+Atziri's Foible|aa|Amulet
+Le Heup of All|aa|Ring
+Meginord's Girdle|aa|Belt
+Thief's Torment|aa|Ring
+Carnage Heart|aa|Amulet
+Sundance|aa|Boots
+Cloak of Flame|aa|Body Armour
+Divination Distillate|aa|Hybrid Flask
+Immortal Flesh|aa|Belt
+Goldrim|aa|Helmet
+Death's Harp|aa|Bow
+The Anvil|aa|Amulet
+Geofri's Baptism|aa|Two-Handed Mace
+Pyre|aa|Ring
+Cybil's Paw|aa|Claw
+Maligaro's Virtuosity|aa|Gloves
+Edge of Madness|aa|Two-Handed Sword
+Crest of Perandus|aa|Shield
+The Whispering Ice|aa|Staff
+Tear of Purity|aa|Amulet
+Blood of Corruption|aa|Amulet
+Eye of Chayula|aa|Amulet
+The Searing Touch|aa|Staff
+Gifts from Above|aa|Ring
+Death Rush|aa|Ring
+Prismatic Eclipse|aa|One-Handed Sword
+The Three Dragons|aa|Helmet
+Brightbeak|aa|One-Handed Mace
+Fairgraves' Tricorne|aa|Helmet
+Goldwyrm|aa|Boots
+Thousand Ribbons|aa|Body Armour
+Berek's Pass|aa|Ring
+Shavronne's Pace|aa|Boots
+Quill Rain|aa|Bow
+Night's Hold|aa|Ring
+Sin Trek|aa|Boots
+Heatshiver|aa|Helmet
+Aurumvorax|aa|One-Handed Sword
+Blackgleam|aa|Quiver
+Pillar of the Caged God|aa|Staff
+Shiversting|aa|Two-Handed Sword
+Redbeak|aa|One-Handed Sword
+Mindspiral|aa|Helmet
+Wanderlust|aa|Boots
+Ungil's Harmony|aa|Amulet
+The Blood Thorn|aa|Staff
+The Princess|aa|One-Handed Sword
+Asphyxia's Wrath|aa|Quiver
+Stone of Lazhwar|aa|Amulet
+Wurm's Molt|aa|Belt
+Perandus Blazon|aa|Belt
+Blackheart|aa|Ring
+The Ignomon|aa|Amulet
+Karui Ward|aa|Amulet
+Kaom's Sign|aa|Ring
+Mokou's Embrace|aa|Ring
+Fencoil|aa|Staff
+Ngamahu Tiki|aa|Amulet
+Lifesprig|aa|Wand

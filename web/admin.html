@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Admin — PoE Race Rewards</title>
+    <meta name="robots" content="noindex,nofollow" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <link rel="stylesheet" href="/css/variables.css" />
+    <link rel="stylesheet" href="/css/admin.css?v=20260429-1" />
+    <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
+    <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script type="module" src="/js/admin.js"></script>
+  </head>
+  <body>
+    <div class="admin-bg" aria-hidden="true"></div>
+    <header class="admin-header">
+      <div class="admin-header-brand">
+        <p class="admin-eyebrow">Operations</p>
+        <h1>Admin panel</h1>
+      </div>
+      <nav class="admin-header-nav" aria-label="Site navigation">
+        <a href="/admin/db" class="admin-btn">DB explorer</a>
+        <a href="/compare" class="admin-btn">Compare</a>
+        <a href="/" class="admin-btn">Dashboard</a>
+      </nav>
+    </header>
+
+    <p id="adminAuthHint" class="admin-hint"></p>
+
+    <section class="admin-section">
+      <div class="admin-section-head">
+        <h2>Logs</h2>
+        <p class="admin-muted">Server and poller output (tee to <code>logs/</code>).</p>
+      </div>
+      <div class="admin-console-split" id="adminLogSplit" aria-label="Log split view">
+        <div class="admin-console-wrap" id="serverConsolePane">
+          <div class="admin-console-titlebar">
+            <button
+              class="admin-console-dot admin-console-dot--red"
+              type="button"
+              data-console="server"
+              data-action="close"
+              aria-label="Close server console"
+              title="Close (disabled for server)"
+              disabled
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--yellow"
+              type="button"
+              data-console="server"
+              data-action="minimize"
+              aria-label="Minimize server console"
+              title="Minimize"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--green"
+              type="button"
+              data-console="server"
+              data-action="maximize"
+              aria-label="Maximize server console"
+              title="Maximize"
+            ></button>
+            <span class="admin-console-title">server.log</span>
+          </div>
+          <div class="admin-console-toolbar" id="serverConsoleToolbar" aria-label="Server log filters"></div>
+          <pre id="serverConsole" class="admin-console" aria-live="polite"></pre>
+        </div>
+
+        <div
+          class="admin-split-handle"
+          id="adminLogSplitHandleA"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize server and poller panes"
+          tabindex="0"
+        ></div>
+
+        <div class="admin-console-wrap" id="pollerConsolePane">
+          <div class="admin-console-titlebar">
+            <button
+              class="admin-console-dot admin-console-dot--red"
+              type="button"
+              data-console="poller"
+              data-action="close"
+              aria-label="Close poller console"
+              title="Close"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--yellow"
+              type="button"
+              data-console="poller"
+              data-action="minimize"
+              aria-label="Minimize poller console"
+              title="Minimize"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--green"
+              type="button"
+              data-console="poller"
+              data-action="maximize"
+              aria-label="Maximize poller console"
+              title="Maximize"
+            ></button>
+            <span class="admin-console-title">poller.log</span>
+          </div>
+          <div class="admin-console-toolbar" id="pollerConsoleToolbar" aria-label="Poller log filters"></div>
+          <pre id="pollerConsole" class="admin-console" aria-live="polite"></pre>
+        </div>
+
+        <div
+          class="admin-split-handle"
+          id="adminLogSplitHandleB"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize poller and stats panes"
+          tabindex="0"
+        ></div>
+
+        <div class="admin-console-wrap" id="statsConsolePane">
+          <div class="admin-console-titlebar">
+            <button
+              class="admin-console-dot admin-console-dot--red"
+              type="button"
+              data-console="stats"
+              data-action="close"
+              aria-label="Close stats panel"
+              title="Close"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--yellow"
+              type="button"
+              data-console="stats"
+              data-action="minimize"
+              aria-label="Minimize stats panel"
+              title="Minimize"
+            ></button>
+            <button
+              class="admin-console-dot admin-console-dot--green"
+              type="button"
+              data-console="stats"
+              data-action="maximize"
+              aria-label="Maximize stats panel"
+              title="Maximize"
+            ></button>
+            <span class="admin-console-title">stats</span>
+          </div>
+          <div class="admin-console-toolbar" id="statsConsoleToolbar" aria-label="Stats panel toolbar"></div>
+          <div class="admin-panel-body" aria-label="Server statistics">
+            <p id="adminStatsHint" class="admin-muted admin-panel-hint" aria-live="polite"></p>
+            <div class="admin-stats-grid admin-stats-grid--panel" id="adminStatsGrid"></div>
+          </div>
+        </div>
+
+        <div class="admin-console-empty" id="adminLogEmpty" hidden>No console active</div>
+      </div>
+      <div class="admin-console-taskbar" id="adminLogTaskbar" aria-label="Console dock"></div>
+    </section>
+
+    <section class="admin-section">
+      <div class="admin-section-head admin-section-head-row">
+        <div>
+          <h2>App config</h2>
+          <p class="admin-muted">
+            This edits <code>app_config.&lt;key&gt;</code> (SQLite). Select a key to edit, then save.
+          </p>
+        </div>
+        <div class="admin-header-actions">
+          <label class="admin-muted" style="display: inline-flex; gap: 8px; align-items: center">
+            <span>Key</span>
+            <select id="marketCfgKey" class="admin-appconfig-input" style="min-width: 160px">
+              <option value="market">market</option>
+              <option value="db_export">db_export</option>
+            </select>
+          </label>
+          <span id="marketCfgHint" class="admin-muted admin-marketcfg-status" aria-live="polite"></span>
+          <button id="marketCfgSaveBtn" class="admin-btn" type="button">Save</button>
+        </div>
+      </div>
+
+      <div class="admin-marketcfg" aria-label="Market config editor">
+        <div class="admin-marketcfg-card">
+          <div id="marketCfgFields" class="admin-marketcfg-fields"></div>
+        </div>
+
+        <div class="admin-marketcfg-card">
+          <details class="admin-marketcfg-advanced" open>
+            <summary class="admin-marketcfg-summary">Advanced JSON</summary>
+            <div class="admin-json-editor" aria-label="JSON editor">
+              <pre id="marketCfgJsonPretty" class="admin-json-pretty" aria-hidden="true"></pre>
+              <textarea
+                id="marketCfgJson"
+                class="admin-json-textarea"
+                spellcheck="false"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+              ></textarea>
+            </div>
+            <div class="admin-marketcfg-advanced-actions">
+              <button id="marketCfgFormatBtn" class="admin-btn admin-btn-ghost" type="button">Format</button>
+              <button id="marketCfgReloadBtn" class="admin-btn admin-btn-ghost" type="button">Reload</button>
+            </div>
+            <p class="admin-muted" style="margin-top: 10px">
+              Tip: press <code>Ctrl+S</code> / <code>Cmd+S</code> in this box to save.
+            </p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="admin-section">
+      <div class="admin-section-head">
+        <h2>Visitors</h2>
+        <p class="admin-muted" id="visitorStats"></p>
+      </div>
+      <div id="visitorMap" class="admin-map" role="img" aria-label="Visitor locations map"></div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="visitorTable">
+          <thead>
+            <tr>
+              <th aria-sort="none">
+                <button type="button" class="admin-table-sort" data-visitor-sort-key="ip">IP address</button>
+              </th>
+              <th aria-sort="descending">
+                <button type="button" class="admin-table-sort" data-visitor-sort-key="visits">Visits</button>
+              </th>
+              <th aria-sort="none">
+                <button type="button" class="admin-table-sort" data-visitor-sort-key="lastSeen">Last seen</button>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="visitorTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-section">
+      <div class="admin-section-head admin-section-head-row">
+        <div>
+          <h2>Data</h2>
+          <p class="admin-muted">Clear market data from SQLite, or restart the poller process.</p>
+        </div>
+        <div class="admin-header-actions">
+          <button id="runDbExportBtn" class="admin-btn admin-btn-ghost" type="button">Run DB export now</button>
+          <button id="downloadDbBtn" class="admin-btn" type="button">Download DB file</button>
+          <button id="clearDataBtn" class="admin-btn admin-btn-danger" type="button">Clear data</button>
+        </div>
+      </div>
+      <p id="adminDataHint" class="admin-muted" aria-live="polite"></p>
+      <p id="adminPollerHint" class="admin-muted" aria-live="polite"></p>
+
+      <div class="admin-appconfig-card admin-data-tools" aria-label="Market data tools">
+        <h3 style="margin: 0 0 6px">Sale moderation</h3>
+        <p class="admin-muted" style="margin: 0 0 10px">
+          Remove persisted <code>sales</code> rows for a specific item (or variant). This affects the sales chart and any features based on
+          recorded sales.
+        </p>
+
+        <div class="admin-appconfig-row">
+          <label class="admin-appconfig-k" for="adminSalesItemInput">Item</label>
+          <div>
+            <input
+              id="adminSalesItemInput"
+              class="admin-appconfig-input"
+              list="adminSalesItemList"
+              placeholder="Type to search…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <datalist id="adminSalesItemList"></datalist>
+          </div>
+        </div>
+
+        <div class="admin-appconfig-row">
+          <span class="admin-appconfig-k">Preview</span>
+          <p id="adminSalesPreview" class="admin-muted" style="margin: 0">Loading…</p>
+        </div>
+
+        <div class="admin-appconfig-row">
+          <label class="admin-appconfig-k" for="adminSalesEventSelect">Recorded sale</label>
+          <div>
+            <select id="adminSalesEventSelect" class="admin-appconfig-input" disabled>
+              <option value="">Select a variant first…</option>
+            </select>
+            <p id="adminSalesEventPreview" class="admin-muted" style="margin: 6px 0 0">Select a sale to resend.</p>
+          </div>
+        </div>
+
+        <div class="admin-appconfig-actions">
+          <button id="adminWipeVariantBtn" class="admin-btn admin-btn-danger" type="button" disabled>
+            Delete all sales + fingerprints
+          </button>
+          <button id="adminResendSaleAlertBtn" class="admin-btn admin-btn-ghost" type="button" disabled>
+            Resend selected sale alert
+          </button>
+          <span id="adminSalesDeleteHint" class="admin-muted" aria-live="polite"></span>
+        </div>
+      </div>
+    </section>
+
+    <footer class="admin-footer">
+      <p class="admin-muted">
+        Authentication uses <code>ADMIN_TOKEN</code> from the server environment (e.g. GitHub Actions secret
+        <code>ADMIN_TOKEN</code> written to the VPS on deploy). Open
+        <code>/admin?token=…</code> <strong>once</strong> with that value; the server sets an HttpOnly cookie so you
+        can use <code>/admin</code> afterward. There is no token field on this page.
+      </p>
+    </footer>
+  </body>
+</html>

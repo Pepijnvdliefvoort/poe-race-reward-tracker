@@ -1,10 +1,21 @@
 # Replace with your own hostname (recommended) or PUBLIC_IP.sslip.io.
 178.104.113.149.sslip.io {
-    reverse_proxy 127.0.0.1:8080
     encode zstd gzip
     header {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "SAMEORIGIN"
         Referrer-Policy "strict-origin-when-cross-origin"
     }
+
+    # Serve static files directly (more reliable than proxying many small requests
+    # through the Python server).
+    @static path /assets/* /css/* /js/* /favicon* /robots.txt
+    handle @static {
+        root * /opt/poe-market-flips/web
+        file_server
+        header Cache-Control "public, max-age=604800, immutable"
+    }
+
+    # Everything else (HTML + API) goes to the app.
+    reverse_proxy 127.0.0.1:8080
 }

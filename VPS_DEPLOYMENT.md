@@ -41,14 +41,21 @@ python3 -m venv .venv
 
 ## 5. Install And Enable systemd Services
 
+The dashboard unit runs the HTTP server from the repo’s **`server/`** package (entrypoint **`python -m server.server`**) with `WorkingDirectory=/opt/poe-market-flips`. Static assets are served from **`web/`** (unchanged). Caddy still reverse-proxies to `127.0.0.1:8080`.
+
+If you previously installed a unit that used **`web/server.py`**, replace it by copying the current unit file again (see [§9](#9-updating-after-new-push) or the snippet below), then `daemon-reload` and restart.
+
 ```bash
 sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 
-# Optional: set Discord webhook secret for alerts
+# Optional: set Discord webhook secrets for alerts / est. sales
 sudo mkdir -p /etc/poe-market-flips
 sudo sh -c 'cat > /etc/poe-market-flips/secrets.env << EOF
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REPLACE_ME
+DISCORD_WEBHOOK_URL_SALES=https://discord.com/api/webhooks/REPLACE_ME_SALES
+DISCORD_WEBHOOK_URL_REPRICES=https://discord.com/api/webhooks/REPLACE_ME_REPRICES
+DISCORD_WEBHOOK_URL_OPS=https://discord.com/api/webhooks/REPLACE_ME_OPS
 EOF'
 sudo chmod 600 /etc/poe-market-flips/secrets.env
 
@@ -63,6 +70,9 @@ Edit Caddy template and set your hostname:
 
 - Best: your own domain like `poe.example.com`
 - Good free option: `YOUR_SERVER_IP.sslip.io`
+
+This project’s Caddy config is set up to serve static files (`/assets`, `/css`, `/js`) directly from
+`/opt/poe-market-flips/web` (more reliable, and avoids proxying lots of small icon requests through Python).
 
 Then copy config and reload:
 
@@ -108,10 +118,15 @@ Also ensure your cloud firewall (Hetzner or similar) allows inbound TCP 80 and 4
 cd /opt/poe-market-flips
 git pull
 .venv/bin/pip install -r requirements.txt
+sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
+sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl restart poe-market-server
 sudo systemctl restart poe-market-poller
 sudo systemctl reload caddy
 ```
+
+The `cp` lines keep `/etc/systemd/system` in sync when `ExecStart` or other unit fields change (for example after moving the dashboard from `web/server.py` to `python -m server.server`, or after changing the poller entry from `poll_item_prices.py` to `python -m poller`).
 
 ## 10. Automatic Deploy On Every Push (Recommended)
 
@@ -131,6 +146,10 @@ This repo includes:
 	- `VPS_PORT` = `22`
 	- `VPS_SSH_KEY` = private SSH key content for that VPS user
 	- `DISCORD_WEBHOOK_URL` = your Discord webhook URL for price alerts
+	- `DISCORD_WEBHOOK_URL_SALES` (optional) = separate webhook for estimated-sale signal updates
+	- `DISCORD_WEBHOOK_URL_REPRICES` (optional) = separate webhook for repricing signal updates
+	- `DISCORD_WEBHOOK_URL_DB_EXPORT` (optional) = webhook used by the admin “Export DB” action
+	- `DISCORD_WEBHOOK_URL_OPS` (optional) = webhook for ops health alerts (API failures, stale polling, DB integrity)
 
 ### Generate an SSH key for deploy (if you do not already have one)
 
@@ -151,12 +170,24 @@ Paste the contents of `vps_deploy_key` (private key) into `VPS_SSH_KEY` in GitHu
 ### How it works
 
 - On every push to `main` or `master`, GitHub Actions connects to your VPS over SSH.
-- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` (if provided), restarts services, and reloads Caddy.
+	- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL_SALES` / `DISCORD_WEBHOOK_URL_REPRICES` / `DISCORD_WEBHOOK_URL_DB_EXPORT` / `DISCORD_WEBHOOK_URL_OPS` (if provided), restarts services, and reloads Caddy.
+
+`config.json` is intentionally untracked. Keep a server-local copy at `/opt/poe-market-flips/config.json` (for example by copying `config.example.json` once and editing values).
+
+One-time migration on existing VPS hosts (if `config.json` was previously tracked and edited locally):
+
+```bash
+cd /opt/poe-market-flips
+cp config.json /tmp/poe-config.json.backup
+git checkout -- config.json
+git pull --ff-only
+cp /tmp/poe-config.json.backup config.json
+```
 
 Webhook secret notes:
 
-- If `DISCORD_WEBHOOK_URL` is present in GitHub Secrets, it is synced on each deploy.
-- If it is missing, deploy keeps any existing `/etc/poe-market-flips/secrets.env` file unchanged.
+- If `DISCORD_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL_SALES`, `DISCORD_WEBHOOK_URL_REPRICES`, `DISCORD_WEBHOOK_URL_DB_EXPORT`, or `DISCORD_WEBHOOK_URL_OPS` is present in GitHub Secrets, it is synced on each deploy.
+- If a value is missing, deploy keeps any existing matching line in `/etc/poe-market-flips/secrets.env` unchanged.
 
 ### First test
 
@@ -184,7 +215,7 @@ curl -I http://127.0.0.1
 
 ### Some item icons are missing on VPS but not on Windows
 
-Linux is case-sensitive for filenames. This repo already includes a case-insensitive icon lookup fix in `web/data_service.py`. If icons still look stale, run:
+Linux is case-sensitive for filenames. This repo already includes a case-insensitive icon lookup fix in `server/data_service.py`. If icons still look stale, run:
 
 ```bash
 cd /opt/poe-market-flips
