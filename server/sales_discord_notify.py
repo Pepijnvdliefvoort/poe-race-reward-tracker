@@ -118,8 +118,16 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
             ev.get("fromMirrorEquiv"),
             divines_per_mirror=divines_per_mirror,
         )
+        new_price = _fmt_listed_price(ev.get("newPriceAmount"), ev.get("newPriceCurrency")) or _fmt_mirror_equiv(
+            ev.get("newMirrorEquiv"),
+            divines_per_mirror=divines_per_mirror,
+        )
+        if price and new_price and price != new_price:
+            return f"Seller **{seller}** has sold it for **{price}** to **{buyer}** (new price: **{new_price}**).{fp_suffix}"
         if price:
             return f"Seller **{seller}** has sold it for **{price}** to **{buyer}**.{fp_suffix}"
+        if new_price:
+            return f"Seller **{seller}** has sold it to **{buyer}** (new price: **{new_price}**).{fp_suffix}"
         return f"Seller **{seller}** has sold it to **{buyer}**.{fp_suffix}"
 
     if rule == "likely_instant_sale":
@@ -189,6 +197,32 @@ def _event_sentence(ev: dict[str, Any]) -> str | None:
         return msg + "."
 
     return None
+
+
+def _build_discord_payload(
+    *,
+    embed: dict[str, Any],
+    content: str | None = None,
+    allowed_user_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"embeds": [embed]}
+    text = str(content or "").strip()
+    if text:
+        payload["content"] = text
+
+    if allowed_user_ids:
+        cleaned_ids = []
+        seen = set()
+        for user_id in allowed_user_ids:
+            uid = str(user_id or "").strip()
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            cleaned_ids.append(uid)
+        if cleaned_ids:
+            payload["allowed_mentions"] = {"parse": [], "users": cleaned_ids}
+
+    return payload
 
 
 def _estimated_sales_rules_breakdown(
@@ -358,7 +392,7 @@ def build_reprice_embed(
 ) -> dict[str, Any]:
     lines = [
         f"**This poll:** +{max(0, int(reprice_count))} repricing signal" + ("" if int(reprice_count) == 1 else "s"),
-        "Rule 5 (same seller, meaningful price move).",
+        "Rule 5 (same seller, listed price change).",
     ]
 
     if inference_events:
@@ -397,6 +431,40 @@ def build_reprice_embed(
     return embed
 
 
+def build_new_item_embed(
+    *,
+    item_name: str,
+    item_image_url: str | None,
+    new_item_count: int,
+    new_item_lines: list[str] | None = None,
+) -> dict[str, Any]:
+    lines = [
+        f"**This poll:** +{max(0, int(new_item_count))} new item signal" + ("s" if int(new_item_count) != 1 else ""),
+        "Tracked new listing undercut detected.",
+    ]
+
+    if new_item_lines:
+        cleaned_lines = [str(line).strip() for line in new_item_lines if str(line or "").strip()]
+        if cleaned_lines:
+            lines.append("")
+            lines.append("**New items:**")
+            max_lines = 12
+            for line in cleaned_lines[:max_lines]:
+                lines.append(f"- {line}")
+            if len(cleaned_lines) > max_lines:
+                lines.append(f"- ...and {len(cleaned_lines) - max_lines} more new items")
+
+    embed: dict[str, Any] = {
+        "title": f"New item: {item_name}",
+        "description": "\n".join(lines),
+        # Use a softer positive color than alerts, but still distinct from reprices.
+        "color": 0x2ECC71,
+    }
+    if item_image_url:
+        embed["thumbnail"] = {"url": item_image_url}
+    return embed
+
+
 def send_reprice_change_notification(
     session: requests.Session,
     *,
@@ -406,6 +474,8 @@ def send_reprice_change_notification(
     reprice_count: int,
     divines_per_mirror: float | None = None,
     inference_events: list[dict[str, Any]] | None = None,
+    content: str | None = None,
+    allowed_user_ids: list[str] | None = None,
 ) -> None:
     embed = build_reprice_embed(
         item_name=item_name,
@@ -414,6 +484,28 @@ def send_reprice_change_notification(
         divines_per_mirror=divines_per_mirror,
         inference_events=inference_events,
     )
-    payload: dict[str, Any] = {"embeds": [embed]}
+    payload = _build_discord_payload(embed=embed, content=content, allowed_user_ids=allowed_user_ids)
+    resp = session.post(webhook_url, json=payload, timeout=10.0)
+    resp.raise_for_status()
+
+
+def send_new_item_notification(
+    session: requests.Session,
+    *,
+    webhook_url: str,
+    item_name: str,
+    item_image_url: str | None,
+    new_item_count: int,
+    new_item_lines: list[str] | None = None,
+    content: str | None = None,
+    allowed_user_ids: list[str] | None = None,
+) -> None:
+    embed = build_new_item_embed(
+        item_name=item_name,
+        item_image_url=item_image_url,
+        new_item_count=new_item_count,
+        new_item_lines=new_item_lines,
+    )
+    payload = _build_discord_payload(embed=embed, content=content, allowed_user_ids=allowed_user_ids)
     resp = session.post(webhook_url, json=payload, timeout=10.0)
     resp.raise_for_status()
