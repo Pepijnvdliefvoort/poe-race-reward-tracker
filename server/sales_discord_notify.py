@@ -392,7 +392,7 @@ def build_reprice_embed(
 ) -> dict[str, Any]:
     lines = [
         f"**This poll:** +{max(0, int(reprice_count))} repricing signal" + ("" if int(reprice_count) == 1 else "s"),
-        "Rule 5 (same seller, meaningful price move).",
+        "Rule 5 (same seller, listed price change).",
     ]
 
     if inference_events:

@@ -2737,7 +2737,7 @@ def run_cycle(
                         "alert",
                         (
                             f"Reprice alert fired: {item.name} +{reprice_count} "
-                            "(rule5 same-seller meaningful price move); sending Discord webhook"
+                            "(rule5 same-seller listed price change); sending Discord webhook"
                         ),
                     )
                     send_reprice_change_notification(

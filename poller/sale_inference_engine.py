@@ -10,7 +10,7 @@ Rules:
 4b. Non-instant listing gone while seller appears online -> likely sold (pending relist can undo).
    The poller prefers a live account-filter search + fetch (`listing.account.online` on another of
    their listings); if that probe fails, it falls back to `sellerOnline` from the prior ladder fetch.
-5. Same fingerprint + same seller still listed but mirror-equivalent price moved materially -> repriced
+5. Same fingerprint + same seller still listed but listed price changed -> repriced
    (not a sale; distinguishes relist/reprice from churn).
 6. Same fingerprint offered by 2+ different sellers in one fetch -> multi-party contention signal.
 7. New (fingerprint, seller) pairs vs previous poll -> fresh supply / new listing rows this cycle.
@@ -26,11 +26,6 @@ from pathlib import Path
 from typing import Any
 
 EXALTS_PER_DIVINE = 60.0
-# Reprice: relative change >= this, or absolute mirror delta >= REPRICE_ABS_MIRRORS
-REPRICE_REL_EPS = 0.02
-REPRICE_ABS_MIRRORS = 0.05
-
-
 def _stack_size_signature(item: dict[str, Any]) -> str:
     """Include stack size when present so two stacks of the same currency differ."""
     props = item.get("properties")
@@ -434,15 +429,6 @@ def non_instant_vanished_seller_accounts_for_online_probe(
             seen.add(seller)
             out.append(seller)
     return out
-
-
-def _meaningful_price_change(prev_m: float, curr_m: float) -> bool:
-    delta = abs(curr_m - prev_m)
-    if delta >= REPRICE_ABS_MIRRORS:
-        return True
-    if prev_m > 0 and delta / prev_m >= REPRICE_REL_EPS:
-        return True
-    return False
 
 
 def _canonical_price_currency(currency: Any) -> str | None:
@@ -898,7 +884,7 @@ def evaluate_listing_transition(
                 }
             )
 
-    # --- Rule 5: same listing identity, price moved (reprice / note change) ---
+    # --- Rule 5: same listing identity, listed price changed (reprice / note change) ---
     for fp, seller in prev_keys & curr_keys:
         pm = _meta_for(prev_signals, fp, seller)
         cm = _meta_for(curr_signals, fp, seller)
@@ -910,23 +896,22 @@ def evaluate_listing_transition(
         b = _as_float(cm.get("mirrorEquiv"))
         if a is None or b is None:
             continue
-        if _meaningful_price_change(a, b):
-            result.reprice_same_seller += 1
-            events.append(
-                {
-                    "rule": "reprice_same_seller",
-                    "itemKey": item_key,
-                    "fingerprint": fp,
-                    "seller": seller,
-                    "prevMirrorEquiv": a,
-                    "currMirrorEquiv": b,
-                    "prevPriceAmount": pm.get("priceAmount"),
-                    "prevPriceCurrency": pm.get("priceCurrency"),
-                    "currPriceAmount": cm.get("priceAmount"),
-                    "currPriceCurrency": cm.get("priceCurrency"),
-                    "cycle": cycle,
-                }
-            )
+        result.reprice_same_seller += 1
+        events.append(
+            {
+                "rule": "reprice_same_seller",
+                "itemKey": item_key,
+                "fingerprint": fp,
+                "seller": seller,
+                "prevMirrorEquiv": a,
+                "currMirrorEquiv": b,
+                "prevPriceAmount": pm.get("priceAmount"),
+                "prevPriceCurrency": pm.get("priceCurrency"),
+                "currPriceAmount": cm.get("priceAmount"),
+                "currPriceCurrency": cm.get("priceCurrency"),
+                "cycle": cycle,
+            }
+        )
 
     # --- Rule 6: multiple sellers listing the same roll in one ladder slice ---
     result.multi_seller_same_fingerprint = _count_multi_seller_fingerprints(curr_signals)
