@@ -440,7 +440,7 @@ def build_new_item_embed(
 ) -> dict[str, Any]:
     lines = [
         f"**This poll:** +{max(0, int(new_item_count))} new item signal" + ("s" if int(new_item_count) != 1 else ""),
-        "Tracked new listing undercut detected.",
+        "New listings detected.",
     ]
 
     if new_item_lines:
