@@ -394,21 +394,39 @@ def load_inference_sale_floor_ignore_if_floor_below_mirrors(storage: StorageServ
     return max(0.0, min(1000.0, float(raw)))
 
 
-def load_inference_sale_floor_ignore_if_above_by_mirrors(storage: StorageService) -> float:
+def load_inference_sale_baseline_range_mirrors(storage: StorageService) -> float:
     """
-    In low-price markets, if a vanished listing is at least this many mirrors above floor,
-    treat it as an unlisting instead of an inferred sale.
+    In low-price markets, treat a vanished listing as an unlisting when it is outside
+    this +/- mirror range around baseline.
 
-    Config key: app_config.market.inference_sale_floor_ignore_if_above_by_mirrors (default 1.0)
+    Config key: app_config.market.inference_sale_baseline_range_mirrors (default 1.0)
+    Legacy keys (still supported):
+    - app_config.market.inference_sale_baseline_ignore_if_above_by_mirrors
+    - app_config.market.inference_sale_floor_ignore_if_above_by_mirrors
     """
     try:
         data = storage.get_config(key="market") or {}
-        raw = float(data.get("inference_sale_floor_ignore_if_above_by_mirrors", 1.0))
+        if "inference_sale_baseline_range_mirrors" in data:
+            raw = float(data.get("inference_sale_baseline_range_mirrors", 1.0))
+        elif "inference_sale_baseline_ignore_if_above_by_mirrors" in data:
+            raw = float(data.get("inference_sale_baseline_ignore_if_above_by_mirrors", 1.0))
+        else:
+            raw = float(data.get("inference_sale_floor_ignore_if_above_by_mirrors", 1.0))
     except Exception:
         raw = 1.0
     if not math.isfinite(raw):
         raw = 1.0
     return max(0.0, min(1000.0, float(raw)))
+
+
+def load_inference_sale_floor_ignore_if_above_by_mirrors(storage: StorageService) -> float:
+    """Backward-compatible alias for legacy call sites."""
+    return load_inference_sale_baseline_range_mirrors(storage)
+
+
+def load_inference_sale_baseline_ignore_if_above_by_mirrors(storage: StorageService) -> float:
+    """Backward-compatible alias for transition to baseline range semantics."""
+    return load_inference_sale_baseline_range_mirrors(storage)
 
 
 def load_late_relist_window_days(storage: StorageService) -> int:
@@ -2355,7 +2373,7 @@ def run_cycle(
             baseline_mirror=baseline_mirror_for_inference,
             sale_max_above_baseline_pct=load_inference_sale_unlist_if_above_baseline_pct(storage),
             sale_floor_ignore_if_floor_below_mirrors=load_inference_sale_floor_ignore_if_floor_below_mirrors(storage),
-            sale_floor_ignore_if_above_by_mirrors=load_inference_sale_floor_ignore_if_above_by_mirrors(storage),
+            sale_baseline_range_mirrors=load_inference_sale_baseline_range_mirrors(storage),
             snapshot_truncated=snap_trunc,
             truncation_cutoff_mirror=trunc_cutoff,
             truncation_safe_margin_pct=float(truncation_margin_pct),

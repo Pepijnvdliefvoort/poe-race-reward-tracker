@@ -325,16 +325,20 @@ def _cheapest_mirror_equiv(signals: list[dict[str, Any]]) -> float | None:
     return min(vals) if vals else None
 
 
-def _priced_too_high_vs_floor_sub10(
+def _priced_outside_baseline_range_sub10(
     mirror_equiv: Any,
     *,
     cheapest_mirror: float | None,
+    baseline_mirror: float | None,
     floor_below_mirrors: float,
-    min_above_floor_mirrors: float,
+    baseline_range_mirrors: float,
 ) -> bool:
     """
-    Guardrail: in low-price markets, ignore inferred sales that are much higher than
-    the floor (more likely unlist/reprice than a true sale).
+    Guardrail: in low-price markets, ignore inferred sales far from the recent
+    baseline (more likely unlist/reprice than a true sale).
+
+    The low-price gate still uses the current floor, while the vanish price must stay
+    within +/- baseline_range_mirrors from baseline to be considered sale-like.
     """
     if cheapest_mirror is None:
         return False
@@ -343,20 +347,26 @@ def _priced_too_high_vs_floor_sub10(
         return False
 
     floor_cap = float(floor_below_mirrors)
-    min_delta = float(min_above_floor_mirrors)
+    range_delta = float(baseline_range_mirrors)
     if not math.isfinite(floor_cap) or floor_cap <= 0:
         return False
-    if not math.isfinite(min_delta) or min_delta <= 0:
+    if not math.isfinite(range_delta) or range_delta <= 0:
         return False
 
     if floor >= floor_cap:
+        return False
+
+    if baseline_mirror is None:
+        return False
+    base = float(baseline_mirror)
+    if not math.isfinite(base) or base <= 0:
         return False
 
     m = _as_float(mirror_equiv)
     if m is None or m <= 0:
         return False
 
-    return m >= (floor + min_delta)
+    return abs(m - base) > range_delta
 
 
 def safe_to_infer_vanish(
@@ -482,7 +492,7 @@ def evaluate_listing_transition(
     baseline_mirror: float | None = None,
     sale_max_above_baseline_pct: float = 30.0,
     sale_floor_ignore_if_floor_below_mirrors: float = 10.0,
-    sale_floor_ignore_if_above_by_mirrors: float = 1.0,
+    sale_baseline_range_mirrors: float = 1.0,
     snapshot_truncated: bool = False,
     truncation_cutoff_mirror: float | None = None,
     truncation_safe_margin_pct: float = 6.0,
@@ -609,11 +619,12 @@ def evaluate_listing_transition(
                                 "cycle": cycle,
                             }
                         )
-                    elif _priced_too_high_vs_floor_sub10(
+                    elif _priced_outside_baseline_range_sub10(
                         mirror_eq,
                         cheapest_mirror=cheapest_prev_mirror,
+                        baseline_mirror=baseline_mirror,
                         floor_below_mirrors=sale_floor_ignore_if_floor_below_mirrors,
-                        min_above_floor_mirrors=sale_floor_ignore_if_above_by_mirrors,
+                        baseline_range_mirrors=sale_baseline_range_mirrors,
                     ):
                         events.append(
                             {
@@ -624,9 +635,12 @@ def evaluate_listing_transition(
                                 "mirrorEquiv": mirror_eq,
                                 "priceAmount": price_amount,
                                 "priceCurrency": price_currency,
+                                "baselineMirror": baseline_mirror,
                                 "floorMirror": cheapest_prev_mirror,
                                 "floorBelowMirrors": sale_floor_ignore_if_floor_below_mirrors,
-                                "minAboveFloorMirrors": sale_floor_ignore_if_above_by_mirrors,
+                                "baselineRangeMirrors": sale_baseline_range_mirrors,
+                                "minAboveBaselineMirrors": sale_baseline_range_mirrors,
+                                "minAboveFloorMirrors": sale_baseline_range_mirrors,
                                 "cycle": cycle,
                             }
                         )
@@ -732,11 +746,12 @@ def evaluate_listing_transition(
                             "cycle": cycle,
                         }
                     )
-                elif _priced_too_high_vs_floor_sub10(
+                elif _priced_outside_baseline_range_sub10(
                     mirror_eq,
                     cheapest_mirror=cheapest_prev_mirror,
+                    baseline_mirror=baseline_mirror,
                     floor_below_mirrors=sale_floor_ignore_if_floor_below_mirrors,
-                    min_above_floor_mirrors=sale_floor_ignore_if_above_by_mirrors,
+                    baseline_range_mirrors=sale_baseline_range_mirrors,
                 ):
                     result.non_instant_removed += 1
                     events.append(
@@ -748,9 +763,12 @@ def evaluate_listing_transition(
                             "mirrorEquiv": mirror_eq,
                             "priceAmount": price_amount,
                             "priceCurrency": price_currency,
+                            "baselineMirror": baseline_mirror,
                             "floorMirror": cheapest_prev_mirror,
                             "floorBelowMirrors": sale_floor_ignore_if_floor_below_mirrors,
-                            "minAboveFloorMirrors": sale_floor_ignore_if_above_by_mirrors,
+                            "baselineRangeMirrors": sale_baseline_range_mirrors,
+                            "minAboveBaselineMirrors": sale_baseline_range_mirrors,
+                            "minAboveFloorMirrors": sale_baseline_range_mirrors,
                             "cycle": cycle,
                         }
                     )
@@ -813,11 +831,12 @@ def evaluate_listing_transition(
                     "cycle": cycle,
                 }
             )
-        elif _priced_too_high_vs_floor_sub10(
+        elif _priced_outside_baseline_range_sub10(
             mirror_eq,
             cheapest_mirror=cheapest_prev_mirror,
+            baseline_mirror=baseline_mirror,
             floor_below_mirrors=sale_floor_ignore_if_floor_below_mirrors,
-            min_above_floor_mirrors=sale_floor_ignore_if_above_by_mirrors,
+            baseline_range_mirrors=sale_baseline_range_mirrors,
         ):
             events.append(
                 {
@@ -828,9 +847,12 @@ def evaluate_listing_transition(
                     "mirrorEquiv": mirror_eq,
                     "priceAmount": price_amount,
                     "priceCurrency": price_currency,
+                    "baselineMirror": baseline_mirror,
                     "floorMirror": cheapest_prev_mirror,
                     "floorBelowMirrors": sale_floor_ignore_if_floor_below_mirrors,
-                    "minAboveFloorMirrors": sale_floor_ignore_if_above_by_mirrors,
+                    "baselineRangeMirrors": sale_baseline_range_mirrors,
+                    "minAboveBaselineMirrors": sale_baseline_range_mirrors,
+                    "minAboveFloorMirrors": sale_baseline_range_mirrors,
                     "cycle": cycle,
                 }
             )
