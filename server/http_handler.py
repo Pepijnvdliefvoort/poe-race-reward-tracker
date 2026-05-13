@@ -1355,6 +1355,36 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 cycle_delta = 0
                 inference_events: list[dict[str, Any]] = []
 
+                transfer_new_price_by_sale_id: dict[int, dict[str, Any]] = {}
+                storage_for_lookup = ServerStorage(ROOT_DIR)
+                con_lookup = storage_for_lookup.connect()
+                try:
+                    for row in rows:
+                        if str(row["rule"] or "") != "confirmed_transfer":
+                            continue
+                        seller_now = str(row["buyer"] or "").strip()
+                        fp = str(row["fingerprint"] or "").strip()
+                        if not seller_now or not fp:
+                            continue
+                        sig = con_lookup.execute(
+                            """
+                            SELECT price_amount, price_currency, mirror_equiv
+                            FROM inference_state_signals
+                            WHERE item_variant_id = ? AND seller = ? AND fingerprint = ?
+                            ORDER BY id DESC
+                            LIMIT 1
+                            """,
+                            (first_variant_id, seller_now, fp),
+                        ).fetchone()
+                        if sig:
+                            transfer_new_price_by_sale_id[int(row["id"])] = {
+                                "newPriceAmount": sig["price_amount"],
+                                "newPriceCurrency": str(sig["price_currency"] or ""),
+                                "newMirrorEquiv": sig["mirror_equiv"],
+                            }
+                finally:
+                    con_lookup.close()
+
                 for row in rows:
                     rule = str(row["rule"] or "")
                     qty = int(row["quantity"] or 1)
@@ -1372,6 +1402,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         "fingerprint": str(row["fingerprint"] or ""),
                     }
                     if rule == "confirmed_transfer":
+                        transfer_meta = transfer_new_price_by_sale_id.get(int(row["id"])) or {}
                         event.update(
                             {
                                 "from_seller": str(row["seller"] or ""),
@@ -1379,6 +1410,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                 "fromPriceAmount": row["price_amount"],
                                 "fromPriceCurrency": str(row["price_currency"] or ""),
                                 "fromMirrorEquiv": row["mirror_equiv"],
+                                "newPriceAmount": transfer_meta.get("newPriceAmount"),
+                                "newPriceCurrency": transfer_meta.get("newPriceCurrency"),
+                                "newMirrorEquiv": transfer_meta.get("newMirrorEquiv"),
                             }
                         )
                     else:

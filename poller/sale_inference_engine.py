@@ -677,6 +677,7 @@ def evaluate_listing_transition(
             b = next(iter(cs))
             if a and b and a != b:
                 from_meta = _meta_for(prev_signals, fp, a)
+                to_meta = _meta_for(curr_signals, fp, b)
                 result.confirmed_transfer += 1
                 events.append(
                     {
@@ -688,6 +689,9 @@ def evaluate_listing_transition(
                         "fromMirrorEquiv": (from_meta or {}).get("mirrorEquiv"),
                         "fromPriceAmount": (from_meta or {}).get("priceAmount"),
                         "fromPriceCurrency": (from_meta or {}).get("priceCurrency"),
+                        "newMirrorEquiv": (to_meta or {}).get("mirrorEquiv"),
+                        "newPriceAmount": (to_meta or {}).get("priceAmount"),
+                        "newPriceCurrency": (to_meta or {}).get("priceCurrency"),
                         "cycle": cycle,
                     }
                 )

@@ -23,6 +23,7 @@ from .sale_inference_engine import (
 
 from server.sales_discord_notify import (
     send_estimated_sales_change_notification,
+    send_new_item_notification,
     send_reprice_change_notification,
 )
 
@@ -106,6 +107,12 @@ class ResaleOpportunity:
     expected_profit: float
 
 
+@dataclass(frozen=True)
+class DiscordWatchUser:
+    seller_name: str
+    user_id: str
+
+
 def load_discord_webhook_url_from_env() -> str:
     """Load Discord webhook from environment-managed secret."""
     for env_name in ("DISCORD_WEBHOOK_URL", "POE_DISCORD_WEBHOOK_URL"):
@@ -165,6 +172,178 @@ def load_discord_ops_webhook_url_from_env() -> str:
         if value:
             return value
     return ""
+
+
+def _seller_name_matches_watch(seller_name: str, watch_name: str) -> bool:
+    seller = str(seller_name or "").strip().lower()
+    watch = str(watch_name or "").strip().lower()
+    if not seller or not watch:
+        return False
+    return seller == watch or seller.startswith(f"{watch}#")
+
+
+def load_discord_market_watch_users(storage: StorageService) -> list[DiscordWatchUser]:
+    try:
+        data = storage.get_config(key="market") or {}
+    except Exception:
+        data = {}
+
+    raw_sources = [
+        data.get("discord_market_watch_users"),
+        data.get("discord_reprice_watch_users"),
+        data.get("discord_new_item_watch_users"),
+    ]
+
+    out: list[DiscordWatchUser] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in raw_sources:
+        if not isinstance(raw, list):
+            continue
+        for entry in raw:
+            seller_name = ""
+            user_id = ""
+            if isinstance(entry, dict):
+                seller_name = str(
+                    entry.get("seller_name")
+                    or entry.get("seller")
+                    or entry.get("name")
+                    or entry.get("poe_name")
+                    or entry.get("poeName")
+                    or ""
+                ).strip()
+                user_id = str(
+                    entry.get("user_id")
+                    or entry.get("userId")
+                    or entry.get("discord_user_id")
+                    or entry.get("discordUserId")
+                    or entry.get("id")
+                    or ""
+                ).strip()
+            elif isinstance(entry, str):
+                seller_name = str(entry).strip()
+            if not seller_name or not user_id:
+                continue
+            key = (seller_name.lower(), user_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(DiscordWatchUser(seller_name=seller_name, user_id=user_id))
+            if len(out) >= 32:
+                return out
+    return out
+
+
+def _signal_key(signal: dict[str, Any]) -> tuple[str, str]:
+    return (str(signal.get("fingerprint") or ""), str(signal.get("seller") or ""))
+
+
+def _signal_price(signal: dict[str, Any]) -> float | None:
+    value = signal.get("mirrorEquiv")
+    if not isinstance(value, (int, float)):
+        return None
+    price = float(value)
+    if not math.isfinite(price) or price <= 0:
+        return None
+    return price
+
+
+def _format_user_mentions(user_ids: list[str]) -> str:
+    unique_ids: list[str] = []
+    seen: set[str] = set()
+    for user_id in user_ids:
+        uid = str(user_id or "").strip()
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        unique_ids.append(uid)
+    return " ".join(f"<@{uid}>" for uid in unique_ids)
+
+
+def _reprice_watch_mentions(
+    *,
+    reprice_events: list[dict[str, Any]],
+    curr_signals: list[dict[str, Any]],
+    watch_users: list[DiscordWatchUser],
+) -> tuple[str | None, list[str]]:
+    if not reprice_events or not watch_users:
+        return None, []
+
+    event_prices = [
+        _signal_price(ev)
+        for ev in reprice_events
+        if isinstance(ev, dict)
+    ]
+    event_floor = min((p for p in event_prices if p is not None), default=None)
+    if event_floor is None:
+        return None, []
+
+    mention_ids: list[str] = []
+    for watch in watch_users:
+        watch_prices = [
+            _signal_price(signal)
+            for signal in curr_signals
+            if _seller_name_matches_watch(str(signal.get("seller") or ""), watch.seller_name)
+        ]
+        watch_floor = min((p for p in watch_prices if p is not None), default=None)
+        if watch_floor is None:
+            continue
+        if watch_floor - event_floor > PRICE_EPSILON:
+            mention_ids.append(watch.user_id)
+
+    content = _format_user_mentions(mention_ids)
+    return (content or None), mention_ids
+
+
+def _new_item_under_cut_lines(
+    *,
+    prev_signals: list[dict[str, Any]],
+    curr_signals: list[dict[str, Any]],
+    watch_users: list[DiscordWatchUser],
+) -> tuple[list[str], list[str]]:
+    if not prev_signals or not curr_signals or not watch_users:
+        return [], []
+
+    prev_keys = {_signal_key(signal) for signal in prev_signals}
+    new_signals = [signal for signal in curr_signals if _signal_key(signal) not in prev_keys]
+    if not new_signals:
+        return [], []
+
+    current_prices = [p for p in (_signal_price(signal) for signal in curr_signals) if p is not None]
+    if len(current_prices) < 2:
+        return [], []
+
+    lines: list[str] = []
+    mention_ids: list[str] = []
+    for signal in new_signals:
+        seller_name = str(signal.get("seller") or "unknown")
+        watch = next((w for w in watch_users if _seller_name_matches_watch(seller_name, w.seller_name)), None)
+        if watch is None:
+            continue
+
+        price = _signal_price(signal)
+        if price is None:
+            continue
+
+        other_prices = [
+            p
+            for other in curr_signals
+            if _signal_key(other) != _signal_key(signal)
+            for p in [_signal_price(other)]
+            if p is not None
+        ]
+        if not other_prices:
+            continue
+
+        other_floor = min(other_prices)
+        if not (other_floor - price > PRICE_EPSILON):
+            continue
+
+        mention_ids.append(watch.user_id)
+        lines.append(
+            f"Seller **{seller_name}** listed **{format_amount(price)} mirrors** and undercut the current floor."
+        )
+
+    return lines, mention_ids
 
 
 def load_ops_health_config(storage: StorageService, poll_interval_seconds: int) -> OpsHealthConfig:
@@ -613,6 +792,8 @@ def load_alert_config() -> AlertConfig:
                             ),
                         ),
                         "alert_cooldown_cycles": max(0, int(file_data.get("alert_cooldown_cycles", defaults.cooldown_cycles))),
+                        "sales_discord_window_days": max(1, int(file_data.get("sales_discord_window_days", 90))),
+                        "discord_market_watch_users": file_data.get("discord_market_watch_users", []),
                     }
                     storage.set_config(key="market", value=merged)
                     data = merged
@@ -2272,6 +2453,7 @@ def run_cycle(
     reprices_webhook_url: str = "",
     sales_window_days: int = 90,
     icon_urls_by_key: dict[str, str | None] | None = None,
+    discord_watch_users: list[DiscordWatchUser] | None = None,
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
     # SQLite is the source of truth (no CSV or listings cache file).
@@ -2546,6 +2728,11 @@ def run_cycle(
                         for event in effective_events
                         if isinstance(event, dict) and str(event.get("rule") or "") == "reprice_same_seller"
                     ]
+                    reprice_mentions_content, reprice_mention_ids = _reprice_watch_mentions(
+                        reprice_events=reprice_events,
+                        curr_signals=curr_signals,
+                        watch_users=discord_watch_users or [],
+                    )
                     log_line(
                         "alert",
                         (
@@ -2561,9 +2748,40 @@ def run_cycle(
                         reprice_count=reprice_count,
                         divines_per_mirror=divines_per_mirror,
                         inference_events=reprice_events,
+                        content=reprice_mentions_content,
+                        allowed_user_ids=reprice_mention_ids,
                     )
                 except Exception as exc:  # noqa: BLE001
                     log_line("warn", f"Failed reprice Discord webhook for {item.name}: {exc}")
+
+            if reprices_webhook_url and discord_watch_users:
+                try:
+                    new_item_lines, new_item_mention_ids = _new_item_under_cut_lines(
+                        prev_signals=prev_signals,
+                        curr_signals=curr_signals,
+                        watch_users=discord_watch_users,
+                    )
+                    if new_item_lines:
+                        new_item_mentions = _format_user_mentions(new_item_mention_ids)
+                        log_line(
+                            "alert",
+                            (
+                                f"New-item alert fired: {item.name} +{len(new_item_lines)} "
+                                "new item undercut(s); sending Discord webhook"
+                            ),
+                        )
+                        send_new_item_notification(
+                            session,
+                            webhook_url=reprices_webhook_url,
+                            item_name=item.name,
+                            item_image_url=cheapest_icon_url,
+                            new_item_count=len(new_item_lines),
+                            new_item_lines=new_item_lines,
+                            content=new_item_mentions,
+                            allowed_user_ids=new_item_mention_ids,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    log_line("warn", f"Failed new-item Discord webhook for {item.name}: {exc}")
 
         cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
@@ -2821,6 +3039,7 @@ def main() -> None:
         sales_window_days = load_sales_discord_window_days(storage)
         db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
         ops_health_cfg = load_ops_health_config(storage, cfg.poll_interval)
+        discord_watch_users = load_discord_market_watch_users(storage)
         if sales_webhook_url and not logged_sales_webhook_cfg:
             msg = f"Sales Discord webhook active; est.-sold window={sales_window_days}d"
             if not sales_webhook_dedicated:
@@ -2835,6 +3054,8 @@ def main() -> None:
                 msg += "; using dedicated reprices webhook"
             else:
                 msg += "; using sales/main fallback (set DISCORD_WEBHOOK_URL_REPRICES for a separate channel)"
+            if discord_watch_users:
+                msg += f"; watch-users={len(discord_watch_users)}"
             log_line("cycle", msg)
             logged_reprices_webhook_cfg = True
         if db_export_webhook_url and not logged_db_export_webhook_cfg:
@@ -2882,6 +3103,7 @@ def main() -> None:
                 reprices_webhook_url=reprices_webhook_url,
                 sales_window_days=sales_window_days,
                 icon_urls_by_key=icon_urls_by_key,
+                discord_watch_users=discord_watch_users,
             )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "?"

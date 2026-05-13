@@ -187,13 +187,12 @@
       </div>
 
       <div class="admin-marketcfg" aria-label="Market config editor">
-        <div class="admin-marketcfg-card">
-          <div id="marketCfgFields" class="admin-marketcfg-fields"></div>
-        </div>
-
-        <div class="admin-marketcfg-card">
+        <div class="admin-marketcfg-card admin-marketcfg-card--full">
           <details class="admin-marketcfg-advanced" open>
-            <summary class="admin-marketcfg-summary">Advanced JSON</summary>
+            <summary class="admin-marketcfg-summary">JSON editor</summary>
+            <p class="admin-muted admin-marketcfg-json-note">
+              Edit the selected config key directly as JSON, then save.
+            </p>
             <div class="admin-json-editor" aria-label="JSON editor">
               <pre id="marketCfgJsonPretty" class="admin-json-pretty" aria-hidden="true"></pre>
               <textarea

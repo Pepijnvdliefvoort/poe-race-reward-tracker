@@ -192,6 +192,20 @@ Optional separate webhook for operational health alerts (API failures, stale pol
 
 - `DISCORD_WEBHOOK_URL_OPS`
 
+Optional market watch list for reprice / new-item mentions in the reprice channel:
+
+- `discord_market_watch_users` in the `market` app config JSON (editable from the admin page's Advanced JSON view)
+- Each entry should include a `seller_name` prefix and a Discord `user_id`
+- Matching is prefix-based, so `ABVT` matches `ABVT#1234`
+
+Example:
+
+```json
+"discord_market_watch_users": [
+  {"seller_name": "ABVT", "user_id": "184699151986982912"}
+]
+```
+
 Optional `app_config.market` key `sales_discord_window_days` (default `90`) sets the rolling window for the total in that message (sum of per-poll signals, same idea as the chart est. sold line).
 
 ## Notes

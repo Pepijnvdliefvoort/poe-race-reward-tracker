@@ -102,6 +102,14 @@ function adminEndpointErrorMessage(err, label) {
   return `${label}: ${err.message || err}`;
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 let map;
 let heatLayer;
 let markersLayer;
@@ -208,206 +216,112 @@ function renderVisitorMap(data) {
       { autoPan: false },
     );
     markersLayer.addLayer(m);
-    visitorMarkersByIp[String(p.ip || "")] = m;
+    const ip = String(p?.ip || "").trim();
+    if (ip) visitorMarkersByIp[ip] = m;
   });
+}
 
-  // Default view: auto-fit all known points (unless user manually focused a visitor).
-  if (!userFocusedVisitor) {
-    if (points.length >= 2) {
-      const bounds = markersLayer.getBounds?.();
-      if (bounds && bounds.isValid?.()) {
-        map.fitBounds(bounds, {
-          padding: [28, 28],
-          animate: false,
-          maxZoom: 6,
-        });
-      } else {
-        map.setView([20, 0], 2, { animate: false });
-      }
-    } else if (points.length === 1) {
-      const p = points[0];
-      if (p && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
-        map.setView([p.lat, p.lng], 6, { animate: false });
-      } else {
-        map.setView([20, 0], 2, { animate: false });
-      }
-    } else {
-      map.setView([20, 0], 2, { animate: false });
+function renderVisitorTable(data) {
+  const body = document.getElementById("visitorTableBody");
+  const table = document.getElementById("visitorTable");
+  const statsEl = document.getElementById("visitorStats");
+  if (!body || !table) return;
+
+  const points = Array.isArray(data?.points) ? data.points.slice() : [];
+  if (statsEl) {
+    statsEl.textContent = `${points.length} visitor location${points.length === 1 ? "" : "s"}`;
+  }
+
+  const parseDate = (value) => {
+    if (!value) return 0;
+    const d = new Date(String(value));
+    return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+  };
+
+  points.sort((a, b) => {
+    const key = visitorTableSort.key;
+    const dir = visitorTableSort.direction === "asc" ? 1 : -1;
+    if (key === "ip") {
+      return dir * String(a?.ip || "").localeCompare(String(b?.ip || ""));
     }
-  }
-
-  requestAnimationFrame(() => {
-    map.invalidateSize({ animate: false });
+    if (key === "lastSeen") {
+      return dir * (parseDate(a?.lastSeen) - parseDate(b?.lastSeen));
+    }
+    return dir * ((Number(a?.visits) || 0) - (Number(b?.visits) || 0));
   });
-}
 
-function focusVisitorIp(ip) {
-  ensureMap();
-  const key = String(ip || "");
-  if (!key) return;
-  const marker = visitorMarkersByIp[key];
-  if (marker) {
-    userFocusedVisitor = true;
-    const ll = marker.getLatLng();
-    map.setView(ll, Math.max(map.getZoom(), 6), { animate: true });
-    marker.openPopup();
-    return;
-  }
-  // If an IP exists in the table but isn't placed yet (no geo), do nothing.
-}
+  body.innerHTML = points
+    .map((row) => {
+      const ip = String(row?.ip || "");
+      const visits = Number(row?.visits) || 0;
+      const lastSeen = row?.lastSeen ? formatLocalDateTime(row.lastSeen) : "—";
+      return `
+        <tr data-visitor-ip="${escapeHtml(ip)}">
+          <td>${escapeHtml(ip)}</td>
+          <td>${escapeHtml(visits)}</td>
+          <td>${escapeHtml(lastSeen)}</td>
+        </tr>`;
+    })
+    .join("");
 
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+  body.querySelectorAll("tr[data-visitor-ip]").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const ip = tr.getAttribute("data-visitor-ip") || "";
+      const marker = visitorMarkersByIp[ip];
+      if (!marker || !map) return;
+      userFocusedVisitor = true;
+      try {
+        map.setView(marker.getLatLng(), Math.max(map.getZoom(), 5), { animate: true });
+        marker.openPopup();
+      } catch {
+        // ignore focus failures
+      }
+    });
+  });
 
-function compareVisitorRows(a, b) {
-  const direction = visitorTableSort.direction === "asc" ? 1 : -1;
-  const key = visitorTableSort.key;
-
-  if (key === "visits") {
-    const av = Number(a?.visits) || 0;
-    const bv = Number(b?.visits) || 0;
-    if (av !== bv) return (av - bv) * direction;
-  } else if (key === "lastSeen") {
-    const at = a?.lastSeen ? Date.parse(String(a.lastSeen)) : Number.NEGATIVE_INFINITY;
-    const bt = b?.lastSeen ? Date.parse(String(b.lastSeen)) : Number.NEGATIVE_INFINITY;
-    if (at !== bt) return (at - bt) * direction;
-  } else {
-    const cmp = String(a?.ip || "").localeCompare(String(b?.ip || ""), undefined, { numeric: true, sensitivity: "base" });
-    if (cmp !== 0) return cmp * direction;
-  }
-
-  const ipCmp = String(a?.ip || "").localeCompare(String(b?.ip || ""), undefined, { numeric: true, sensitivity: "base" });
-  if (ipCmp !== 0) return ipCmp;
-  return (Number(a?.visits) || 0) - (Number(b?.visits) || 0);
-}
-
-function updateVisitorTableSortUi() {
-  document.querySelectorAll?.("#visitorTable thead th").forEach((th) => {
-    const btn = th.querySelector?.("[data-visitor-sort-key]");
-    const key = btn?.getAttribute("data-visitor-sort-key") || "";
-    const active = key === visitorTableSort.key;
-    const direction = active ? visitorTableSort.direction : "none";
-    th.setAttribute("aria-sort", direction === "asc" ? "ascending" : (direction === "desc" ? "descending" : "none"));
-    btn?.classList.toggle("is-active", active);
-    btn?.setAttribute(
-      "aria-label",
-      active
-        ? `${btn.textContent} sorted ${direction === "asc" ? "ascending" : "descending"}. Activate to sort ${direction === "asc" ? "descending" : "ascending"}.`
-        : `${btn.textContent} not sorted. Activate to sort ascending.`,
+  const headers = Array.from(table.querySelectorAll("thead th"));
+  headers.forEach((th) => {
+    const btn = th.querySelector("button[data-visitor-sort-key]");
+    if (!btn) return;
+    const key = btn.getAttribute("data-visitor-sort-key") || "";
+    th.setAttribute(
+      "aria-sort",
+      visitorTableSort.key !== key ? "none" : (visitorTableSort.direction === "asc" ? "ascending" : "descending"),
     );
-  });
-}
-
-function setupVisitorTableSorting() {
-  document.querySelectorAll?.("[data-visitor-sort-key]").forEach((btn) => {
-    if (btn.dataset.sortReady === "1") return;
-    btn.dataset.sortReady = "1";
+    if (btn.dataset.boundSortClick === "1") return;
+    btn.dataset.boundSortClick = "1";
     btn.addEventListener("click", () => {
-      const key = btn.getAttribute("data-visitor-sort-key");
-      if (!key) return;
       if (visitorTableSort.key === key) {
         visitorTableSort.direction = visitorTableSort.direction === "asc" ? "desc" : "asc";
       } else {
         visitorTableSort.key = key;
-        visitorTableSort.direction = key === "visits" || key === "lastSeen" ? "desc" : "asc";
+        visitorTableSort.direction = key === "ip" ? "asc" : "desc";
       }
-      updateVisitorTableSortUi();
-      if (lastVisitorMapData) renderVisitorTable(lastVisitorMapData);
+      renderVisitorTable(lastVisitorMapData || { points });
     });
   });
-  updateVisitorTableSortUi();
-}
-
-function renderVisitorTable(data) {
-  const tbody = document.getElementById("visitorTableBody");
-  const stats = document.getElementById("visitorStats");
-  if (!tbody) return;
-
-  setupVisitorTableSorting();
-
-  const visitors = [...(data.visitors || [])].sort(compareVisitorRows);
-  const pending = data.pendingGeocodes ?? 0;
-  if (stats) {
-    stats.textContent = `${data.uniqueVisitors ?? 0} unique IPs · ${data.totalVisits ?? 0} page loads (dashboard)`;
-    if (pending > 0) {
-      stats.textContent += ` · ${pending} IP(s) not yet placed on map (refresh to load more; rate-limited geocoding)`;
-    }
-  }
-
-  tbody.innerHTML = visitors
-    .map(
-      (v) => `
-    <tr class="visitor-row" data-ip="${escapeHtml(v.ip)}">
-      <td><code>${escapeHtml(v.ip)}</code></td>
-      <td>${v.visits}</td>
-      <td>${v.lastSeen ? escapeHtml(formatLocalDateTime(v.lastSeen)) : "—"}</td>
-    </tr>`,
-    )
-    .join("");
-
-  // Click a row to focus the map marker.
-  tbody.querySelectorAll?.("tr.visitor-row").forEach((tr) => {
-    tr.addEventListener("click", () => {
-      const ip = tr.getAttribute("data-ip") || "";
-      focusVisitorIp(ip);
-    });
-  });
-}
-
-let logPollTimer;
-let mapPollTimer;
-let statsPollTimer;
-
-function shouldPollStatsFromStorage() {
-  try {
-    const raw = window.localStorage.getItem("admin.logs.windowState.v1");
-    if (!raw) return true;
-    const parsed = JSON.parse(raw);
-    const mode = parsed?.stats?.mode;
-    return mode !== "closed";
-  } catch {
-    return true;
-  }
-}
-
-function startStatsPolling() {
-  if (statsPollTimer) return;
-  refreshStats();
-  statsPollTimer = window.setInterval(refreshStats, 5000);
-}
-
-function stopStatsPolling() {
-  if (!statsPollTimer) return;
-  window.clearInterval(statsPollTimer);
-  statsPollTimer = null;
-}
-
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
 }
 
 function setupLogConsoleWindowControls() {
   const splitEl = document.getElementById("adminLogSplit");
+  const handleA = document.getElementById("adminLogSplitHandleA");
+  const handleB = document.getElementById("adminLogSplitHandleB");
+  const taskbarEl = document.getElementById("adminLogTaskbar");
+  const emptyEl = document.getElementById("adminLogEmpty");
   const serverPane = document.getElementById("serverConsolePane");
   const pollerPane = document.getElementById("pollerConsolePane");
   const statsPane = document.getElementById("statsConsolePane");
-  const handleA = document.getElementById("adminLogSplitHandleA");
-  const handleB = document.getElementById("adminLogSplitHandleB");
-  const emptyEl = document.getElementById("adminLogEmpty");
-  const taskbarEl = document.getElementById("adminLogTaskbar");
-  if (!splitEl || !serverPane || !pollerPane || !statsPane || !handleA || !handleB || !emptyEl || !taskbarEl) return;
+  if (!splitEl || !handleA || !handleB || !taskbarEl || !emptyEl || !serverPane || !pollerPane || !statsPane) return;
 
   const ensurePollerPaneControlsMount = () => {
-    const existing = pollerPane.querySelector?.("#adminPollerPaneControls");
-    if (existing) return existing;
-    const titlebar = pollerPane.querySelector?.(".admin-console-titlebar");
+    const titlebar = pollerPane.querySelector(".admin-console-titlebar");
     if (!titlebar) return null;
-    const mount = document.createElement("span");
+
+    let mount = document.getElementById("adminPollerPaneControls");
+    if (mount?.parentElement === titlebar) return mount;
+    if (mount) mount.remove();
+
+    mount = document.createElement("div");
     mount.id = "adminPollerPaneControls";
     mount.className = "admin-poller-pane-controls";
     // Put at the far right: title has margin-left:auto.
@@ -914,6 +828,7 @@ function setupLogSplitView() {
   const minStats = 0.2; // stats pane at least 20%
   const min = 0.18; // other panes at least 18%
   const step = 0.02;
+  const clamp = (value, minValue, maxValue) => Math.min(maxValue, Math.max(minValue, value));
 
   const _width = (el) => {
     if (!el) return 0;
@@ -1444,6 +1359,9 @@ let serverLogViewer;
 let pollerLogViewer;
 let logRefreshTick = 0;
 let logRefreshSeq = 0;
+let logPollTimer = null;
+let mapPollTimer = null;
+let statsPollTimer = null;
 
 function isEditingAdminDatalist() {
   const el = document.activeElement;
@@ -1785,6 +1703,24 @@ async function refreshStats() {
   } catch (e) {
     setStatsHint(adminEndpointErrorMessage(e, "Stats"), true);
   }
+}
+
+function shouldPollStatsFromStorage() {
+  const visible = window.__adminLogWindowState?.getVisiblePair?.();
+  if (!visible) return true;
+  return !!visible.stats;
+}
+
+function startStatsPolling() {
+  if (statsPollTimer) return;
+  void refreshStats();
+  statsPollTimer = window.setInterval(refreshStats, 10000);
+}
+
+function stopStatsPolling() {
+  if (!statsPollTimer) return;
+  window.clearInterval(statsPollTimer);
+  statsPollTimer = null;
 }
 
 function setupCsvDownload() {
@@ -2235,16 +2171,14 @@ function setupDeleteSalesTool() {
 
 function setupMarketConfigEditor() {
   const KEY_DEFAULT = "market";
-  const MARKET_META_KEY = "market";
   const jsonEl = document.getElementById("marketCfgJson");
   const prettyEl = document.getElementById("marketCfgJsonPretty");
-  const fieldsEl = document.getElementById("marketCfgFields");
   const keyEl = document.getElementById("marketCfgKey");
   const saveBtn = document.getElementById("marketCfgSaveBtn");
   const fmtBtn = document.getElementById("marketCfgFormatBtn");
   const reloadBtn = document.getElementById("marketCfgReloadBtn");
   const hintEl = document.getElementById("marketCfgHint");
-  if (!jsonEl || !prettyEl || !fieldsEl || !saveBtn || !fmtBtn || !reloadBtn || !hintEl) return;
+  if (!jsonEl || !prettyEl || !saveBtn || !fmtBtn || !reloadBtn || !hintEl) return;
 
   const setHint = (text, isWarn = false) => {
     hintEl.textContent = text || "";
@@ -2266,8 +2200,6 @@ function setupMarketConfigEditor() {
     const mm = pad2(d.getMinutes());
     return `${dd}-${MM}-${yyyy} ${HH}:${mm}`;
   };
-
-  let currentParsed = null; // object|array|primitive|null
 
   const escapeHtml = (s) =>
     String(s)
@@ -2326,257 +2258,9 @@ function setupMarketConfigEditor() {
     prettyEl.scrollLeft = jsonEl.scrollLeft;
   };
 
-  const META = {
-    alert_enabled: {
-      label: "Enable alerts",
-      help: "Turns alerting on/off globally.",
-      type: "boolean",
-    },
-    alert_require_flip_signal: {
-      label: "Require flip signal",
-      help: "When enabled, alerts only fire if a flip opportunity exists. Disable for pure price-drop alerts.",
-      type: "boolean",
-    },
-    alert_threshold_pct: {
-      label: "Threshold (%)",
-      help: "Minimum percent drop required to trigger an alert.",
-      type: "number",
-    },
-    alert_history_cycles: {
-      label: "History cycles",
-      help: "How many past cycles to compare against.",
-      type: "number",
-    },
-    alert_min_total_results: {
-      label: "Min results",
-      help: "Ignore items with fewer total results than this.",
-      type: "number",
-    },
-    alert_min_floor_listings: {
-      label: "Min floor listings",
-      help: "Minimum listings required to treat the floor as reliable.",
-      type: "number",
-    },
-    alert_floor_band_pct: {
-      label: "Floor band (%)",
-      help: "Treat listings within this percent of the floor as the floor band.",
-      type: "number",
-    },
-    alert_low_liquidity_extra_drop_pct: {
-      label: "Low-liquidity extra drop (%)",
-      help: "Extra drop required when liquidity is low.",
-      type: "number",
-    },
-    alert_cooldown_cycles: {
-      label: "Cooldown cycles",
-      help: "Minimum cycles between alerts for the same item.",
-      type: "number",
-    },
-    notify_flip_min_profit_mirrors_over_1: {
-      label: "Flip min profit (>1 mirror)",
-      help: "Required gross profit in mirrors when cheapest listing is over 1 mirror.",
-      type: "number",
-    },
-    notify_flip_min_profit_divines_at_or_below_1: {
-      label: "Flip min profit (<=1 mirror, divines)",
-      help: "Required gross profit in divines when cheapest listing is 1 mirror or below.",
-      type: "number",
-    },
-    sales_discord_window_days: {
-      label: "Sales Discord window (days)",
-      help: 'Rolling window for "total est. sold" in Discord sale notifications (match your chart period, e.g. 90 ~ 3m preset).',
-    },
-    inference_listings_fetch_cap: {
-      label: "Inference listings fetch cap",
-      help: "Max search result IDs to fetch for sale inference per item (PoE caps at 100; 0 disables).",
-    },
-    inference_truncation_safe_margin_pct: {
-      label: "Inference truncation safe margin (%)",
-      help: "Safe margin for truncation of inference results. Anything above this margin is ignored.",
-    },
-    inference_sale_baseline_history_cycles: {
-      label: "Inference baseline history cycles",
-      help: "Number of past cycles used to compute the median baseline price for sale inference.",
-      type: "number",
-    },
-    inference_sale_unlist_if_above_baseline_pct: {
-      label: "Inference unlist above baseline (%)",
-      help: "If a vanished listing is above baseline by more than this percent, treat it as unlisting, not sale.",
-      type: "number",
-    },
-    inference_sale_floor_ignore_if_floor_below_mirrors: {
-      label: "Inference low-floor cap (mirrors)",
-      help: "Apply the floor-gap sale filter only when cheapest listing is below this mirror value.",
-      type: "number",
-    },
-    inference_sale_baseline_range_mirrors: {
-      label: "Inference baseline range (mirrors)",
-      help: "In low-floor markets, treat vanished listings outside +/- this many mirrors from baseline as unlisting, not sale.",
-      type: "number",
-    },
-    late_relist_window_days: {
-      label: "Late relist window (days)",
-      help: "How long a same-seller reappearance can still revert a previously inferred sale.",
-      type: "number",
-    },
-    notify_always_if_cheap_enabled: {
-      label: "Always notify if cheap",
-      help: "Enable override notifications for listings that look extremely cheap versus market context.",
-      type: "boolean",
-    },
-    notify_always_if_cheap_max_buy_divines: {
-      label: "Always notify max buy (divines)",
-      help: "Maximum buy price (in divines) for the cheap-override notification rule.",
-      type: "number",
-    },
-    notify_always_if_cheap_if_next_price_at_least_mirrors: {
-      label: "Always notify min next price (mirrors)",
-      help: "Require next market price to be at least this many mirrors for cheap-override notifications.",
-      type: "number",
-    },
-    notify_always_if_buy_currency_exalted: {
-      label: "Always notify if buy in exalted",
-      help: "Treat exalted-priced buys as a strong misprice signal and allow override notifications.",
-      type: "boolean",
-    },
-  };
-
   const getSelectedKey = () => {
     const raw = String(keyEl?.value || "").trim();
     return raw || KEY_DEFAULT;
-  };
-
-  const renderFields = (value) => {
-    fieldsEl.innerHTML = "";
-    currentParsed = value;
-
-    const selectedKey = getSelectedKey();
-    const canUseMeta = selectedKey === MARKET_META_KEY;
-
-    // Only render a nice editor for plain objects (the expected app_config shape).
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      const note = document.createElement("p");
-      note.className = "admin-muted";
-      note.textContent = "This value is not a JSON object. Use Advanced JSON.";
-      fieldsEl.appendChild(note);
-      return;
-    }
-
-    const keys = Object.keys(value).sort((a, b) => {
-      if (canUseMeta) {
-        const aHas = Object.prototype.hasOwnProperty.call(META, a);
-        const bHas = Object.prototype.hasOwnProperty.call(META, b);
-        if (aHas && !bHas) return -1;
-        if (!aHas && bHas) return 1;
-      }
-      return a.localeCompare(b);
-    });
-    if (!keys.length) {
-      const note = document.createElement("p");
-      note.className = "admin-muted";
-      note.textContent = "Empty object. Edit in Advanced JSON.";
-      fieldsEl.appendChild(note);
-      return;
-    }
-
-    for (const k of keys) {
-      const row = document.createElement("div");
-      row.className = "admin-marketcfg-field";
-
-      const labelWrap = document.createElement("div");
-      labelWrap.className = "admin-marketcfg-label";
-      const meta = canUseMeta ? META[k] || null : null;
-      const title = document.createElement("strong");
-      title.textContent = meta?.label || k;
-      const help = document.createElement("div");
-      help.className = "admin-marketcfg-help";
-      help.textContent = meta?.help || `Key: ${k}`;
-      labelWrap.appendChild(title);
-      labelWrap.appendChild(help);
-
-      const wrap = document.createElement("div");
-      wrap.className = "admin-marketcfg-control";
-
-      const v = value[k];
-      const inputId = `appcfg_${k}`;
-
-      if (typeof v === "boolean") {
-        const label = document.createElement("label");
-        label.className = "admin-marketcfg-toggle";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.id = inputId;
-        cb.checked = v;
-        cb.setAttribute("data-key", k);
-        cb.setAttribute("data-kind", "bool");
-        label.appendChild(cb);
-        const txt = document.createElement("span");
-        txt.textContent = v ? "Enabled" : "Disabled";
-        cb.addEventListener("change", () => {
-          txt.textContent = cb.checked ? "Enabled" : "Disabled";
-        });
-        label.appendChild(txt);
-        wrap.appendChild(label);
-      } else if (typeof v === "number") {
-        const inp = document.createElement("input");
-        inp.type = "number";
-        inp.className = "admin-appconfig-input admin-appconfig-num";
-        inp.id = inputId;
-        inp.value = String(v);
-        inp.setAttribute("data-key", k);
-        inp.setAttribute("data-kind", "number");
-        // allow decimals
-        inp.step = "any";
-        wrap.appendChild(inp);
-      } else if (typeof v === "string") {
-        const inp = document.createElement("input");
-        inp.type = "text";
-        inp.className = "admin-appconfig-input";
-        inp.id = inputId;
-        inp.value = v;
-        inp.setAttribute("data-key", k);
-        inp.setAttribute("data-kind", "string");
-        wrap.appendChild(inp);
-      } else {
-        // fallback: show JSON for nested values, still editable.
-        const inp = document.createElement("textarea");
-        inp.className = "admin-db-sql";
-        inp.style.minHeight = "80px";
-        inp.value = JSON.stringify(v, null, 2);
-        inp.setAttribute("data-key", k);
-        inp.setAttribute("data-kind", "json");
-        wrap.appendChild(inp);
-      }
-
-      row.appendChild(labelWrap);
-      row.appendChild(wrap);
-      fieldsEl.appendChild(row);
-    }
-  };
-
-  const readFieldsToObject = () => {
-    // If not a plain object, just rely on raw JSON editor.
-    if (!currentParsed || typeof currentParsed !== "object" || Array.isArray(currentParsed)) return null;
-    const out = { ...currentParsed };
-    const inputs = fieldsEl.querySelectorAll("[data-key][data-kind]");
-    for (const el of inputs) {
-      const key = el.getAttribute("data-key");
-      const kind = el.getAttribute("data-kind");
-      if (!key || !kind) continue;
-      if (kind === "bool") {
-        out[key] = !!el.checked;
-      } else if (kind === "number") {
-        const n = Number(el.value);
-        if (!Number.isFinite(n)) throw new Error(`Invalid number for "${key}"`);
-        out[key] = n;
-      } else if (kind === "string") {
-        out[key] = String(el.value ?? "");
-      } else if (kind === "json") {
-        const raw = String(el.value || "").trim();
-        out[key] = raw ? JSON.parse(raw) : null;
-      }
-    }
-    return out;
   };
 
   const loadKey = async () => {
@@ -2591,12 +2275,6 @@ function setupMarketConfigEditor() {
       }
       jsonEl.value = payload?.value_json || "";
       syncHighlight();
-      try {
-        const parsed = JSON.parse(jsonEl.value || "null");
-        renderFields(parsed);
-      } catch {
-        renderFields(null);
-      }
       setHint(
         payload?.updated_at_utc
           ? `Loaded ${key} · updated ${formatConfigTimestamp(payload.updated_at_utc)}`
@@ -2619,7 +2297,6 @@ function setupMarketConfigEditor() {
       const parsed = JSON.parse(raw);
       jsonEl.value = JSON.stringify(parsed, null, 2);
       syncHighlight();
-      renderFields(parsed);
       setHint("Formatted.");
     } catch (e) {
       setHint(`Invalid JSON: ${e?.message || e}`, true);
@@ -2628,21 +2305,7 @@ function setupMarketConfigEditor() {
 
   const saveKey = async () => {
     const key = getSelectedKey();
-    // Prefer the form editor (fields) when possible.
-    let raw = "";
-    try {
-      const fromFields = readFieldsToObject();
-      if (fromFields) {
-        raw = JSON.stringify(fromFields, null, 2);
-        jsonEl.value = raw; // keep advanced view in sync
-        syncHighlight();
-      } else {
-        raw = (jsonEl.value || "").trim();
-      }
-    } catch (e) {
-      setHint(e?.message ? String(e.message) : `Invalid value: ${e}`, true);
-      return;
-    }
+    const raw = (jsonEl.value || "").trim();
     if (!raw) {
       setHint("Value is empty.", true);
       return;
@@ -2670,11 +2333,6 @@ function setupMarketConfigEditor() {
       if (typeof payload.value_json === "string") {
         jsonEl.value = payload.value_json;
         syncHighlight();
-        try {
-          renderFields(JSON.parse(payload.value_json));
-        } catch {
-          // ignore
-        }
       }
       setHint(
         payload?.updated_at_utc
@@ -2695,14 +2353,7 @@ function setupMarketConfigEditor() {
 
   jsonEl.addEventListener("input", () => {
     syncHighlight();
-    // Keep fields in sync if user edits raw JSON.
-    try {
-      const parsed = JSON.parse(jsonEl.value || "null");
-      renderFields(parsed);
-      setHint("");
-    } catch {
-      // don't spam warnings while typing
-    }
+    setHint("");
   });
 
   jsonEl.addEventListener("scroll", syncScroll);

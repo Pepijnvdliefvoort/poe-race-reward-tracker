@@ -24,5 +24,23 @@
   "notify_always_if_cheap_if_next_price_at_least_mirrors": 1.0,
   "notify_always_if_buy_currency_exalted": true,
 
-  "sales_discord_window_days": 90
+  "sales_discord_window_days": 90,
+  "discord_market_watch_users": [
+    {
+      "seller_name": "iNeoxiz",
+      "user_id": "146251738700054530"
+    },
+    {
+      "seller_name": "ABVT",
+      "user_id": "184699151986982912"
+    },
+    {
+      "seller_name": "junglechrist",
+      "user_id": "278142871427874816"
+    },
+    {
+      "seller_name": "nachodotcom",
+      "user_id": "186878560789594112"
+    }
+  ]
 }
