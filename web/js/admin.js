@@ -2394,15 +2394,50 @@ function setupMarketConfigEditor() {
       label: "Inference truncation safe margin (%)",
       help: "Safe margin for truncation of inference results. Anything above this margin is ignored.",
     },
+    inference_sale_baseline_history_cycles: {
+      label: "Inference baseline history cycles",
+      help: "Number of past cycles used to compute the median baseline price for sale inference.",
+      type: "number",
+    },
+    inference_sale_unlist_if_above_baseline_pct: {
+      label: "Inference unlist above baseline (%)",
+      help: "If a vanished listing is above baseline by more than this percent, treat it as unlisting, not sale.",
+      type: "number",
+    },
     inference_sale_floor_ignore_if_floor_below_mirrors: {
       label: "Inference low-floor cap (mirrors)",
       help: "Apply the floor-gap sale filter only when cheapest listing is below this mirror value.",
       type: "number",
     },
-    inference_sale_floor_ignore_if_above_by_mirrors: {
-      label: "Inference floor-gap ignore (mirrors)",
-      help: "If a vanished listing is this many mirrors above floor in low-floor markets, treat as unlisting, not sale.",
+    inference_sale_baseline_range_mirrors: {
+      label: "Inference baseline range (mirrors)",
+      help: "In low-floor markets, treat vanished listings outside +/- this many mirrors from baseline as unlisting, not sale.",
       type: "number",
+    },
+    late_relist_window_days: {
+      label: "Late relist window (days)",
+      help: "How long a same-seller reappearance can still revert a previously inferred sale.",
+      type: "number",
+    },
+    notify_always_if_cheap_enabled: {
+      label: "Always notify if cheap",
+      help: "Enable override notifications for listings that look extremely cheap versus market context.",
+      type: "boolean",
+    },
+    notify_always_if_cheap_max_buy_divines: {
+      label: "Always notify max buy (divines)",
+      help: "Maximum buy price (in divines) for the cheap-override notification rule.",
+      type: "number",
+    },
+    notify_always_if_cheap_if_next_price_at_least_mirrors: {
+      label: "Always notify min next price (mirrors)",
+      help: "Require next market price to be at least this many mirrors for cheap-override notifications.",
+      type: "number",
+    },
+    notify_always_if_buy_currency_exalted: {
+      label: "Always notify if buy in exalted",
+      help: "Treat exalted-priced buys as a strong misprice signal and allow override notifications.",
+      type: "boolean",
     },
   };
 

@@ -40,5 +40,24 @@ listings_cache.json
 config.json
 logs/
 data/market.db
+data/market.repaired*.db
 requests/*
 .cursor
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store
+
+# Jupyter and notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Local development scripts and tools
+*.test.py
+
+# Secrets and deployment
+deploy/secrets.env
+deploy/.env
