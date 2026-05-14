@@ -4,6 +4,7 @@ import sqlite3
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from pathlib import Path
 
 import requests
@@ -35,6 +36,10 @@ class DbExportConfig:
     tz_offset_minutes: int = 120  # GMT+2 default
     schedule_hour: int = 12
     schedule_minute: int = 0
+
+
+# Keep parts safely below lower-tier Discord webhook limits to avoid HTTP 413.
+DISCORD_SAFE_PART_SIZE_BYTES = 7 * 1024 * 1024  # 7 MiB
 
 
 def _snapshot_sqlite_db(src_db_path: Path, dst_db_path: Path) -> None:
@@ -121,9 +126,99 @@ def _discord_webhook_post_file(
             webhook_url,
             headers=headers,
             data={"content": content},
-            files={"file": (file_path.name, fh, "application/zip")},
+            files={"file": (file_path.name, fh, "application/octet-stream")},
             timeout=timeout,
         )
+
+
+def _split_file_into_parts(*, src_path: Path, part_size_bytes: int) -> list[Path]:
+    if part_size_bytes <= 0:
+        raise ValueError("part_size_bytes must be > 0")
+
+    src_size = int(src_path.stat().st_size)
+    if src_size <= part_size_bytes:
+        return [src_path]
+
+    total_parts = int(ceil(src_size / float(part_size_bytes)))
+    parts: list[Path] = []
+    with src_path.open("rb") as in_fh:
+        for idx in range(total_parts):
+            part_name = f"{src_path.name}.part{idx + 1:03d}"
+            part_path = src_path.with_name(part_name)
+            with part_path.open("wb") as out_fh:
+                out_fh.write(in_fh.read(part_size_bytes))
+            parts.append(part_path)
+    return parts
+
+
+def _raise_http_error_with_body(*, resp: requests.Response, exc: Exception, body_limit: int) -> None:
+    text = ""
+    try:
+        text = (resp.text or "").strip()
+    except Exception:  # noqa: BLE001
+        text = ""
+    if len(text) > body_limit:
+        text = text[:body_limit] + "…"
+    status = getattr(resp, "status_code", None)
+    suffix = f" Body: {text}" if text else ""
+    raise requests.HTTPError(f"{exc} (HTTP {status}).{suffix}") from exc
+
+
+def _upload_file_or_parts_to_discord(
+    *,
+    webhook_url: str,
+    content_prefix: str,
+    file_path: Path,
+    timeout: float,
+    log: callable,
+) -> None:
+    file_size = int(file_path.stat().st_size)
+    if file_size <= DISCORD_SAFE_PART_SIZE_BYTES:
+        resp = _discord_webhook_post_file(
+            webhook_url=webhook_url,
+            content=content_prefix,
+            file_path=file_path,
+            timeout=timeout,
+        )
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            _raise_http_error_with_body(resp=resp, exc=exc, body_limit=1200)
+        return
+
+    parts = _split_file_into_parts(src_path=file_path, part_size_bytes=DISCORD_SAFE_PART_SIZE_BYTES)
+    total_parts = len(parts)
+    log(
+        "warn",
+        (
+            f"DB export archive is {file_size / (1024 * 1024):.2f} MiB; "
+            f"uploading as {total_parts} parts (~{DISCORD_SAFE_PART_SIZE_BYTES / (1024 * 1024):.2f} MiB each)."
+        ),
+    )
+    try:
+        for idx, part_path in enumerate(parts, start=1):
+            content = (
+                f"{content_prefix}"
+                f"\nPart {idx}/{total_parts}: `{part_path.name}`"
+                "\nReassemble by concatenating parts in order."
+            )
+            resp = _discord_webhook_post_file(
+                webhook_url=webhook_url,
+                content=content,
+                file_path=part_path,
+                timeout=timeout,
+            )
+            try:
+                resp.raise_for_status()
+            except requests.HTTPError as exc:
+                _raise_http_error_with_body(resp=resp, exc=exc, body_limit=1200)
+    finally:
+        for part_path in parts:
+            if part_path != file_path:
+                try:
+                    part_path.unlink(missing_ok=True)
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 def maybe_export_db_to_discord(
@@ -172,36 +267,13 @@ def maybe_export_db_to_discord(
         size_mb = size_bytes / (1024 * 1024)
         ts = int(now_utc.timestamp())
         content = f"Daily DB export at <t:{ts}:F>, `{zip_path.name}` ({size_mb:.2f} MiB)."
-        # Discord upload limits vary by server / plan; common default is 25 MiB.
-        # If we exceed it, Discord returns HTTP 400 with a JSON body; preflight for clearer logs.
-        if size_bytes > 25 * 1024 * 1024:
-            log(
-                "warn",
-                (
-                    "DB export zip is too large for typical Discord webhook limits "
-                    f"({size_mb:.2f} MiB > 25.00 MiB): {zip_path}"
-                ),
-            )
-            return
-        resp = _discord_webhook_post_file(
+        _upload_file_or_parts_to_discord(
             webhook_url=webhook_url,
-            content=content,
+            content_prefix=content,
             file_path=zip_path,
             timeout=90.0,
+            log=log,
         )
-        try:
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            text = ""
-            try:
-                text = (resp.text or "").strip()
-            except Exception:  # noqa: BLE001
-                text = ""
-            if len(text) > 1200:
-                text = text[:1200] + "…"
-            status = getattr(resp, "status_code", None)
-            suffix = f" Body: {text}" if text else ""
-            raise requests.HTTPError(f"{exc} (HTTP {status}).{suffix}") from exc
 
         storage.set_config(
             key="db_export",
@@ -258,29 +330,16 @@ def export_db_to_discord_now(
     size_mb = size_bytes / (1024 * 1024)
     ts = int(now_utc.timestamp())
     content = f"Manual DB export at <t:{ts}:F>, `{zip_path.name}` ({size_mb:.2f} MiB)."
-    resp = _discord_webhook_post_file(
-        webhook_url=webhook_url,
-        content=content,
-        file_path=zip_path,
-        timeout=90.0,
-    )
     try:
-        resp.raise_for_status()
+        _upload_file_or_parts_to_discord(
+            webhook_url=webhook_url,
+            content_prefix=content,
+            file_path=zip_path,
+            timeout=90.0,
+            log=log,
+        )
     except requests.HTTPError as exc:
-        # Discord often returns a useful JSON/body (e.g. file too large / invalid webhook).
-        # Bubble that up so the admin UI can display a meaningful failure reason.
-        text = ""
-        try:
-            text = (resp.text or "").strip()
-        except Exception:  # noqa: BLE001
-            text = ""
-        if len(text) > 800:
-            text = text[:800] + "…"
-        status = getattr(resp, "status_code", None)
-        return {
-            "ok": False,
-            "error": f"Discord upload failed (HTTP {status}): {text}" if text else f"Discord upload failed (HTTP {status}).",
-        }
+        return {"ok": False, "error": f"Discord upload failed: {exc}"}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"Discord upload failed: {exc}"}
 
