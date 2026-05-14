@@ -903,6 +903,7 @@ def evaluate_listing_transition(
                 "itemKey": item_key,
                 "fingerprint": fp,
                 "seller": seller,
+                "mirrorEquiv": b,
                 "prevMirrorEquiv": a,
                 "currMirrorEquiv": b,
                 "prevPriceAmount": pm.get("priceAmount"),
