@@ -117,6 +117,7 @@ let visitorMarkersByIp = {};
 let lastVisitorMapData = null;
 let userFocusedVisitor = false;
 const visitorTableSort = { key: "visits", direction: "desc" };
+const VISITOR_TABLE_LIMIT = 10;
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -227,9 +228,14 @@ function renderVisitorTable(data) {
   const statsEl = document.getElementById("visitorStats");
   if (!body || !table) return;
 
-  const points = Array.isArray(data?.points) ? data.points.slice() : [];
+  const allPoints = Array.isArray(data?.points) ? data.points.slice() : [];
+  const points = allPoints
+    .sort((a, b) => (Number(b?.visits) || 0) - (Number(a?.visits) || 0))
+    .slice(0, VISITOR_TABLE_LIMIT);
   if (statsEl) {
-    statsEl.textContent = `${points.length} visitor location${points.length === 1 ? "" : "s"}`;
+    const total = allPoints.length;
+    const suffix = total > VISITOR_TABLE_LIMIT ? ` (table shows top ${VISITOR_TABLE_LIMIT})` : "";
+    statsEl.textContent = `${total} visitor location${total === 1 ? "" : "s"}${suffix}`;
   }
 
   const parseDate = (value) => {
@@ -2173,12 +2179,23 @@ function setupMarketConfigEditor() {
   const KEY_DEFAULT = "market";
   const jsonEl = document.getElementById("marketCfgJson");
   const prettyEl = document.getElementById("marketCfgJsonPretty");
+  const editorEl = jsonEl?.closest(".admin-json-editor");
   const keyEl = document.getElementById("marketCfgKey");
   const saveBtn = document.getElementById("marketCfgSaveBtn");
   const fmtBtn = document.getElementById("marketCfgFormatBtn");
   const reloadBtn = document.getElementById("marketCfgReloadBtn");
   const hintEl = document.getElementById("marketCfgHint");
-  if (!jsonEl || !prettyEl || !saveBtn || !fmtBtn || !reloadBtn || !hintEl) return;
+  if (!jsonEl || !prettyEl || !editorEl || !saveBtn || !fmtBtn || !reloadBtn || !hintEl) return;
+
+  const MIN_JSON_EDITOR_HEIGHT_PX = 120;
+  const fitJsonEditorToContent = () => {
+    jsonEl.style.height = "auto";
+    const targetHeight = Math.max(MIN_JSON_EDITOR_HEIGHT_PX, jsonEl.scrollHeight);
+    const px = `${targetHeight}px`;
+    editorEl.style.height = px;
+    prettyEl.style.height = px;
+    jsonEl.style.height = px;
+  };
 
   const setHint = (text, isWarn = false) => {
     hintEl.textContent = text || "";
@@ -2246,6 +2263,7 @@ function setupMarketConfigEditor() {
   const syncHighlight = () => {
     if (hlTimer) window.clearTimeout(hlTimer);
     hlTimer = window.setTimeout(() => {
+      fitJsonEditorToContent();
       prettyEl.innerHTML = highlightJson(jsonEl.value || "");
       // sync scroll
       prettyEl.scrollTop = jsonEl.scrollTop;
@@ -2352,6 +2370,7 @@ function setupMarketConfigEditor() {
   keyEl?.addEventListener("change", () => void loadKey());
 
   jsonEl.addEventListener("input", () => {
+    fitJsonEditorToContent();
     syncHighlight();
     setHint("");
   });
@@ -2367,6 +2386,7 @@ function setupMarketConfigEditor() {
   });
 
   // Initial paint
+  fitJsonEditorToContent();
   syncHighlight();
   void loadKey();
 }
