@@ -1,32 +1,10 @@
-# Multi version AAs
-Demigod's Touch|aa|Gloves|DemigodsTouch.png
-Demigod's Touch|aa|Gloves|DemigodsTouchAlt.png
-Andvarius|aa|Ring|RingUnique1.png
-Andvarius|aa|Ring|andvariusAlt.png
-Dream Fragments|aa|Ring|DreamFragmentsAlt2.png
-Dream Fragments|aa|Ring|DreamFragmentsAlt.png
-Lavianga's Spirit|aa|Flask|LaviangasOilAlt.png
-Lavianga's Spirit|aa|Flask|LaviangasOil2.png
-Death Rush|aa|Ring|DeathRushAlt.png
-Death Rush|aa|Ring|BloodRIng.png
-Wanderlust|aa|Boots|Wanderlust2.png
-Wanderlust|aa|Boots|WanderlustAlt3.png
-Voll's Devotion|aa|Amulet|VollsDevotionAltArt2.png
-Voll's Devotion|aa|Amulet|AgateAmuletUnique2.png
-Stone of Lazhwar|aa|Amulet|StoneofLazhwarAlt.png
-Stone of Lazhwar|aa|Amulet|Amulet5Unique2.png
-Atziri's Foible|aa|Amulet|AtzirisFoibleAlt.png
-Atziri's Foible|aa|Amulet|AtzirisFoibleAlt2.png
-Meginord's Girdle|aa|Belt|MeginordsGirdleAlt.png
-Meginord's Girdle|aa|Belt|MeginordsGirdleAlt2.png
-
-# Individual alt arts
 Tabula Rasa|aa|Body Armour
 Queen's Decree|aa|Two-Handed Sword
 Storm Cloud|aa|Bow
 Headhunter|aa|Belt
 Alpha's Howl|aa|Helmet
 Demigod's Stride|aa|Boots
+Demigod's Touch|aa|Gloves|DemigodsTouchAlt.png
 Demigod's Immortality|aa|Helmet
 Demigod's Triumph|aa|Helmet
 Demigod's Bounty|aa|Belt
@@ -37,6 +15,7 @@ Talisman of the Victor|aa|Amulet
 Demigod's Presence|normal|Amulet
 Demigod's Authority|normal|One-Handed Sword
 Demigod's Stride|normal|Boots
+Demigod's Touch|aa|Gloves|DemigodsTouch.png
 Demigod's Immortality|normal|Helmet
 Demigod's Triumph|normal|Helmet
 Demigod's Bounty|normal|Belt
@@ -64,6 +43,24 @@ Perandus Signet|aa|Ring
 Ming's Heart|aa|Ring
 Starkonja's Head|aa|Helmet
 Saffell's Frame|aa|Shield
+Andvarius|aa|Ring|RingUnique1.png
+Andvarius|aa|Ring|andvariusAlt.png
+Dream Fragments|aa|Ring|DreamFragmentsAlt2.png
+Dream Fragments|aa|Ring|DreamFragmentsAlt.png
+Lavianga's Spirit|aa|Flask|LaviangasOilAlt.png
+Lavianga's Spirit|aa|Flask|LaviangasOil2.png
+Death Rush|aa|Ring|DeathRushAlt.png
+Death Rush|aa|Ring|BloodRIng.png
+Wanderlust|aa|Boots|Wanderlust2.png
+Wanderlust|aa|Boots|WanderlustAlt3.png
+Voll's Devotion|aa|Amulet|VollsDevotionAltArt2.png
+Voll's Devotion|aa|Amulet|AgateAmuletUnique2.png
+Stone of Lazhwar|aa|Amulet|StoneofLazhwarAlt.png
+Stone of Lazhwar|aa|Amulet|Amulet5Unique2.png
+Atziri's Foible|aa|Amulet|AtzirisFoibleAlt.png
+Atziri's Foible|aa|Amulet|AtzirisFoibleAlt2.png
+Meginord's Girdle|aa|Belt|MeginordsGirdleAlt.png
+Meginord's Girdle|aa|Belt|MeginordsGirdleAlt2.png
 Daresso's Salute|aa|Amulet
 Bino's Kitchen Knife|aa|Dagger
 Rathpith Globe|aa|Shield
