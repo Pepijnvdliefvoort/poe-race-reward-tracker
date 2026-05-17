@@ -374,6 +374,10 @@ def _reprice_sentence(ev: dict[str, Any], *, divines_per_mirror: float | None) -
     fp = _fmt_short_fp(ev.get("fingerprint"))
     pct = _fmt_signed_pct(ev.get("prevMirrorEquiv"), ev.get("currMirrorEquiv"))
     tail_parts: list[str] = []
+    if ev.get("isInstant") is True:
+        tail_parts.append("faustus trade")
+    elif ev.get("isInstant") is False:
+        tail_parts.append("in-person trade")
     if pct:
         tail_parts.append(pct)
     if fp:
