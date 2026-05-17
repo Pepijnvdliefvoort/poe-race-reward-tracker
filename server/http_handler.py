@@ -202,6 +202,28 @@ def _resolve_local_item_icon_for_variant(display_name: str, mode: str, image_nam
     return _resolve_local_item_icon(display_name, mode)
 
 
+def _versioned_local_icon_url(relative_url: str | None) -> str | None:
+    """Append a file-mtime cache buster to local icon URLs.
+
+    Discord and browsers can cache image URLs aggressively; adding a stable version
+    token based on icon file mtime makes updates visible immediately after deploy.
+    """
+    if not relative_url:
+        return None
+    rel = str(relative_url).strip()
+    if not rel.startswith("/assets/icons/"):
+        return rel
+    path_only, sep, query = rel.partition("?")
+    local_path = WEB_DIR / path_only.lstrip("/")
+    try:
+        version = str(int(local_path.stat().st_mtime))
+    except OSError:
+        return rel
+    if sep and query:
+        return f"{path_only}?{query}&v={version}"
+    return f"{path_only}?v={version}"
+
+
 def _median_float(values: list[float]) -> float | None:
     clean = [float(v) for v in values if isinstance(v, (int, float))]
     if not clean:
@@ -1372,7 +1394,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 image_filter = str(variant_row["image_name_filter"] or "").strip() or None
 
                 icon_rel = _resolve_local_item_icon_for_variant(display_name, mode, image_filter)
-                icon_abs = (_request_base_url(self.headers) + icon_rel) if icon_rel else None
+                icon_url = _versioned_local_icon_url(icon_rel)
+                icon_abs = (_request_base_url(self.headers) + icon_url) if icon_url else None
 
                 current_low = None
                 query_id = ""
@@ -1954,7 +1977,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     str(first["display_name"] or ""),
                     str(first["mode"] or ""),
                 )
-                image_url = (_request_base_url(self.headers) + _local_icon) if _local_icon else None
+                _icon_url = _versioned_local_icon_url(_local_icon)
+                image_url = (_request_base_url(self.headers) + _icon_url) if _icon_url else None
 
                 session = requests.Session()
                 send_estimated_sales_change_notification(
