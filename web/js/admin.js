@@ -229,9 +229,6 @@ function renderVisitorTable(data) {
   if (!body || !table) return;
 
   const allPoints = Array.isArray(data?.points) ? data.points.slice() : [];
-  const points = allPoints
-    .sort((a, b) => (Number(b?.visits) || 0) - (Number(a?.visits) || 0))
-    .slice(0, VISITOR_TABLE_LIMIT);
   if (statsEl) {
     const total = allPoints.length;
     const suffix = total > VISITOR_TABLE_LIMIT ? ` (table shows top ${VISITOR_TABLE_LIMIT})` : "";
@@ -244,7 +241,7 @@ function renderVisitorTable(data) {
     return Number.isNaN(d.getTime()) ? 0 : d.getTime();
   };
 
-  points.sort((a, b) => {
+  const sortedPoints = allPoints.sort((a, b) => {
     const key = visitorTableSort.key;
     const dir = visitorTableSort.direction === "asc" ? 1 : -1;
     if (key === "ip") {
@@ -255,6 +252,8 @@ function renderVisitorTable(data) {
     }
     return dir * ((Number(a?.visits) || 0) - (Number(b?.visits) || 0));
   });
+
+  const points = sortedPoints.slice(0, VISITOR_TABLE_LIMIT);
 
   body.innerHTML = points
     .map((row) => {
@@ -303,7 +302,7 @@ function renderVisitorTable(data) {
         visitorTableSort.key = key;
         visitorTableSort.direction = key === "ip" ? "asc" : "desc";
       }
-      renderVisitorTable(lastVisitorMapData || { points });
+      renderVisitorTable(lastVisitorMapData || { points: allPoints });
     });
   });
 }
@@ -2406,9 +2405,11 @@ function setupDeleteSalesTool() {
 
 function setupMarketConfigEditor() {
   const KEY_DEFAULT = "market";
+  const JSON_EDITOR_OPEN_STORAGE_KEY = "poe-admin-json-editor-open";
   const jsonEl = document.getElementById("marketCfgJson");
   const prettyEl = document.getElementById("marketCfgJsonPretty");
   const editorEl = jsonEl?.closest(".admin-json-editor");
+  const detailsEl = jsonEl?.closest(".admin-marketcfg-advanced");
   const keyEl = document.getElementById("marketCfgKey");
   const saveBtn = document.getElementById("marketCfgSaveBtn");
   const fmtBtn = document.getElementById("marketCfgFormatBtn");
@@ -2510,6 +2511,27 @@ function setupMarketConfigEditor() {
     return raw || KEY_DEFAULT;
   };
 
+  const restoreJsonEditorOpenState = () => {
+    if (!detailsEl) return;
+    try {
+      const raw = window.localStorage.getItem(JSON_EDITOR_OPEN_STORAGE_KEY);
+      if (raw === "1" || raw === "0") {
+        detailsEl.open = raw === "1";
+      }
+    } catch {
+      // ignore localStorage errors (private mode / blocked storage)
+    }
+  };
+
+  const persistJsonEditorOpenState = () => {
+    if (!detailsEl) return;
+    try {
+      window.localStorage.setItem(JSON_EDITOR_OPEN_STORAGE_KEY, detailsEl.open ? "1" : "0");
+    } catch {
+      // ignore localStorage errors (private mode / blocked storage)
+    }
+  };
+
   const loadKey = async () => {
     const key = getSelectedKey();
     setHint("Loading…");
@@ -2597,6 +2619,7 @@ function setupMarketConfigEditor() {
   fmtBtn.addEventListener("click", () => formatJson());
   reloadBtn.addEventListener("click", () => void loadKey());
   keyEl?.addEventListener("change", () => void loadKey());
+  detailsEl?.addEventListener("toggle", persistJsonEditorOpenState);
 
   jsonEl.addEventListener("input", () => {
     fitJsonEditorToContent();
@@ -2615,6 +2638,7 @@ function setupMarketConfigEditor() {
   });
 
   // Initial paint
+  restoreJsonEditorOpenState();
   fitJsonEditorToContent();
   syncHighlight();
   void loadKey();
