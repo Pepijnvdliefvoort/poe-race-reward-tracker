@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import tempfile
 import requests
 from html import escape
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -42,7 +44,11 @@ from .data_service import (
 )
 from .db_admin_service import db_overview, er_schema, list_tables, preview_table, run_query, table_details
 from .recommendation_service import RecommendationInputError, recommend_investments
-from .sales_discord_notify import send_estimated_sales_change_notification
+from .sales_discord_notify import (
+    send_estimated_sales_change_notification,
+    send_new_item_notification,
+    send_reprice_change_notification,
+)
 
 from storage.db import Database
 from storage.service import StorageService
@@ -96,6 +102,24 @@ def _load_discord_sales_webhook_url_from_env() -> str:
     return ""
 
 
+def _load_discord_alert_webhook_url_from_env() -> str:
+    for env_name in ("DISCORD_WEBHOOK_URL", "POE_DISCORD_WEBHOOK_URL"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _load_discord_reprices_webhook_url_from_env() -> str:
+    reprices = os.getenv("DISCORD_WEBHOOK_URL_REPRICES", "").strip()
+    if reprices:
+        return reprices
+    sales = _load_discord_sales_webhook_url_from_env()
+    if sales:
+        return sales
+    return _load_discord_alert_webhook_url_from_env()
+
+
 def _load_sales_discord_window_days() -> int:
     try:
         cfg = load_config()
@@ -106,7 +130,14 @@ def _load_sales_discord_window_days() -> int:
 
 
 def _request_base_url(headers: Any) -> str:
-    """Derive absolute base URL from incoming request headers (works behind Caddy proxy)."""
+    """Derive absolute base URL from incoming request headers (works behind Caddy proxy).
+
+    If the PUBLIC_BASE_URL env var is set it takes priority over header-derived
+    values, which is required for local dev when Discord needs a reachable URL.
+    """
+    public = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if public:
+        return public
     host = str(headers.get("Host") or "localhost:8080").strip()
     proto = str(headers.get("X-Forwarded-Proto") or "").strip().lower()
     if not proto:
@@ -159,14 +190,55 @@ def _resolve_local_item_icon(display_name: str, mode: str) -> str | None:
     return None
 
 
+def _resolve_local_item_icon_for_variant(display_name: str, mode: str, image_name_filter: str | None) -> str | None:
+    """Resolve icon URL for a specific variant, preferring explicit image_name_filter when provided."""
+    if image_name_filter:
+        stem = str(image_name_filter).rsplit(".", 1)[0]
+        key = _re.sub(r"[^a-z0-9]", "", stem.lower())
+        icon_map = _build_icon_map()
+        rel = icon_map.get(key)
+        if rel:
+            return rel
+    return _resolve_local_item_icon(display_name, mode)
+
+
+def _median_float(values: list[float]) -> float | None:
+    clean = [float(v) for v in values if isinstance(v, (int, float))]
+    if not clean:
+        return None
+    clean.sort()
+    n = len(clean)
+    mid = n // 2
+    if n % 2 == 1:
+        return clean[mid]
+    return (clean[mid - 1] + clean[mid]) / 2.0
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._response_header_names: set[str] = set()
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
+
+    def send_header(self, keyword: str, value: str) -> None:
+        self._response_header_names.add(str(keyword).lower())
+        super().send_header(keyword, value)
+
+    def end_headers(self) -> None:
+        # Static assets/pages should always be fetched fresh to avoid stale JS/CSS
+        # after deploys; API endpoints already set their own cache policy.
+        parsed_path = urlparse(self.path).path if self.path else ""
+        is_api = parsed_path.startswith("/api/")
+        if not is_api and "cache-control" not in self._response_header_names:
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        super().end_headers()
+        self._response_header_names.clear()
 
     def handle_one_request(self) -> None:
         try:
             super().handle_one_request()
-        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):
             # Client disconnected mid-response (refresh/navigation/proxy timeout).
             # Treat as a normal cancellation and avoid emitting a traceback.
             return
@@ -443,6 +515,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                           v.id AS variant_id,
                           v.display_name AS display_name,
                           v.mode AS mode,
+                                                    v.image_name_filter AS image_name_filter,
                           i.name AS base_item_name,
                           (
                             SELECT COUNT(*)
@@ -457,12 +530,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     ).fetchall()
                     variants = []
                     for r in rows:
+                        image_name_filter = str(r["image_name_filter"] or "").strip()
+                        mode = str(r["mode"] or "")
+                        base_item_name = str(r["base_item_name"] or "")
+                        key = f"{base_item_name}::{mode}::{image_name_filter}" if image_name_filter else f"{base_item_name}::{mode}"
                         variants.append(
                             {
                                 "variantId": int(r["variant_id"]),
                                 "displayName": str(r["display_name"] or ""),
-                                "mode": str(r["mode"] or ""),
-                                "baseItemName": str(r["base_item_name"] or ""),
+                                "mode": mode,
+                                "baseItemName": base_item_name,
+                                "imageNameFilter": image_name_filter or None,
+                                "variantKey": key,
                                 "salesCount": int(r["sales_count"] or 0),
                             }
                         )
@@ -749,27 +828,63 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(body)
                     return
 
+                snapshot_path: Path | None = None
                 try:
-                    size = db_path.stat().st_size
-                except OSError:
-                    size = 0
+                    # Export a transactionally consistent snapshot from a live WAL DB.
+                    with tempfile.NamedTemporaryFile(
+                        prefix="market-snapshot-",
+                        suffix=".db",
+                        dir=str(db_path.parent),
+                        delete=False,
+                    ) as tmp:
+                        snapshot_path = Path(tmp.name)
 
-                # Use a stable filename so users can overwrite local copies easily.
-                filename = "market.db"
-                self.send_response(200)
-                self.send_header("Content-Type", "application/x-sqlite3")
-                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
-                self.send_header("Cache-Control", "no-store")
-                if size:
-                    self.send_header("Content-Length", str(size))
-                self.end_headers()
-                with db_path.open("rb") as fh:
-                    while True:
-                        chunk = fh.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                return
+                    src = sqlite3.connect(str(db_path), timeout=30.0)
+                    dst = sqlite3.connect(str(snapshot_path), timeout=30.0)
+                    try:
+                        src.execute("PRAGMA busy_timeout = 30000;")
+                        src.backup(dst)
+                        dst.commit()
+                    finally:
+                        src.close()
+                        dst.close()
+
+                    try:
+                        size = snapshot_path.stat().st_size
+                    except OSError:
+                        size = 0
+
+                    # Use a stable filename so users can overwrite local copies easily.
+                    filename = "market.db"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-sqlite3")
+                    self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                    self.send_header("Cache-Control", "no-store")
+                    if size:
+                        self.send_header("Content-Length", str(size))
+                    self.end_headers()
+                    with snapshot_path.open("rb") as fh:
+                        while True:
+                            chunk = fh.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    body = json.dumps({"error": f"DB snapshot export failed: {exc}"}).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                finally:
+                    if snapshot_path is not None:
+                        try:
+                            snapshot_path.unlink(missing_ok=True)
+                        except Exception:
+                            pass
 
             body = json.dumps({"error": "Unknown admin endpoint"}).encode("utf-8")
             self.send_response(404)
@@ -816,6 +931,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/listings":
             params = parse_qs(parsed.query)
             query_id = params.get("queryId", [""])[0].strip()
+            variant_id_raw = params.get("variantId", [""])[0].strip()
             limit_raw = params.get("limit", ["20"])[0].strip()
             try:
                 limit = int(limit_raw) if limit_raw else 20
@@ -823,7 +939,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 limit = 20
             # Keep payloads light for the hover popover.
             limit = max(1, min(limit, 200))
-            if not query_id:
+            variant_id: int | None = None
+            try:
+                if variant_id_raw:
+                    variant_id = int(variant_id_raw)
+            except ValueError:
+                variant_id = None
+            if not query_id and variant_id is None:
                 body = json.dumps({"error": "Missing queryId parameter"}).encode("utf-8")
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -834,7 +956,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             try:
-                payload = fetch_listing_preview(query_id, limit=limit)
+                payload = fetch_listing_preview(query_id, limit=limit, variant_id=variant_id)
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1076,6 +1198,406 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 finally:
                     con.close()
                 body = json.dumps({"ok": True, "key": key, "value_json": normalized, "updated_at_utc": updated_at}, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path == "/api/admin/alerts/test":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    data = json.loads(raw or b"{}")
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+
+                try:
+                    variant_id = int(data.get("variantId") or 0)
+                except Exception:
+                    variant_id = 0
+                if variant_id <= 0:
+                    body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+                raw_types = data.get("types")
+                selected_types: set[str] = set()
+                if isinstance(raw_types, list):
+                    for t in raw_types:
+                        v = str(t or "").strip().lower()
+                        if v in {"sales", "snipe", "reprice"}:
+                            selected_types.add(v)
+                if not selected_types:
+                    selected_types = {"sales", "snipe", "reprice"}
+
+                try:
+                    Database(ROOT_DIR).ensure_initialized()
+                except Exception:
+                    pass
+
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    variant_row = con.execute(
+                        """
+                        SELECT
+                          v.id AS variant_id,
+                          v.display_name AS display_name,
+                          v.mode AS mode,
+                          v.image_name_filter AS image_name_filter,
+                          i.name AS base_item_name
+                        FROM item_variants v
+                        JOIN items i ON i.id = v.item_id
+                        WHERE v.id = ?
+                        """,
+                        (variant_id,),
+                    ).fetchone()
+                    if not variant_row:
+                        body = json.dumps({"ok": False, "error": "Variant not found"}).encode("utf-8")
+                        self.send_response(404)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+
+                    latest_poll = con.execute(
+                        """
+                        SELECT
+                          ip.id,
+                          ip.query_id,
+                          ip.requested_at_utc,
+                          ip.total_results,
+                          ip.used_results,
+                          ip.lowest_mirror,
+                          ip.median_mirror,
+                          ip.highest_mirror,
+                          ip.inf_confirmed_transfer,
+                          ip.inf_likely_instant_sale,
+                          ip.inf_likely_non_instant_online,
+                          ip.inf_reprice_same_seller,
+                          pr.divines_per_mirror,
+                          pr.cycle_number AS cycle
+                        FROM item_polls ip
+                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                        WHERE ip.item_variant_id = ?
+                        ORDER BY ip.requested_at_utc DESC
+                        LIMIT 1
+                        """,
+                        (variant_id,),
+                    ).fetchone()
+
+                    med_rows = con.execute(
+                        """
+                        SELECT median_mirror
+                        FROM item_polls
+                        WHERE item_variant_id = ?
+                          AND median_mirror IS NOT NULL
+                        ORDER BY requested_at_utc DESC
+                        LIMIT 12
+                        """,
+                        (variant_id,),
+                    ).fetchall()
+                    medians = [float(r["median_mirror"]) for r in med_rows if r["median_mirror"] is not None]
+
+                    sale_rows = con.execute(
+                        """
+                        SELECT
+                          s.id,
+                          s.rule,
+                          s.seller,
+                          s.buyer,
+                          s.fingerprint,
+                          s.price_amount,
+                          s.price_currency,
+                          s.mirror_equiv,
+                          s.quantity,
+                          s.occurred_at_utc
+                        FROM sales s
+                        WHERE s.item_variant_id = ?
+                          AND s.reverted_at_utc IS NULL
+                        ORDER BY s.occurred_at_utc DESC, s.id DESC
+                        LIMIT 20
+                        """,
+                        (variant_id,),
+                    ).fetchall()
+
+                    reprice_rows = con.execute(
+                        """
+                        SELECT
+                          ie.meta_json,
+                          ie.seller,
+                          ie.fingerprint,
+                          ie.prev_mirror_equiv,
+                          ie.curr_mirror_equiv
+                        FROM inference_events ie
+                        JOIN item_polls ip ON ip.id = ie.item_poll_id
+                        WHERE ip.item_variant_id = ?
+                          AND ie.rule = 'reprice_same_seller'
+                        ORDER BY ie.id DESC
+                        LIMIT 20
+                        """,
+                        (variant_id,),
+                    ).fetchall()
+
+                    listing_rows = []
+                    if latest_poll:
+                        listing_rows = con.execute(
+                            """
+                            SELECT seller_name, price_text, amount, currency
+                            FROM listing_snapshots
+                            WHERE item_poll_id = ?
+                            ORDER BY rank ASC
+                            LIMIT 6
+                            """,
+                            (int(latest_poll["id"]),),
+                        ).fetchall()
+                finally:
+                    con.close()
+
+                display_name = str(variant_row["display_name"] or "")
+                base_item_name = str(variant_row["base_item_name"] or display_name or "item")
+                mode = str(variant_row["mode"] or "")
+                image_filter = str(variant_row["image_name_filter"] or "").strip() or None
+
+                icon_rel = _resolve_local_item_icon_for_variant(display_name, mode, image_filter)
+                icon_abs = (_request_base_url(self.headers) + icon_rel) if icon_rel else None
+
+                current_low = None
+                query_id = ""
+                divines_per_mirror = None
+                total_results = 0
+                used_results = 0
+                if latest_poll:
+                    query_id = str(latest_poll["query_id"] or "").strip()
+                    total_results = int(latest_poll["total_results"] or 0)
+                    used_results = int(latest_poll["used_results"] or 0)
+                    if latest_poll["lowest_mirror"] is not None:
+                        current_low = float(latest_poll["lowest_mirror"])
+                    elif latest_poll["median_mirror"] is not None:
+                        current_low = float(latest_poll["median_mirror"])
+                    if latest_poll["divines_per_mirror"] is not None:
+                        divines_per_mirror = float(latest_poll["divines_per_mirror"])
+
+                baseline_candidates = medians[1:] if len(medians) > 1 else medians
+                baseline = _median_float(baseline_candidates or medians)
+                if current_low is None:
+                    if medians:
+                        current_low = min(medians)
+                    elif baseline is not None:
+                        current_low = baseline * 0.72
+                    else:
+                        current_low = 1.0
+                if baseline is None or baseline <= 0:
+                    baseline = current_low * 1.35
+                pct_drop = ((baseline - current_low) / baseline * 100.0) if baseline > 0 else 0.0
+                if pct_drop <= 0:
+                    baseline = current_low * 1.35
+                    pct_drop = ((baseline - current_low) / baseline * 100.0)
+
+                listing_summary_lines: list[str] = []
+                for r in listing_rows[:3]:
+                    seller = str(r["seller_name"] or "unknown")
+                    price_text = str(r["price_text"] or "").strip()
+                    if not price_text:
+                        amount = r["amount"]
+                        currency = str(r["currency"] or "").strip()
+                        if amount is not None and currency:
+                            price_text = f"{amount} {currency}"
+                        else:
+                            price_text = "n/a"
+                    listing_summary_lines.append(f"{seller}: {price_text}")
+                listing_summary = "\n".join(listing_summary_lines) if listing_summary_lines else "No listing snapshot available"
+
+                sent: list[str] = []
+                skipped: list[str] = []
+                details: dict[str, Any] = {
+                    "variantId": variant_id,
+                    "itemName": base_item_name,
+                    "displayName": display_name,
+                    "mode": mode,
+                    "imageNameFilter": image_filter,
+                    "queryId": query_id or None,
+                    "totalResults": total_results,
+                    "usedResults": used_results,
+                }
+
+                session = requests.Session()
+
+                if "sales" in selected_types:
+                    sales_webhook = _load_discord_sales_webhook_url_from_env()
+                    if not sales_webhook:
+                        skipped.append("sales: webhook not configured")
+                    else:
+                        confirmed_transfer = 0
+                        likely_instant_sale = 0
+                        likely_non_instant_online = 0
+                        cycle_delta = 0
+                        inference_events: list[dict[str, Any]] = []
+
+                        for r in sale_rows:
+                            rule = str(r["rule"] or "")
+                            qty = max(1, int(r["quantity"] or 1))
+                            if rule == "confirmed_transfer":
+                                confirmed_transfer += qty
+                            elif rule == "likely_instant_sale":
+                                likely_instant_sale += qty
+                            elif rule == "likely_non_instant_online_sale":
+                                likely_non_instant_online += qty
+                            cycle_delta += qty
+                            event = {"rule": rule, "fingerprint": str(r["fingerprint"] or "")}
+                            if rule == "confirmed_transfer":
+                                event.update(
+                                    {
+                                        "from_seller": str(r["seller"] or ""),
+                                        "to_seller": str(r["buyer"] or ""),
+                                        "fromPriceAmount": r["price_amount"],
+                                        "fromPriceCurrency": str(r["price_currency"] or ""),
+                                        "fromMirrorEquiv": r["mirror_equiv"],
+                                    }
+                                )
+                            else:
+                                event.update(
+                                    {
+                                        "seller": str(r["seller"] or ""),
+                                        "priceAmount": r["price_amount"],
+                                        "priceCurrency": str(r["price_currency"] or ""),
+                                        "mirrorEquiv": r["mirror_equiv"],
+                                    }
+                                )
+                            for _ in range(qty):
+                                inference_events.append(dict(event))
+
+                        if cycle_delta <= 0:
+                            fallback_seller = str(listing_rows[0]["seller_name"] or "SampleSeller") if listing_rows else "SampleSeller"
+                            cycle_delta = 1
+                            likely_instant_sale = 1
+                            inference_events = [
+                                {
+                                    "rule": "likely_instant_sale",
+                                    "seller": fallback_seller,
+                                    "priceAmount": current_low,
+                                    "priceCurrency": "mirror",
+                                    "mirrorEquiv": current_low,
+                                    "fingerprint": "test-sale-signal",
+                                }
+                            ]
+
+                        window_days = _load_sales_discord_window_days()
+                        total_in_window = max(cycle_delta, len(sale_rows))
+                        send_estimated_sales_change_notification(
+                            session,
+                            webhook_url=sales_webhook,
+                            item_name=display_name or base_item_name,
+                            item_image_url=icon_abs,
+                            cycle_delta=cycle_delta,
+                            total_in_window=total_in_window,
+                            window_days=window_days,
+                            confirmed_transfer=confirmed_transfer,
+                            likely_instant_sale=likely_instant_sale,
+                            likely_non_instant_online=likely_non_instant_online,
+                            divines_per_mirror=divines_per_mirror,
+                            inference_events=inference_events,
+                        )
+                        sent.append("sales")
+
+                if "reprice" in selected_types:
+                    reprices_webhook = _load_discord_reprices_webhook_url_from_env()
+                    if not reprices_webhook:
+                        skipped.append("reprice: webhook not configured")
+                    else:
+                        reprice_events: list[dict[str, Any]] = []
+                        for r in reprice_rows:
+                            meta_raw = str(r["meta_json"] or "").strip()
+                            if meta_raw:
+                                try:
+                                    parsed_meta = json.loads(meta_raw)
+                                except Exception:
+                                    parsed_meta = {}
+                            else:
+                                parsed_meta = {}
+                            if not isinstance(parsed_meta, dict):
+                                parsed_meta = {}
+                            parsed_meta.setdefault("rule", "reprice_same_seller")
+                            parsed_meta.setdefault("seller", str(r["seller"] or ""))
+                            parsed_meta.setdefault("fingerprint", str(r["fingerprint"] or ""))
+                            parsed_meta.setdefault("prevMirrorEquiv", r["prev_mirror_equiv"])
+                            parsed_meta.setdefault("currMirrorEquiv", r["curr_mirror_equiv"])
+                            reprice_events.append(parsed_meta)
+
+                        if not reprice_events:
+                            fallback_seller = str(listing_rows[0]["seller_name"] or "SampleSeller") if listing_rows else "SampleSeller"
+                            prev_price = max(current_low * 1.18, current_low + 0.1)
+                            reprice_events = [
+                                {
+                                    "rule": "reprice_same_seller",
+                                    "seller": fallback_seller,
+                                    "fingerprint": "test-reprice-signal",
+                                    "prevPriceAmount": round(prev_price, 4),
+                                    "prevPriceCurrency": "mirror",
+                                    "currPriceAmount": round(current_low, 4),
+                                    "currPriceCurrency": "mirror",
+                                    "prevMirrorEquiv": round(prev_price, 6),
+                                    "currMirrorEquiv": round(current_low, 6),
+                                }
+                            ]
+
+                        send_reprice_change_notification(
+                            session,
+                            webhook_url=reprices_webhook,
+                            item_name=display_name or base_item_name,
+                            item_image_url=icon_abs,
+                            reprice_count=max(1, len(reprice_events)),
+                            divines_per_mirror=divines_per_mirror,
+                            inference_events=reprice_events,
+                        )
+                        sent.append("reprice")
+
+                if "snipe" in selected_types:
+                    alert_webhook = _load_discord_alert_webhook_url_from_env()
+                    if not alert_webhook:
+                        skipped.append("snipe: webhook not configured")
+                    else:
+                        trade_url = f"https://www.pathofexile.com/trade/search/Standard/{query_id}" if query_id else None
+                        fields: list[dict[str, Any]] = []
+                        if trade_url:
+                            fields.append({"name": "Trade Link", "value": f"[View listing]({trade_url})", "inline": False})
+                        fields.append({"name": "Top Listings", "value": listing_summary, "inline": False})
+                        embed: dict[str, Any] = {
+                            "title": f"[TEST] \U0001f514 Price Alert: {base_item_name}",
+                            "description": (
+                                f"Listed at **{current_low:.4f} mirrors** - "
+                                f"**{pct_drop:.1f}% below** baseline of {baseline:.4f} mirrors"
+                            ),
+                            "color": 0xFF6B35,
+                            "fields": fields,
+                        }
+                        if icon_abs:
+                            embed["thumbnail"] = {"url": icon_abs}
+                        resp = session.post(alert_webhook, json={"embeds": [embed]}, timeout=10.0)
+                        resp.raise_for_status()
+                        sent.append("snipe")
+
+                body = json.dumps(
+                    {
+                        "ok": True,
+                        "sent": sent,
+                        "skipped": skipped,
+                        "details": details,
+                    },
+                    allow_nan=False,
+                ).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")

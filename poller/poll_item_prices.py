@@ -975,6 +975,7 @@ def send_discord_alert(
 class ItemSpec:
     name: str
     alternate_art: bool | None
+    image_name_filter: str | None = None
 
 
 def parse_args() -> Config:
@@ -1281,6 +1282,7 @@ def parse_item_spec_line(line: str) -> ItemSpec:
     - Item Name|normal        -> non-alternate-art only
     - Item Name|any           -> either alt or non-alt
     - Item Name|normal|boots  -> optional third field (category) is ignored by poller
+    - Item Name|aa|category|LaviangasOil2  -> optional fourth field (icon/art filter)
     """
     parts = [part.strip() for part in line.split("|")]
     name = parts[0]
@@ -1288,19 +1290,30 @@ def parse_item_spec_line(line: str) -> ItemSpec:
         raise RuntimeError("Invalid item line: missing item name")
 
     if len(parts) < 2:
-        return ItemSpec(name=name, alternate_art=True)
+        return ItemSpec(name=name, alternate_art=True, image_name_filter=None)
 
     mode = parts[1].lower()
     if mode in {"aa", "alt", "alternate", "alternate-art", "alternate_art", "true"}:
-        return ItemSpec(name=name, alternate_art=True)
-    if mode in {"normal", "non-alt", "non_alt", "regular", "false"}:
-        return ItemSpec(name=name, alternate_art=False)
-    if mode in {"any", "either", "all"}:
-        return ItemSpec(name=name, alternate_art=None)
-
-    raise RuntimeError(
-        "Invalid mode in items.txt line. Use one of: aa, normal, any. "
-        f"Got: '{parts[1]}'"
+        alternate_art = True
+    elif mode in {"normal", "non-alt", "non_alt", "regular", "false"}:
+        alternate_art = False
+    elif mode in {"any", "either", "all"}:
+        alternate_art = None
+    else:
+        raise RuntimeError(
+            "Invalid mode in items.txt line. Use one of: aa, normal, any. "
+            f"Got: '{parts[1]}'"
+        )
+    
+    # Read optional 4th column for image name filter (e.g., "LaviangasOil2.png")
+    image_name_filter = parts[3].strip() if len(parts) >= 4 else None
+    if image_name_filter and not image_name_filter:
+        image_name_filter = None
+    
+    return ItemSpec(
+        name=name,
+        alternate_art=alternate_art,
+        image_name_filter=image_name_filter,
     )
 
 
@@ -2396,6 +2409,64 @@ def item_mode_token(item: ItemSpec) -> str:
     return "any"
 
 
+def get_item_variant_key(item: ItemSpec) -> str:
+    """Generate unique variant key including image_name_filter if present.
+    
+    Format: {name}::{mode}::{image_filter}
+    Example: Lavianga's Spirit::aa::LaviangasOil2.png
+    """
+    mode = item_mode_token(item)
+    if item.image_name_filter:
+        return f"{item.name}::{mode}::{item.image_name_filter}"
+    return f"{item.name}::{mode}"
+
+
+def extract_icon_filename(icon_url: str | None) -> str | None:
+    """Extract just the filename from a PoE trade icon URL.
+    
+    Example: https://web.poecdn.com/image/.../LaviangasOil2.png -> LaviangasOil2.png
+    """
+    if not icon_url or not isinstance(icon_url, str):
+        return None
+    parts = icon_url.rstrip("/").split("/")
+    filename = parts[-1] if parts else None
+    return filename if filename and filename.endswith(".png") else None
+
+
+def should_keep_listing_for_item(listing_dict: dict[str, Any], item: ItemSpec) -> bool:
+    """Check if a listing should be kept based on item's image_name_filter.
+    
+    If item has no image_name_filter, keep all listings.
+    If item has image_name_filter, only keep listings with matching icon filename.
+    """
+    if not item.image_name_filter:
+        return True
+    
+    try:
+        item_data = listing_dict.get("item", {})
+        if not isinstance(item_data, dict):
+            return False
+        
+        icon_url = item_data.get("icon")
+        icon_filename = extract_icon_filename(icon_url)
+        
+        if not icon_filename:
+            return False
+        
+        # Exact match of filename
+        return icon_filename.lower() == item.image_name_filter.lower()
+    except Exception:
+        return False
+
+
+def item_mode_token(item: ItemSpec) -> str:
+    if item.alternate_art is True:
+        return "aa"
+    if item.alternate_art is False:
+        return "normal"
+    return "any"
+
+
 def ensure_csv_header(path: Path) -> None:
     if path.exists() and path.stat().st_size > 0:
         with path.open("r", newline="", encoding="utf-8") as handle:
@@ -2508,7 +2579,7 @@ def run_cycle(
 
     for index, item in enumerate(specs, start=1):
         request_timestamp_utc = datetime.now(timezone.utc).isoformat()
-        item_key = f"{item.name}::{item_mode_token(item)}"
+        item_key = get_item_variant_key(item)  # Includes image_name_filter if present
         variant_id = int(variant_ids_by_key.get(item_key) or 0)
 
         # For the first-ever poll of an item variant, force "available" so offline listings
@@ -2523,6 +2594,21 @@ def run_cycle(
         )
         # Fetch a small slice for fast pricing summaries and UI affordances.
         listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
+        # Filter listings by image_name_filter if specified
+        if item.image_name_filter:
+            listings_before = listings
+            listings = [l for l in listings if should_keep_listing_for_item(l, item)]
+            if not listings and listings_before:
+                seen_icons = sorted({
+                    extract_icon_filename(l.get("item", {}).get("icon")) or "<no-filename>"
+                    for l in listings_before
+                })
+                log_line(
+                    "filter",
+                    f"image_name_filter {item.image_name_filter!r} for {item.name!r} "
+                    f"matched 0/{len(listings_before)} listings; "
+                    f"seen icon filenames: {seen_icons}",
+                )
 
         result_id_count = len([x for x in result_ids if isinstance(x, str)])
         if inference_fetch_cap <= 0:
@@ -2541,6 +2627,21 @@ def run_cycle(
             result_ids,
             cap=effective_inference_cap,
         )
+        # Filter listings by image_name_filter if specified
+        if item.image_name_filter:
+            listings_inference_before = listings_inference
+            listings_inference = [l for l in listings_inference if should_keep_listing_for_item(l, item)]
+            if not listings_inference and listings_inference_before:
+                seen_icons_inf = sorted({
+                    extract_icon_filename(l.get("item", {}).get("icon")) or "<no-filename>"
+                    for l in listings_inference_before
+                })
+                log_line(
+                    "filter",
+                    f"image_name_filter {item.image_name_filter!r} for {item.name!r} (inference) "
+                    f"matched 0/{len(listings_inference_before)} listings; "
+                    f"seen icon filenames: {seen_icons_inf}",
+                )
         inference_signals = listing_signals_from_fetch(listings_inference, divines_per_mirror)
 
         prev_signals, pending_inst, pending_on = ([], [], [])
@@ -2638,6 +2739,9 @@ def run_cycle(
                 divine_query_id,
                 divine_only_ids,
             )
+            # Filter listings by image_name_filter if specified
+            if item.image_name_filter:
+                divine_only_listings = [l for l in divine_only_listings if should_keep_listing_for_item(l, item)]
             _, divine_only_prices_raw, _ = extract_listing_prices(divine_only_listings)
             divine_only_converted = [p / divines_per_mirror for p in divine_only_prices_raw]
 
@@ -2985,17 +3089,28 @@ def main() -> None:
                 display_name=display,
                 sort_order=idx,
                 icon_path=None,
+                image_name_filter=spec.image_name_filter,
             )
         )
     storage.upsert_variants(variant_specs)
     variants = storage.list_variants()
 
-    variant_ids_by_key = {f"{name}::{mode}": int(vid) for (vid, name, mode, _dn, _so, _ic) in variants}
-    icon_urls_by_key: dict[str, str | None] = {f"{name}::{mode}": _ic for (_, name, mode, _dn, _so, _ic) in variants}
+    # Build variant_ids_by_key and icon_urls_by_key from database tuples
+    # Tuple structure: (vid, name, mode, display_name, sort_order, icon_path, image_name_filter)
+    variant_ids_by_key: dict[str, int] = {}
+    icon_urls_by_key: dict[str, str | None] = {}
+    for vid, name, mode, _dn, _so, _ic, img_filter in variants:
+        if img_filter:
+            key = f"{name}::{mode}::{img_filter}"
+        else:
+            key = f"{name}::{mode}"
+        variant_ids_by_key[key] = int(vid)
+        icon_urls_by_key[key] = _ic
+    
     item_specs = []
-    for (_vid, name, mode, _dn, _so, _ic) in variants:
+    for _vid, name, mode, _dn, _so, _ic, img_filter in variants:
         alt = True if mode == "aa" else False if mode == "normal" else None
-        item_specs.append(ItemSpec(name=name, alternate_art=alt))
+        item_specs.append(ItemSpec(name=name, alternate_art=alt, image_name_filter=img_filter))
 
     if cfg.only:
         filters = [f.lower() for f in cfg.only]

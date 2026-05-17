@@ -20,6 +20,7 @@ from .schema import (
     migration_009_widen_sales_rule,
     migration_010_listing_snapshots_corrupted,
     migration_011_listing_snapshots_count,
+    migration_012_item_variants_image_filter,
 )
 
 
@@ -50,6 +51,11 @@ class Database:
         self._init_lock = threading.Lock()
         self._initialized = False
 
+    # Process-wide guards so multiple Database instances for the same file
+    # cannot run migrations concurrently.
+    _global_init_lock = threading.Lock()
+    _initialized_paths: set[str] = set()
+
     @property
     def path(self) -> Path:
         return self._paths.db_path
@@ -66,22 +72,34 @@ class Database:
         return con
 
     def ensure_initialized(self) -> None:
-        if self._initialized:
-            return
-        with self._init_lock:
-            if self._initialized:
-                return
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            con = sqlite3.connect(self.path, timeout=30.0)
-            try:
-                con.execute("PRAGMA foreign_keys = ON;")
-                con.execute("PRAGMA journal_mode = WAL;")
-                con.execute("PRAGMA synchronous = NORMAL;")
-                self._apply_migrations(con)
-                con.commit()
-            finally:
-                con.close()
+        db_path = str(self.path)
+        if self._initialized or db_path in self.__class__._initialized_paths:
             self._initialized = True
+            return
+
+        with self.__class__._global_init_lock:
+            if self._initialized or db_path in self.__class__._initialized_paths:
+                self._initialized = True
+                return
+            with self._init_lock:
+                if self._initialized or db_path in self.__class__._initialized_paths:
+                    self._initialized = True
+                    return
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                con = sqlite3.connect(self.path, timeout=30.0)
+                try:
+                    con.execute("PRAGMA foreign_keys = ON;")
+                    con.execute("PRAGMA journal_mode = WAL;")
+                    con.execute("PRAGMA synchronous = NORMAL;")
+                    self._apply_migrations(con)
+                    # Safety net for partially migrated DBs where schema_migrations says v12,
+                    # but `item_variants` still has UNIQUE(item_id, mode).
+                    self._ensure_item_variants_image_filter_constraint(con)
+                    con.commit()
+                finally:
+                    con.close()
+                self._initialized = True
+                self.__class__._initialized_paths.add(db_path)
 
     def _applied_versions(self, con: sqlite3.Connection) -> set[int]:
         con.execute(
@@ -104,6 +122,7 @@ class Database:
             (9, migration_009_widen_sales_rule()),
             (10, migration_010_listing_snapshots_corrupted()),
             (11, migration_011_listing_snapshots_count()),
+            (12, migration_012_item_variants_image_filter()),
         ]
 
         for version, sql in migrations:
@@ -121,6 +140,8 @@ class Database:
                 self._migration_010_listing_snapshots_corrupted(con)
             elif version == 11:
                 self._migration_011_listing_snapshots_count(con)
+            elif version == 12:
+                self._migration_012_item_variants_image_filter(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -263,6 +284,109 @@ class Database:
         }
         if "listing_count" not in cols:
             con.execute("ALTER TABLE listing_snapshots ADD COLUMN listing_count INTEGER NOT NULL DEFAULT 1")
+
+    def _migration_012_item_variants_image_filter(self, con: sqlite3.Connection) -> None:
+        """Add image_name_filter column to item_variants for art version filtering."""
+        self._ensure_item_variants_image_filter_constraint(con)
+
+    def _ensure_item_variants_image_filter_constraint(self, con: sqlite3.Connection) -> None:
+        """
+        Ensure `item_variants` has:
+        - column `image_name_filter`
+        - UNIQUE(item_id, mode, image_name_filter)
+
+        This is idempotent and repairs partial/legacy states.
+        """
+        row = con.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'item_variants'"
+        ).fetchone()
+
+        # Defensive: table can be temporarily absent in partially initialized DBs.
+        # Recreate with the latest shape and continue.
+        if not row:
+            con.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS item_variants (
+                  id INTEGER PRIMARY KEY,
+                  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                  mode TEXT NOT NULL CHECK (mode IN ('aa','normal','any')),
+                  display_name TEXT NOT NULL,
+                  sort_order INTEGER,
+                  active_from_utc TEXT,
+                  active_to_utc TEXT,
+                  image_name_filter TEXT,
+                  UNIQUE(item_id, mode, image_name_filter)
+                );
+                CREATE INDEX IF NOT EXISTS idx_item_variants_item ON item_variants(item_id);
+                CREATE INDEX IF NOT EXISTS idx_item_variants_sort ON item_variants(sort_order, display_name);
+                """
+            )
+            return
+
+        cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(item_variants)").fetchall()
+        }
+        has_filter_col = "image_name_filter" in cols
+
+        create_sql = (str(row[0]) if row else "") or ""
+        normalized = " ".join(create_sql.lower().split())
+        has_new_unique = "unique(item_id, mode, image_name_filter)" in normalized
+
+        if has_filter_col and has_new_unique:
+            return
+
+        # If column is missing, add it first so the copy can preserve value when present.
+        if not has_filter_col:
+            con.execute("ALTER TABLE item_variants ADD COLUMN image_name_filter TEXT")
+
+        # Foreign keys must be OFF for the DROP TABLE to succeed — other tables
+        # (item_polls, sales, inference_state_* etc.) all FK-reference item_variants.
+        # This mirrors the same pattern used in migration 9 for the sales table.
+        con.execute("PRAGMA foreign_keys = OFF;")
+        try:
+            con.executescript(
+                """
+                DROP TABLE IF EXISTS item_variants_new;
+                CREATE TABLE item_variants_new (
+                  id INTEGER PRIMARY KEY,
+                  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                  mode TEXT NOT NULL CHECK (mode IN ('aa','normal','any')),
+                  display_name TEXT NOT NULL,
+                  sort_order INTEGER,
+                  active_from_utc TEXT,
+                  active_to_utc TEXT,
+                  image_name_filter TEXT,
+                  UNIQUE(item_id, mode, image_name_filter)
+                );
+                INSERT INTO item_variants_new (
+                  id,
+                  item_id,
+                  mode,
+                  display_name,
+                  sort_order,
+                  active_from_utc,
+                  active_to_utc,
+                  image_name_filter
+                )
+                SELECT
+                  id,
+                  item_id,
+                  mode,
+                  display_name,
+                  sort_order,
+                  active_from_utc,
+                  active_to_utc,
+                  image_name_filter
+                FROM item_variants;
+                DROP TABLE item_variants;
+                ALTER TABLE item_variants_new RENAME TO item_variants;
+                CREATE INDEX IF NOT EXISTS idx_item_variants_item ON item_variants(item_id);
+                CREATE INDEX IF NOT EXISTS idx_item_variants_sort ON item_variants(sort_order, display_name);
+                """
+            )
+        finally:
+            con.execute("PRAGMA foreign_keys = ON;")
 
 
 def execute_many(con: sqlite3.Connection, sql: str, rows: Iterable[tuple]) -> None:
