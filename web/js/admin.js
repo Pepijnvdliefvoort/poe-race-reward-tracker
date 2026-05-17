@@ -1374,7 +1374,7 @@ function isEditingAdminDatalist() {
   if (!el) return false;
   // When typing in a <input list="...">, browsers can dismiss the suggestions on unrelated DOM churn.
   // We pause log/visitor rendering while the user is interacting with these controls.
-  if (el.id === "adminSalesItemInput") return true;
+  if (el.id === "adminSalesItemSelect" || el.id === "adminSalesVariantSelect") return true;
   if (typeof el.closest === "function" && el.closest(".admin-data-tools")) return true;
   return false;
 }
@@ -1986,15 +1986,15 @@ function setupAlertTestTool() {
 }
 
 function setupDeleteSalesTool() {
-  const input = document.getElementById("adminSalesItemInput");
-  const list = document.getElementById("adminSalesItemList");
+  const itemSelect = document.getElementById("adminSalesItemSelect");
+  const variantSelect = document.getElementById("adminSalesVariantSelect");
   const preview = document.getElementById("adminSalesPreview");
   const saleSelect = document.getElementById("adminSalesEventSelect");
   const salePreview = document.getElementById("adminSalesEventPreview");
   const btn = document.getElementById("adminWipeVariantBtn");
   const resendBtn = document.getElementById("adminResendSaleAlertBtn");
   const hint = document.getElementById("adminSalesDeleteHint");
-  if (!input || !list || !preview || !saleSelect || !salePreview || !btn || !resendBtn || !hint) return;
+  if (!itemSelect || !variantSelect || !preview || !saleSelect || !salePreview || !btn || !resendBtn || !hint) return;
 
   const setHint = (text, isWarn = false) => {
     hint.textContent = text || "";
@@ -2002,15 +2002,23 @@ function setupDeleteSalesTool() {
   };
 
   let variants = [];
-  let byLabel = new Map();
+  let variantsByItem = new Map();
   let selected = null;
   let sales = [];
   let saleGroups = [];
 
+  const variantLabel = (v) => {
+    const mode = String(v?.mode || "").trim() || "normal";
+    const image = String(v?.imageNameFilter || "").trim() || "default";
+    const salesCount = Number(v?.salesCount) || 0;
+    return `${mode} · image: ${image} · sales: ${salesCount} · #${v.variantId}`;
+  };
+
   const fmt = (v) => {
     const mode = v.mode ? ` · ${v.mode}` : "";
+    const image = v.imageNameFilter ? ` · image: ${v.imageNameFilter}` : "";
     const base = v.baseItemName ? ` · base: ${v.baseItemName}` : "";
-    return `${v.displayName}${mode}${base}`;
+    return `${v.displayName}${mode}${image}${base}`;
   };
 
   const updatePreview = () => {
@@ -2182,31 +2190,83 @@ function setupDeleteSalesTool() {
     }
   };
 
-  const filterListOptions = (query) => {
-    const q = String(query || "").trim().toLowerCase();
-    list.innerHTML = "";
-    const matches = q
-      ? variants.filter((v) => `${v.displayName} (${v.mode || "variant"})`.toLowerCase().includes(q))
-      : variants;
-    matches.forEach((v) => {
-      const label = `${v.displayName} (${v.mode || "variant"})`;
-      const opt = document.createElement("option");
-      opt.value = label;
-      list.appendChild(opt);
-    });
-  };
-
-  const selectFromInput = () => {
-    const raw = String(input.value || "").trim();
-    selected = byLabel.get(raw) || null;
+  const applySelectedVariant = () => {
+    const raw = String(variantSelect.value || "").trim();
+    const id = Number(raw);
+    selected = Number.isFinite(id) && id > 0 ? variants.find((v) => Number(v.variantId) === id) || null : null;
     updatePreview();
     void loadSalesForSelected();
   };
 
-  input.addEventListener("change", selectFromInput);
-  input.addEventListener("input", () => {
-    filterListOptions(input.value);
-    selectFromInput();
+  const populateVariantSelect = (preferredVariantId) => {
+    const item = String(itemSelect.value || "").trim();
+    const rows = variantsByItem.get(item) || [];
+    variantSelect.innerHTML = "";
+    if (!rows.length) {
+      variantSelect.disabled = true;
+      variantSelect.innerHTML = '<option value="">No variants for selected item</option>';
+      selected = null;
+      updatePreview();
+      void loadSalesForSelected();
+      return;
+    }
+
+    const normalized = rows
+      .slice()
+      .sort((a, b) => variantLabel(a).localeCompare(variantLabel(b)));
+    normalized.forEach((v) => {
+      const opt = document.createElement("option");
+      opt.value = String(v.variantId);
+      opt.textContent = variantLabel(v);
+      variantSelect.appendChild(opt);
+    });
+    variantSelect.disabled = false;
+
+    const preferred = String(preferredVariantId || "").trim();
+    if (preferred && normalized.some((v) => String(v.variantId) === preferred)) {
+      variantSelect.value = preferred;
+    } else {
+      variantSelect.value = String(normalized[0].variantId);
+    }
+    applySelectedVariant();
+  };
+
+  const populateItemSelect = (preferredItem, preferredVariantId) => {
+    itemSelect.innerHTML = "";
+    const names = Array.from(variantsByItem.keys()).sort((a, b) => a.localeCompare(b));
+    if (!names.length) {
+      itemSelect.disabled = true;
+      itemSelect.innerHTML = '<option value="">No tracked items found</option>';
+      variantSelect.disabled = true;
+      variantSelect.innerHTML = '<option value="">No variants available</option>';
+      selected = null;
+      updatePreview();
+      void loadSalesForSelected();
+      return;
+    }
+    names.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      const count = (variantsByItem.get(name) || []).length;
+      opt.textContent = `${name} (${count})`;
+      itemSelect.appendChild(opt);
+    });
+    itemSelect.disabled = false;
+
+    if (preferredItem && variantsByItem.has(preferredItem)) {
+      itemSelect.value = preferredItem;
+    } else {
+      itemSelect.value = names[0];
+    }
+    populateVariantSelect(preferredVariantId);
+  };
+
+  itemSelect.addEventListener("change", () => {
+    populateVariantSelect(null);
+  });
+
+  variantSelect.addEventListener("change", () => {
+    applySelectedVariant();
   });
 
   const updateDeleteBtnLabel = () => {
@@ -2294,8 +2354,10 @@ function setupDeleteSalesTool() {
           `Deleted sales ${salesN}, listings ${listingsN}, events ${eventsN}, pending ${pendingN}, signals ${signalsN}. Reset polls ${pollsN}.`,
         );
       }
+      const keepItem = String(itemSelect.value || "").trim();
+      const keepVariantId = selected ? Number(selected.variantId) : null;
       await loadVariants();
-      selectFromInput();
+      populateItemSelect(keepItem, keepVariantId);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Delete item data"), true);
     } finally {
@@ -2305,24 +2367,33 @@ function setupDeleteSalesTool() {
 
   async function loadVariants() {
     preview.textContent = "Loading…";
+    itemSelect.disabled = true;
+    variantSelect.disabled = true;
+    itemSelect.innerHTML = '<option value="">Loading items…</option>';
+    variantSelect.innerHTML = '<option value="">Loading variants…</option>';
     btn.disabled = true;
     resendBtn.disabled = true;
     setHint("");
     try {
       const payload = await fetchJson("/api/admin/market/variants-sales");
       if (!payload?.ok) throw new Error(payload?.error || "Failed to load variants");
-      variants = payload.variants || [];
-      byLabel = new Map();
+      variants = Array.isArray(payload?.variants) ? payload.variants : [];
+      variantsByItem = new Map();
       variants.forEach((v) => {
-        const label = `${v.displayName} (${v.mode || "variant"})`;
-        byLabel.set(label, v);
+        const item = String(v?.baseItemName || "").trim();
+        if (!item) return;
+        if (!variantsByItem.has(item)) variantsByItem.set(item, []);
+        variantsByItem.get(item).push(v);
       });
-      filterListOptions(String(input.value || ""));
-      preview.textContent = "Select an item variant.";
-      sales = [];
-      saleGroups = [];
-      renderSalesSelect();
+
+      const keepItem = selected ? String(selected.baseItemName || "").trim() : null;
+      const keepVariantId = selected ? Number(selected.variantId) : null;
+      populateItemSelect(keepItem, keepVariantId);
     } catch (e) {
+      itemSelect.disabled = true;
+      variantSelect.disabled = true;
+      itemSelect.innerHTML = '<option value="">Failed to load items</option>';
+      variantSelect.innerHTML = '<option value="">Failed to load variants</option>';
       preview.textContent = adminEndpointErrorMessage(e, "Load variants");
       sales = [];
       saleGroups = [];

@@ -9,6 +9,15 @@
 
     # Serve static files directly (more reliable than proxying many small requests
     # through the Python server).
+    @icons path /assets/icons/*
+    handle @icons {
+        root * /opt/poe-market-flips/web
+        file_server
+        header Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+        header Pragma "no-cache"
+        header Expires "0"
+    }
+
     @static path /assets/* /css/* /js/* /favicon* /robots.txt
     handle @static {
         root * /opt/poe-market-flips/web

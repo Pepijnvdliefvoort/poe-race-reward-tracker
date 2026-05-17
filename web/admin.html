@@ -265,17 +265,20 @@
         </p>
 
         <div class="admin-appconfig-row">
-          <label class="admin-appconfig-k" for="adminSalesItemInput">Item</label>
+          <label class="admin-appconfig-k" for="adminSalesItemSelect">Item</label>
           <div>
-            <input
-              id="adminSalesItemInput"
-              class="admin-appconfig-input"
-              list="adminSalesItemList"
-              placeholder="Type to search…"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <datalist id="adminSalesItemList"></datalist>
+            <select id="adminSalesItemSelect" class="admin-appconfig-input" disabled>
+              <option value="">Loading items…</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="admin-appconfig-row">
+          <label class="admin-appconfig-k" for="adminSalesVariantSelect">Variant</label>
+          <div>
+            <select id="adminSalesVariantSelect" class="admin-appconfig-input" disabled>
+              <option value="">Select an item first…</option>
+            </select>
           </div>
         </div>
 
