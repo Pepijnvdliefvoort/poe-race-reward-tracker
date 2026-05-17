@@ -417,7 +417,7 @@ def skip_ip_in_visitor_stats(ip: str) -> bool:
 def record_site_visit(ip: str, path: str) -> None:
     if skip_ip_in_visitor_stats(ip):
         return
-    if path not in {"/", "/index.html"}:
+    if path not in {"/", "/index.html", "/compare", "/compare/", "/compare.html"}:
         return
     ts = datetime.now(timezone.utc).isoformat()
     with _visit_lock:
