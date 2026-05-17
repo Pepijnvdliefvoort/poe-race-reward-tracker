@@ -1827,6 +1827,164 @@ function setupClearData() {
   });
 }
 
+function setupAlertTestTool() {
+  const itemSelect = document.getElementById("adminAlertTestItemSelect");
+  const variantSelect = document.getElementById("adminAlertTestVariantSelect");
+  const salesCb = document.getElementById("adminAlertTypeSales");
+  const snipeCb = document.getElementById("adminAlertTypeSnipe");
+  const repriceCb = document.getElementById("adminAlertTypeReprice");
+  const preview = document.getElementById("adminAlertTestPreview");
+  const sendBtn = document.getElementById("adminAlertTestSendBtn");
+  const hint = document.getElementById("adminAlertTestHint");
+  if (!itemSelect || !variantSelect || !salesCb || !snipeCb || !repriceCb || !preview || !sendBtn || !hint) return;
+
+  const setHint = (text, isWarn = false) => {
+    hint.textContent = text || "";
+    hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  let variants = [];
+  let variantsByItem = new Map();
+
+  const selectedVariant = () => {
+    const vid = Number(variantSelect.value || 0);
+    if (!Number.isFinite(vid) || vid <= 0) return null;
+    return variants.find((v) => Number(v?.variantId || 0) === vid) || null;
+  };
+
+  const selectedTypes = () => {
+    const out = [];
+    if (salesCb.checked) out.push("sales");
+    if (snipeCb.checked) out.push("snipe");
+    if (repriceCb.checked) out.push("reprice");
+    return out;
+  };
+
+  const renderPreview = () => {
+    const v = selectedVariant();
+    const types = selectedTypes();
+    if (!v) {
+      preview.textContent = "Select item and variant.";
+      sendBtn.disabled = true;
+      return;
+    }
+    const mode = v.mode ? `mode=${v.mode}` : "mode=any";
+    const filter = v.imageNameFilter ? `filter=${v.imageNameFilter}` : "filter=(none)";
+    const salesCount = Number(v.salesCount || 0);
+    const typesText = types.length ? types.join(", ") : "(select at least one type)";
+    preview.textContent = `${v.displayName} · ${mode} · ${filter} · recorded sales=${salesCount} · send: ${typesText}`;
+    sendBtn.disabled = types.length === 0;
+  };
+
+  const populateVariantsForItem = () => {
+    const item = String(itemSelect.value || "").trim();
+    const rows = variantsByItem.get(item) || [];
+    variantSelect.innerHTML = "";
+    if (!rows.length) {
+      variantSelect.disabled = true;
+      variantSelect.innerHTML = '<option value="">No variants for selected item</option>';
+      renderPreview();
+      return;
+    }
+    variantSelect.disabled = false;
+    rows.forEach((v, idx) => {
+      const opt = document.createElement("option");
+      opt.value = String(v.variantId);
+      const mode = v.mode ? v.mode : "any";
+      const filter = v.imageNameFilter ? ` · ${v.imageNameFilter}` : "";
+      opt.textContent = `${v.displayName} (${mode}${filter})`;
+      variantSelect.appendChild(opt);
+      if (idx === 0) opt.selected = true;
+    });
+    renderPreview();
+  };
+
+  itemSelect.addEventListener("change", populateVariantsForItem);
+  variantSelect.addEventListener("change", renderPreview);
+  salesCb.addEventListener("change", renderPreview);
+  snipeCb.addEventListener("change", renderPreview);
+  repriceCb.addEventListener("change", renderPreview);
+
+  sendBtn.addEventListener("click", async () => {
+    const v = selectedVariant();
+    if (!v) return;
+    const types = selectedTypes();
+    if (!types.length) {
+      setHint("Select at least one alert type.", true);
+      return;
+    }
+    sendBtn.disabled = true;
+    setHint("Sending test alerts…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/alerts/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variantId: v.variantId, types }),
+      });
+      if (!payload?.ok) {
+        setHint(payload?.error ? `Alert test: ${payload.error}` : "Alert test failed.", true);
+        return;
+      }
+      const sent = Array.isArray(payload?.sent) ? payload.sent.join(", ") : "none";
+      const skipped = Array.isArray(payload?.skipped) && payload.skipped.length ? ` · skipped: ${payload.skipped.join("; ")}` : "";
+      setHint(`Sent: ${sent}${skipped}`);
+    } catch (e) {
+      setHint(adminEndpointErrorMessage(e, "Alert test"), true);
+    } finally {
+      renderPreview();
+    }
+  });
+
+  async function loadVariants() {
+    itemSelect.disabled = true;
+    variantSelect.disabled = true;
+    itemSelect.innerHTML = '<option value="">Loading items…</option>';
+    variantSelect.innerHTML = '<option value="">Loading variants…</option>';
+    setHint("");
+    try {
+      const payload = await fetchJson("/api/admin/market/variants-sales");
+      if (!payload?.ok) throw new Error(payload?.error || "Failed to load variants");
+      variants = Array.isArray(payload?.variants) ? payload.variants : [];
+      variantsByItem = new Map();
+      variants.forEach((v) => {
+        const item = String(v?.baseItemName || "").trim();
+        if (!item) return;
+        if (!variantsByItem.has(item)) variantsByItem.set(item, []);
+        variantsByItem.get(item).push(v);
+      });
+
+      itemSelect.innerHTML = "";
+      const names = Array.from(variantsByItem.keys()).sort((a, b) => a.localeCompare(b));
+      if (!names.length) {
+        itemSelect.disabled = true;
+        itemSelect.innerHTML = '<option value="">No tracked items found</option>';
+        variantSelect.disabled = true;
+        variantSelect.innerHTML = '<option value="">No variants available</option>';
+        renderPreview();
+        return;
+      }
+      names.forEach((name, idx) => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        if (idx === 0) opt.selected = true;
+        itemSelect.appendChild(opt);
+      });
+      itemSelect.disabled = false;
+      populateVariantsForItem();
+    } catch (e) {
+      itemSelect.disabled = true;
+      variantSelect.disabled = true;
+      itemSelect.innerHTML = '<option value="">Failed to load items</option>';
+      variantSelect.innerHTML = '<option value="">Failed to load variants</option>';
+      setHint(adminEndpointErrorMessage(e, "Load alert-test variants"), true);
+      renderPreview();
+    }
+  }
+
+  void loadVariants();
+}
+
 function setupDeleteSalesTool() {
   const input = document.getElementById("adminSalesItemInput");
   const list = document.getElementById("adminSalesItemList");
@@ -2474,6 +2632,7 @@ function main() {
   setupDbDownload();
   setupRunDbExport();
   setupClearData();
+  setupAlertTestTool();
   setupDeleteSalesTool();
   setupMarketConfigEditor();
   setupStopPoller();

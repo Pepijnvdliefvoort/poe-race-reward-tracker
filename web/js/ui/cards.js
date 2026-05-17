@@ -343,7 +343,10 @@ function wireMobileTooltipDismiss(chart) {
 }
 
 export function ensureCard(item, onFavoriteToggle) {
-  const key = item.itemName;
+  // Use imageNameFilter in key if present to distinguish art versions
+  const key = item.imageNameFilter 
+    ? `${item.itemName}::${item.imageNameFilter}`
+    : item.itemName;
   let entry = chartMap.get(key);
 
   if (entry) {
@@ -376,14 +379,14 @@ export function ensureCard(item, onFavoriteToggle) {
   });
 
   const title = document.createElement("h2");
-  title.textContent = key;
+  title.textContent = item.itemName;
 
   const artFrame = document.createElement("div");
   artFrame.className = "art-frame";
 
   const img = document.createElement("img");
   img.className = "item-art";
-  img.alt = `${key} art`;
+  img.alt = `${item.itemName}${item.imageNameFilter ? ` (${item.imageNameFilter})` : ''} art`;
   img.style.cursor = "pointer";
   img.src = IMG_PLACEHOLDER_SRC;
   img.classList.add("is-loading");
@@ -484,6 +487,7 @@ export function ensureCard(item, onFavoriteToggle) {
     pendingChart: null,
     chartTooltipCleanup: null,
     currentQueryId: null,
+    currentVariantId: null,
     loadedQueryId: null,
     loadingQueryId: null,
     listingsRefreshTimer: null,
@@ -515,6 +519,9 @@ export function ensureCard(item, onFavoriteToggle) {
 }
 
 export function updateCard(item, onFavoriteToggle) {
+  const key = item.imageNameFilter 
+    ? `${item.itemName}::${item.imageNameFilter}`
+    : item.itemName;
   const entry = ensureCard(item, onFavoriteToggle);
   const {
     card,
@@ -538,7 +545,7 @@ export function updateCard(item, onFavoriteToggle) {
   const chartPoints = [...actual, ...predicted];
 
   card.classList.toggle("next-in-line", item.itemName === state.nextInLineItemName);
-  const isFavorited = state.favoriteItems.has(item.itemName);
+  const isFavorited = state.favoriteItems.has(key);
   card.classList.toggle("favorited", isFavorited);
   favoriteBtn.classList.toggle("checked", isFavorited);
   favoriteBtn.textContent = isFavorited ? "★" : "☆";
@@ -661,7 +668,9 @@ export function updateCard(item, onFavoriteToggle) {
   trend.className = `trend ${trendClass}`;
   trendIndicator.textContent = `${trendPercentage}${trendSymbol}`;
 
-  const listingsCount = latestValid ? latest.totalResults ?? 0 : "n/a";
+  const listingsCount = latestValid
+    ? (Number.isFinite(latest.usedResults) ? latest.usedResults : (latest.totalResults ?? 0))
+    : "n/a";
   trendListings.textContent = `Listings: ${listingsCount}`;
 
   const canShowListingsPreview = latestValid && Boolean(item.queryId);
@@ -673,7 +682,7 @@ export function updateCard(item, onFavoriteToggle) {
     listingsPopoverSubline.textContent = "";
     listingsPopoverBody.textContent = "Listing details are not available for this item yet.";
     listingsHoverArea.setAttribute("aria-label", "Listing details unavailable");
-    const mapEntry = chartMap.get(item.itemName);
+    const mapEntry = chartMap.get(key);
     if (mapEntry) {
       // If the user currently has the popover open, don't force-close it just because
       // a refresh cycle temporarily removed/invalidated the queryId (or data went stale).
@@ -693,13 +702,14 @@ export function updateCard(item, onFavoriteToggle) {
 
   listingsHoverArea.setAttribute("aria-label", "Show listing details");
 
-  const mapEntry = chartMap.get(item.itemName);
+  const mapEntry = chartMap.get(key);
   if (!mapEntry) {
     return;
   }
 
-  if (mapEntry.currentQueryId !== item.queryId) {
+  if (mapEntry.currentQueryId !== item.queryId || mapEntry.currentVariantId !== item.variantId) {
     mapEntry.currentQueryId = item.queryId;
+    mapEntry.currentVariantId = item.variantId ?? null;
     mapEntry.loadedQueryId = null;
     mapEntry.loadingQueryId = null;
     listingsPopoverHeader.textContent = "Listings";
@@ -718,12 +728,15 @@ export function updateAllCards(itemsToRender, onFavoriteToggle) {
   const seen = new Set();
   for (let i = 0; i < itemsToRender.length; i += 1) {
     const item = itemsToRender[i];
-    seen.add(item.itemName);
-    if (!chartMap.has(item.itemName)) {
+    const key = item.imageNameFilter 
+      ? `${item.itemName}::${item.imageNameFilter}`
+      : item.itemName;
+    seen.add(key);
+    if (!chartMap.has(key)) {
       ensureCard(item, onFavoriteToggle);
     }
 
-    const entry = chartMap.get(item.itemName);
+    const entry = chartMap.get(key);
     const wasListingsPopoverOpen = Boolean(entry?.listingsHoverArea?.classList?.contains("popover-open"));
     const currentAtIndex = dom.cardsEl.children[i];
     if (currentAtIndex !== entry.card) {

@@ -14,6 +14,7 @@ class ItemVariantRow:
     display_name: str
     sort_order: int | None
     icon_path: str | None
+    image_name_filter: str | None = None
 
 
 class ItemsRepo:
@@ -42,29 +43,30 @@ class ItemsRepo:
         sort_order: int | None,
         active_from_utc: str | None = None,
         active_to_utc: str | None = None,
+        image_name_filter: str | None = None,
     ) -> int:
         row = self._con.execute(
-            "SELECT id FROM item_variants WHERE item_id = ? AND mode = ?",
-            (item_id, mode),
+            "SELECT id FROM item_variants WHERE item_id = ? AND mode = ? AND (image_name_filter IS NULL OR image_name_filter = ?)",
+            (item_id, mode, image_name_filter),
         ).fetchone()
         if row:
             variant_id = int(row["id"])
             self._con.execute(
-                "UPDATE item_variants SET display_name = ?, sort_order = ?, active_from_utc = ?, active_to_utc = ? WHERE id = ?",
-                (display_name, sort_order, active_from_utc, active_to_utc, variant_id),
+                "UPDATE item_variants SET display_name = ?, sort_order = ?, active_from_utc = ?, active_to_utc = ?, image_name_filter = ? WHERE id = ?",
+                (display_name, sort_order, active_from_utc, active_to_utc, image_name_filter, variant_id),
             )
             return variant_id
 
         cur = self._con.execute(
-            "INSERT INTO item_variants(item_id, mode, display_name, sort_order, active_from_utc, active_to_utc) VALUES (?, ?, ?, ?, ?, ?)",
-            (item_id, mode, display_name, sort_order, active_from_utc, active_to_utc),
+            "INSERT INTO item_variants(item_id, mode, display_name, sort_order, active_from_utc, active_to_utc, image_name_filter) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (item_id, mode, display_name, sort_order, active_from_utc, active_to_utc, image_name_filter),
         )
         return int(cur.lastrowid)
 
     def list_variants(self) -> list[ItemVariantRow]:
         rows = self._con.execute(
             """
-            SELECT v.id, i.name AS item_name, v.mode, v.display_name, v.sort_order, i.icon_path
+            SELECT v.id, i.name AS item_name, v.mode, v.display_name, v.sort_order, i.icon_path, v.image_name_filter
             FROM item_variants v
             JOIN items i ON i.id = v.item_id
             ORDER BY v.sort_order ASC, v.display_name ASC
@@ -78,6 +80,7 @@ class ItemsRepo:
                 display_name=str(r["display_name"]),
                 sort_order=(int(r["sort_order"]) if r["sort_order"] is not None else None),
                 icon_path=(str(r["icon_path"]) if r["icon_path"] is not None else None),
+                image_name_filter=(str(r["image_name_filter"]) if r["image_name_filter"] is not None else None),
             )
             for r in rows
         ]
@@ -388,6 +391,19 @@ class PollsRepo:
             LIMIT 1
             """,
             (query_id,),
+        ).fetchone()
+
+    def latest_item_poll_by_variant_id(self, *, variant_id: int) -> sqlite3.Row | None:
+        return self._con.execute(
+            """
+            SELECT ip.*, pr.league
+            FROM item_polls ip
+            JOIN poll_runs pr ON pr.id = ip.poll_run_id
+            WHERE ip.item_variant_id = ?
+            ORDER BY ip.requested_at_utc DESC
+            LIMIT 1
+            """,
+            (variant_id,),
         ).fetchone()
 
     def listing_snapshot_rows(self, *, item_poll_id: int, limit: int | None = None) -> list[sqlite3.Row]:

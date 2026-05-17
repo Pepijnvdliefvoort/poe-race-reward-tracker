@@ -20,9 +20,13 @@ class VariantSpec:
     display_name: str
     sort_order: int | None
     icon_path: str | None
+    image_name_filter: str | None = None  # Art/icon filter for multi-art unique items
 
     @property
     def key(self) -> str:
+        # Include image_name_filter in key so different arts of same item have different keys
+        if self.image_name_filter:
+            return f"{self.base_item_name}::{self.mode}::{self.image_name_filter}"
         return f"{self.base_item_name}::{self.mode}"
 
 
@@ -61,6 +65,7 @@ class StorageService:
                     mode=v.mode,
                     display_name=v.display_name,
                     sort_order=v.sort_order,
+                    image_name_filter=v.image_name_filter,
                 )
                 mapping[v.key] = variant_id
             con.commit()
@@ -97,15 +102,15 @@ class StorageService:
         finally:
             con.close()
 
-    def list_variants(self) -> list[tuple[int, str, str, str, int | None, str | None]]:
+    def list_variants(self) -> list[tuple[int, str, str, str, int | None, str | None, str | None]]:
         """
-        Return [(variant_id, base_item_name, mode, display_name, sort_order, icon_path), ...]
+        Return [(variant_id, base_item_name, mode, display_name, sort_order, icon_path, image_name_filter), ...]
         """
         self.ensure_initialized()
         con = self._db.connect()
         try:
             rows = ItemsRepo(con).list_variants()
-            return [(r.id, r.item_name, r.mode, r.display_name, r.sort_order, r.icon_path) for r in rows]
+            return [(r.id, r.item_name, r.mode, r.display_name, r.sort_order, r.icon_path, r.image_name_filter) for r in rows]
         finally:
             con.close()
 

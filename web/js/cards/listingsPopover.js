@@ -384,8 +384,11 @@ function renderListingsPreview(entry, payload) {
   }
 }
 
-async function fetchListingsPreview(queryId) {
-  const cached = listingsPreviewCache.get(queryId);
+async function fetchListingsPreview(queryId, variantId) {
+  // Use variantId as the cache key when available — two variants can share the same queryId
+  // (e.g. different art versions of the same item), so queryId alone is ambiguous.
+  const cacheKey = variantId != null ? `v:${variantId}` : queryId;
+  const cached = listingsPreviewCache.get(cacheKey);
   // Be defensive: cache entries can be missing/corrupt during hot reloads or partial updates.
   if (
     cached &&
@@ -396,11 +399,16 @@ async function fetchListingsPreview(queryId) {
     return cached?.payload ?? null;
   }
 
-  if (listingsPreviewInFlight.has(queryId)) {
-    return listingsPreviewInFlight.get(queryId);
+  if (listingsPreviewInFlight.has(cacheKey)) {
+    return listingsPreviewInFlight.get(cacheKey);
   }
 
-  const promise = fetch(`/api/listings?queryId=${encodeURIComponent(queryId)}`, { cache: "no-store" })
+  let url = `/api/listings?queryId=${encodeURIComponent(queryId)}`;
+  if (variantId != null) {
+    url += `&variantId=${encodeURIComponent(variantId)}`;
+  }
+
+  const promise = fetch(url, { cache: "no-store" })
     .then(async (response) => {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -414,21 +422,22 @@ async function fetchListingsPreview(queryId) {
       const source = typeof payload?.source === "string" ? payload.source : "";
       const isRetryableMiss = source === "cache-miss" || source === "cache-not-found" || source === "cache-read-error";
       if (!isRetryableMiss) {
-        listingsPreviewCache.set(queryId, { payload, fetchedAt: Date.now() });
+        listingsPreviewCache.set(cacheKey, { payload, fetchedAt: Date.now() });
       }
       return payload;
     })
     .finally(() => {
-      listingsPreviewInFlight.delete(queryId);
+      listingsPreviewInFlight.delete(cacheKey);
     });
 
-  listingsPreviewInFlight.set(queryId, promise);
+  listingsPreviewInFlight.set(cacheKey, promise);
   return promise;
 }
 
 async function loadListingsPreview(entry, options = {}) {
   const { force = false, silent = false } = options;
   const queryId = entry.currentQueryId;
+  const variantId = entry.currentVariantId ?? null;
   if (!queryId || (!force && queryId === entry.loadedQueryId) || entry.loadingQueryId === queryId) {
     return;
   }
@@ -439,7 +448,7 @@ async function loadListingsPreview(entry, options = {}) {
   }
 
   try {
-    const payload = await fetchListingsPreview(queryId);
+    const payload = await fetchListingsPreview(queryId, variantId);
     if (entry.currentQueryId !== queryId) {
       return;
     }

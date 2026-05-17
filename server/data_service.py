@@ -198,13 +198,15 @@ def _seed_items_from_variants(variants_by_name: dict[str, list[dict[str, Any]]])
         for variant in variants:
             mode = _mode_token(variant.get("isAA"))
             base_item_name = str(variant.get("itemName") or "")
+            image_name_filter = variant.get("imageNameFilter")
             variant_key = str(variant.get("key") or f"{base_item_name}::{mode}")
             items[variant_key] = {
                 "itemName": str(variant.get("displayName") or base_item_name),
                 "baseItemName": base_item_name,
                 "mode": mode,
+                "imageNameFilter": image_name_filter,
                 "category": str(variant.get("category") or ""),
-                "imagePath": _get_image_path(base_item_name, _mode_to_is_aa(mode)),
+                "imagePath": _get_image_path(base_item_name, _mode_to_is_aa(mode), image_name_filter),
                 "sortOrder": variant.get("order"),
                 "points": [],
                 "latest": None,
@@ -214,7 +216,10 @@ def _seed_items_from_variants(variants_by_name: dict[str, list[dict[str, Any]]])
 
 
 def _load_item_variants() -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
-    """Load variant order from items.txt preserving duplicates (AA/normal)."""
+    """Load variant order from items.txt preserving duplicates (AA/normal).
+    
+    Supports 4th column for image_name_filter (e.g., LaviangasOil2.png) to distinguish art versions.
+    """
     variants_by_name: dict[str, list[dict[str, Any]]] = {}
     order_by_key: dict[str, int] = {}
 
@@ -236,14 +241,22 @@ def _load_item_variants() -> tuple[dict[str, list[dict[str, Any]]], dict[str, in
 
                 raw_mode = parts[1] if len(parts) >= 2 else None
                 category = parts[2] if len(parts) >= 3 else ""
+                image_name_filter = parts[3] if len(parts) >= 4 else None
                 is_aa = _parse_mode(raw_mode)
                 mode = _mode_token(is_aa)
-                variant_key = f"{item_name}::{mode}"
+                
+                # Include image_name_filter in key so different arts have different keys
+                if image_name_filter:
+                    variant_key = f"{item_name}::{mode}::{image_name_filter}"
+                else:
+                    variant_key = f"{item_name}::{mode}"
+                
                 variant = {
                     "itemName": item_name,
                     "displayName": _display_name(item_name, is_aa),
                     "isAA": is_aa,
                     "category": category,
+                    "imageNameFilter": image_name_filter,
                     "key": variant_key,
                     "order": index,
                 }
@@ -286,7 +299,8 @@ def _sync_tracked_variants_if_needed(
                     mode=mode,
                     display_name=str(v.get("displayName") or base_name),
                     sort_order=_order_or_max(v.get("order")),
-                    icon_path=_get_image_path(base_name, v.get("isAA")),
+                    icon_path=_get_image_path(base_name, v.get("isAA"), v.get("imageNameFilter")),
+                    image_name_filter=v.get("imageNameFilter"),
                 )
             )
 
@@ -295,8 +309,23 @@ def _sync_tracked_variants_if_needed(
     _TRACKED_ITEMS_SYNC_SIGNATURE = signature
 
 
-def _get_image_path(item_name: str, is_aa: bool | None) -> str | None:
-    """Generate local image filename for item with Linux-safe case-insensitive matching."""
+def _get_image_path(item_name: str, is_aa: bool | None, image_name_filter: str | None = None) -> str | None:
+    """Generate local image filename for item with Linux-safe case-insensitive matching.
+    
+    If image_name_filter is provided (for art-specific variants), use it directly.
+    Otherwise, perform generic lookup based on item_name and is_aa mode.
+    """
+    # If we have an explicit image filter, use it directly
+    if image_name_filter:
+        # Verify the file exists in the icon index
+        icon_idx = _icon_index()
+        # Remove .png extension if present, then normalize
+        stem = image_name_filter.rsplit(".", 1)[0] if "." in image_name_filter else image_name_filter
+        normalized = _normalize_icon_token(stem)
+        if normalized in icon_idx:
+            return f"/assets/icons/{icon_idx[normalized]}"
+    
+    # Fall back to generic lookup
     if is_aa is None or is_aa is True:
         aa_name = _resolve_icon_filename(item_name, is_alt=True)
         if aa_name:
@@ -352,8 +381,8 @@ def _calculate_next_poll_time() -> int | None:
         return None
 
 
-def fetch_listing_preview(query_id: str, *, limit: int | None = 20) -> dict[str, Any]:
-    return ServerStorage(ROOT_DIR).fetch_listing_preview(query_id, limit=limit)
+def fetch_listing_preview(query_id: str, *, limit: int | None = 20, variant_id: int | None = None) -> dict[str, Any]:
+    return ServerStorage(ROOT_DIR).fetch_listing_preview(query_id, limit=limit, variant_id=variant_id)
 
 
 def fetch_account_compare(*, accounts: list[str], mode: str = "all", top_n: int = 5) -> dict[str, Any]:

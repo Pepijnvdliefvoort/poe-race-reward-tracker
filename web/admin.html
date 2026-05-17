@@ -303,6 +303,59 @@
           </button>
           <span id="adminSalesDeleteHint" class="admin-muted" aria-live="polite"></span>
         </div>
+
+        <hr style="border: 0; border-top: 1px solid var(--stroke); margin: 18px 0" />
+
+        <h3 style="margin: 0 0 6px">Alert testing</h3>
+        <p class="admin-muted" style="margin: 0 0 10px">
+          Trigger realistic Discord test alerts from DB-backed sample data. Choose the base item, then the exact
+          variant (mode and optional image filter), then which alert types to send.
+        </p>
+
+        <div class="admin-appconfig-row">
+          <label class="admin-appconfig-k" for="adminAlertTestItemSelect">Item</label>
+          <div>
+            <select id="adminAlertTestItemSelect" class="admin-appconfig-input" disabled>
+              <option value="">Loading items…</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="admin-appconfig-row">
+          <label class="admin-appconfig-k" for="adminAlertTestVariantSelect">Variant</label>
+          <div>
+            <select id="adminAlertTestVariantSelect" class="admin-appconfig-input" disabled>
+              <option value="">Select an item first…</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="admin-appconfig-row">
+          <span class="admin-appconfig-k">Alert types</span>
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center">
+            <label class="admin-muted" style="display: inline-flex; gap: 6px; align-items: center">
+              <input id="adminAlertTypeSales" type="checkbox" checked /> Sales
+            </label>
+            <label class="admin-muted" style="display: inline-flex; gap: 6px; align-items: center">
+              <input id="adminAlertTypeSnipe" type="checkbox" checked /> Snipes/alerts
+            </label>
+            <label class="admin-muted" style="display: inline-flex; gap: 6px; align-items: center">
+              <input id="adminAlertTypeReprice" type="checkbox" checked /> Reprices
+            </label>
+          </div>
+        </div>
+
+        <div class="admin-appconfig-row">
+          <span class="admin-appconfig-k">Preview</span>
+          <p id="adminAlertTestPreview" class="admin-muted" style="margin: 0">Select item and variant.</p>
+        </div>
+
+        <div class="admin-appconfig-actions">
+          <button id="adminAlertTestSendBtn" class="admin-btn" type="button" disabled>
+            Send test alerts
+          </button>
+          <span id="adminAlertTestHint" class="admin-muted" aria-live="polite"></span>
+        </div>
       </div>
     </section>
 

@@ -85,14 +85,20 @@ class ServerStorage:
         try:
             rows = con.execute(
                 """
-                SELECT v.id AS variant_id, i.name AS item_name, v.mode
+                SELECT v.id AS variant_id, i.name AS item_name, v.mode, v.image_name_filter
                 FROM item_variants v
                 JOIN items i ON i.id = v.item_id
                 """
             ).fetchall()
             out: dict[str, int] = {}
             for r in rows:
-                key = f"{str(r['item_name'])}::{str(r['mode'])}"
+                item_name = str(r['item_name'])
+                mode = str(r['mode'])
+                image_filter = r['image_name_filter']
+                if image_filter:
+                    key = f"{item_name}::{mode}::{str(image_filter)}"
+                else:
+                    key = f"{item_name}::{mode}"
                 out[key] = int(r["variant_id"])
             return out
         finally:
@@ -109,7 +115,10 @@ class ServerStorage:
                 return items_fallback
             out: dict[str, dict[str, Any]] = {}
             for r in rows:
-                key = f"{r.item_name}::{r.mode}"
+                if r.image_name_filter:
+                    key = f"{r.item_name}::{r.mode}::{r.image_name_filter}"
+                else:
+                    key = f"{r.item_name}::{r.mode}"
                 out[key] = {
                     "itemName": r.item_name,
                     "displayName": r.display_name,
@@ -117,6 +126,7 @@ class ServerStorage:
                     "key": key,
                     "order": r.sort_order,
                     "mode": r.mode,
+                    "imageNameFilter": r.image_name_filter,
                 }
             return out
         finally:
@@ -201,8 +211,10 @@ class ServerStorage:
                     "baseItemName": str(variant.get("itemName") or ""),
                     "mode": str(variant.get("mode") or ""),
                     "category": str(variant.get("category") or ""),
-                    "imagePath": get_image_path(str(variant.get("itemName") or ""), variant.get("isAA")),
+                    "imageNameFilter": variant.get("imageNameFilter"),
+                    "imagePath": get_image_path(str(variant.get("itemName") or ""), variant.get("isAA"), variant.get("imageNameFilter")),
                     "sortOrder": variant.get("order"),
+                    "variantId": variant_ids_by_key.get(variant_key),
                     "points": [],
                     "latest": None,
                     "queryId": None,
@@ -341,7 +353,12 @@ class ServerStorage:
                 _attach_last_known_mirror_prices(it)
             item_list.sort(
                 key=lambda it: (
-                    order_by_key.get(f"{it.get('baseItemName','')}::{it.get('mode','')}", 10**9),
+                    order_by_key.get(
+                        f"{it.get('baseItemName','')}::{it.get('mode','')}"
+                        if not it.get('imageNameFilter')
+                        else f"{it.get('baseItemName','')}::{it.get('mode','')}::{it.get('imageNameFilter','')}",
+                        10**9
+                    ),
                     it.get("itemName") or "",
                 )
             )
@@ -355,14 +372,19 @@ class ServerStorage:
         finally:
             con.close()
 
-    def fetch_listing_preview(self, query_id: str, *, limit: int | None = 20) -> dict[str, Any]:
+    def fetch_listing_preview(self, query_id: str, *, limit: int | None = 20, variant_id: int | None = None) -> dict[str, Any]:
         cleaned = (query_id or "").strip()
-        if not cleaned:
+        if not cleaned and variant_id is None:
             raise ValueError("queryId is required")
         con = self.connect()
         try:
             polls = PollsRepo(con)
-            row = polls.latest_item_poll_by_query_id(query_id=cleaned)
+            # Prefer variant_id lookup when available — two variants may share the same query_id
+            # (e.g. Lavianga art variants), so query_id alone is ambiguous.
+            if variant_id is not None:
+                row = polls.latest_item_poll_by_variant_id(variant_id=int(variant_id))
+            else:
+                row = polls.latest_item_poll_by_query_id(query_id=cleaned)
             if not row:
                 return {"queryId": cleaned, "league": "Standard", "totalResults": 0, "listings": [], "source": "db-not-found"}
             item_poll_id = int(row["id"])

@@ -1,11 +1,10 @@
-# Individual alt arts
 Tabula Rasa|aa|Body Armour
 Queen's Decree|aa|Two-Handed Sword
 Storm Cloud|aa|Bow
 Headhunter|aa|Belt
 Alpha's Howl|aa|Helmet
 Demigod's Stride|aa|Boots
-Demigod's Touch|aa|Gloves
+Demigod's Touch|aa|Gloves|DemigodsTouchAlt.png
 Demigod's Immortality|aa|Helmet
 Demigod's Triumph|aa|Helmet
 Demigod's Bounty|aa|Belt
@@ -16,6 +15,7 @@ Talisman of the Victor|aa|Amulet
 Demigod's Presence|normal|Amulet
 Demigod's Authority|normal|One-Handed Sword
 Demigod's Stride|normal|Boots
+Demigod's Touch|aa|Gloves|DemigodsTouch.png
 Demigod's Immortality|normal|Helmet
 Demigod's Triumph|normal|Helmet
 Demigod's Bounty|normal|Belt
@@ -31,21 +31,36 @@ Auxium|aa|Belt
 Void Battery|aa|Wand
 Berek's Respite|aa|Ring
 The Taming|aa|Ring
-Voll's Devotion|aa|Amulet
 Taste of Hate|aa|Sapphire Flask
 Warped Timepiece|aa|Amulet
 Emberwake|aa|Ring
 Bloodgrip|aa|Amulet
 Soulthirst|aa|Belt
 Winterheart|aa|Amulet
-Dream Fragments|aa|Ring
 Rainbowstride|aa|Boots
 Hrimnor's Resolve|aa|Helmet
 Perandus Signet|aa|Ring
 Ming's Heart|aa|Ring
 Starkonja's Head|aa|Helmet
 Saffell's Frame|aa|Shield
-Andvarius|aa|Ring
+Andvarius|aa|Ring|RingUnique1.png
+Andvarius|aa|Ring|andvariusAlt.png
+Dream Fragments|aa|Ring|DreamFragmentsAlt2.png
+Dream Fragments|aa|Ring|DreamFragmentsAlt.png
+Lavianga's Spirit|aa|Flask|LaviangasOilAlt.png
+Lavianga's Spirit|aa|Flask|LaviangasOil2.png
+Death Rush|aa|Ring|DeathRushAlt.png
+Death Rush|aa|Ring|BloodRIng.png
+Wanderlust|aa|Boots|Wanderlust2.png
+Wanderlust|aa|Boots|WanderlustAlt3.png
+Voll's Devotion|aa|Amulet|VollsDevotionAltArt2.png
+Voll's Devotion|aa|Amulet|AgateAmuletUnique2.png
+Stone of Lazhwar|aa|Amulet|StoneofLazhwarAlt.png
+Stone of Lazhwar|aa|Amulet|Amulet5Unique2.png
+Atziri's Foible|aa|Amulet|AtzirisFoibleAlt.png
+Atziri's Foible|aa|Amulet|AtzirisFoibleAlt2.png
+Meginord's Girdle|aa|Belt|MeginordsGirdleAlt.png
+Meginord's Girdle|aa|Belt|MeginordsGirdleAlt2.png
 Daresso's Salute|aa|Amulet
 Bino's Kitchen Knife|aa|Dagger
 Rathpith Globe|aa|Shield
@@ -64,14 +79,11 @@ Doedre's Damning|aa|Ring
 Malachai's Artifice|aa|Ring
 Rashkaldor's Patience|aa|Amulet
 The Blood Dance|aa|Boots
-Lavianga's Spirit|aa|Sanctified Mana Flask
 Dyadian Dawn|aa|Belt
 Victario's Acuity|aa|Amulet
 Facebreaker|aa|Gloves
 Reaper's Pursuit|aa|Two-Handed Axe
-Atziri's Foible|aa|Amulet
 Le Heup of All|aa|Ring
-Meginord's Girdle|aa|Belt
 Thief's Torment|aa|Ring
 Carnage Heart|aa|Amulet
 Sundance|aa|Boots
@@ -93,7 +105,6 @@ Blood of Corruption|aa|Amulet
 Eye of Chayula|aa|Amulet
 The Searing Touch|aa|Staff
 Gifts from Above|aa|Ring
-Death Rush|aa|Ring
 Prismatic Eclipse|aa|One-Handed Sword
 The Three Dragons|aa|Helmet
 Brightbeak|aa|One-Handed Mace
@@ -112,12 +123,10 @@ Pillar of the Caged God|aa|Staff
 Shiversting|aa|Two-Handed Sword
 Redbeak|aa|One-Handed Sword
 Mindspiral|aa|Helmet
-Wanderlust|aa|Boots
 Ungil's Harmony|aa|Amulet
 The Blood Thorn|aa|Staff
 The Princess|aa|One-Handed Sword
 Asphyxia's Wrath|aa|Quiver
-Stone of Lazhwar|aa|Amulet
 Wurm's Molt|aa|Belt
 Perandus Blazon|aa|Belt
 Blackheart|aa|Ring

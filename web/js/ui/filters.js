@@ -52,7 +52,12 @@ export function getFilteredAndSortedItems(items) {
 
     // Apply favorites filter
     if (state.filters.favoritesOnly) {
-        filtered = filtered.filter((item) => state.favoriteItems.has(item.itemName));
+        filtered = filtered.filter((item) => {
+            const key = item.imageNameFilter 
+                ? `${item.itemName}::${item.imageNameFilter}`
+                : item.itemName;
+            return state.favoriteItems.has(key);
+        });
     }
 
     // Apply price range filter
