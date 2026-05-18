@@ -222,6 +222,7 @@ def listing_signals_from_fetch(
                 m = _mirror_equivalent(float(amt), str(cur), divines_per_mirror)
                 if math.isfinite(m):
                     mirror_eq = round(m, 6)
+        
         out.append(
             {
                 "fingerprint": fp,
