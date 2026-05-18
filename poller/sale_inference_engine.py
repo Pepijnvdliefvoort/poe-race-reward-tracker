@@ -307,6 +307,22 @@ def _priced_too_high_vs_baseline(
     return m > base * (1.0 + (pct / 100.0))
 
 
+def _is_low_floor_market(
+    cheapest_mirror: float | None,
+    *,
+    floor_below_mirrors: float,
+) -> bool:
+    if cheapest_mirror is None:
+        return False
+    floor = float(cheapest_mirror)
+    if not math.isfinite(floor) or floor <= 0:
+        return False
+    floor_cap = float(floor_below_mirrors)
+    if not math.isfinite(floor_cap) or floor_cap <= 0:
+        return False
+    return floor < floor_cap
+
+
 def _cheapest_mirror_equiv(signals: list[dict[str, Any]]) -> float | None:
     """Return the current cheapest valid mirror-equivalent listing in a snapshot."""
     vals = [
@@ -506,6 +522,10 @@ def evaluate_listing_transition(
     prev_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in prev_signals}
     curr_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in curr_signals}
     cheapest_prev_mirror = _cheapest_mirror_equiv(prev_signals)
+    low_floor_market = _is_low_floor_market(
+        cheapest_prev_mirror,
+        floor_below_mirrors=sale_floor_ignore_if_floor_below_mirrors,
+    )
 
     # --- Resolve pending non-instant "online" removals (rule 4b vs 3) ---
     new_pending_online: list[dict[str, Any]] = []
@@ -586,7 +606,7 @@ def evaluate_listing_transition(
                     truncation_cutoff_mirror=truncation_cutoff_mirror,
                     truncation_safe_margin_pct=truncation_safe_margin_pct,
                 ):
-                    if _priced_too_high_vs_baseline(
+                    if (not low_floor_market) and _priced_too_high_vs_baseline(
                         mirror_eq,
                         baseline_mirror=baseline_mirror,
                         max_above_baseline_pct=sale_max_above_baseline_pct,
@@ -716,7 +736,7 @@ def evaluate_listing_transition(
             else:
                 was_online = bool(meta.get("sellerOnline"))
             if was_online:
-                if _priced_too_high_vs_baseline(
+                if (not low_floor_market) and _priced_too_high_vs_baseline(
                     mirror_eq,
                     baseline_mirror=baseline_mirror,
                     max_above_baseline_pct=sale_max_above_baseline_pct,
@@ -802,7 +822,7 @@ def evaluate_listing_transition(
                 )
             continue
 
-        if _priced_too_high_vs_baseline(
+        if (not low_floor_market) and _priced_too_high_vs_baseline(
             mirror_eq,
             baseline_mirror=baseline_mirror,
             max_above_baseline_pct=sale_max_above_baseline_pct,
@@ -829,7 +849,7 @@ def evaluate_listing_transition(
             baseline_range_mirrors=sale_baseline_range_mirrors,
         ):
             events.append(
-                {
+                { 
                     "rule": "unlisted_above_floor_sub10",
                     "itemKey": item_key,
                     "fingerprint": fp,

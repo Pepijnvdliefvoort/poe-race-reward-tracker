@@ -260,8 +260,8 @@
       <div class="admin-appconfig-card admin-data-tools" aria-label="Market data tools">
         <h3 style="margin: 0 0 6px">Sale moderation</h3>
         <p class="admin-muted" style="margin: 0 0 10px">
-          Remove persisted <code>sales</code> rows for a specific item (or variant). This affects the sales chart and any features based on
-          recorded sales.
+          Remove persisted <code>sales</code> rows or clear the full price history for a specific item art variant. This affects the sales
+          chart and any features based on recorded sales or poll history.
         </p>
 
         <div class="admin-appconfig-row">
@@ -298,6 +298,9 @@
         </div>
 
         <div class="admin-appconfig-actions">
+          <button id="adminWipePriceHistoryBtn" class="admin-btn admin-btn-danger" type="button" disabled>
+            Delete price history
+          </button>
           <button id="adminWipeVariantBtn" class="admin-btn admin-btn-danger" type="button" disabled>
             Delete all sales + fingerprints
           </button>
