@@ -2243,7 +2243,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     deleted_inference_events = 0
                     deleted_inf_pending = 0
                     deleted_inf_signals = 0
+                    deleted_price_history_polls = 0
                     polls_reset = 0
+                    delete_price_history = scope in {"history", "price_history", "price-history"}
 
                     for vid in variant_ids:
                         # Polls for this variant (used to delete per-poll fingerprint tables).
@@ -2267,26 +2269,30 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         cur = con.execute("DELETE FROM inference_state_signals WHERE item_variant_id = ?", (vid,))
                         deleted_inf_signals += int(cur.rowcount or 0)
 
-                        # Reset inferred counters (used by “Est. sold”) but keep price history.
-                        row = con.execute("SELECT COUNT(*) AS n FROM item_polls WHERE item_variant_id = ?", (vid,)).fetchone()
-                        polls = int(row["n"] or 0) if row else 0
-                        polls_reset += polls
-                        con.execute(
-                            """
-                            UPDATE item_polls
-                            SET
-                              inf_confirmed_transfer = 0,
-                              inf_likely_instant_sale = 0,
-                              inf_likely_non_instant_online = 0,
-                              inf_relist_same_seller = 0,
-                              inf_non_instant_removed = 0,
-                              inf_reprice_same_seller = 0,
-                              inf_multi_seller_same_fingerprint = 0,
-                              inf_new_listing_rows = 0
-                            WHERE item_variant_id = ?
-                            """,
-                            (vid,),
-                        )
+                        if delete_price_history:
+                            cur = con.execute("DELETE FROM item_polls WHERE item_variant_id = ?", (vid,))
+                            deleted_price_history_polls += int(cur.rowcount or 0)
+                        else:
+                            # Reset inferred counters (used by “Est. sold”) but keep price history.
+                            row = con.execute("SELECT COUNT(*) AS n FROM item_polls WHERE item_variant_id = ?", (vid,)).fetchone()
+                            polls = int(row["n"] or 0) if row else 0
+                            polls_reset += polls
+                            con.execute(
+                                """
+                                UPDATE item_polls
+                                SET
+                                  inf_confirmed_transfer = 0,
+                                  inf_likely_instant_sale = 0,
+                                  inf_likely_non_instant_online = 0,
+                                  inf_relist_same_seller = 0,
+                                  inf_non_instant_removed = 0,
+                                  inf_reprice_same_seller = 0,
+                                  inf_multi_seller_same_fingerprint = 0,
+                                  inf_new_listing_rows = 0
+                                WHERE item_variant_id = ?
+                                """,
+                                (vid,),
+                            )
 
                     con.commit()
                 finally:
@@ -2303,6 +2309,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             "inferenceEvents": deleted_inference_events,
                             "inferencePending": deleted_inf_pending,
                             "inferenceSignals": deleted_inf_signals,
+                            "priceHistoryPolls": deleted_price_history_polls,
                         },
                         "updated": {"pollsReset": polls_reset},
                     },

@@ -886,16 +886,18 @@ def seed_price_history_from_db(storage: StorageService, history_cycles: int) -> 
 
 def seed_price_alert_cooldown_from_db(
     storage: StorageService, variant_ids_by_key: dict[str, int]
-) -> dict[str, tuple[int, float]]:
+) -> dict[str, tuple[int, float, str, float]]:
     """Restore price-drop alert cooldown from SQLite (same keys/cycles as ``run_cycle``)."""
     by_variant: dict[int, tuple[int, float]] = {}
     for vid, last_cycle, last_low in storage.load_price_alert_cooldown_rows():
         by_variant[int(vid)] = (int(last_cycle), float(last_low))
-    state: dict[str, tuple[int, float]] = {}
+    state: dict[str, tuple[int, float, str, float]] = {}
     for key, vid in variant_ids_by_key.items():
         row = by_variant.get(int(vid))
         if row is not None:
-            state[key] = row
+            # Raw currency/amount unknown from DB; use empty sentinel so comparison falls back
+            # to mirror-equivalent on the first poll after a restart.
+            state[key] = (row[0], row[1], "", 0.0)
     return state
 
 
@@ -2555,7 +2557,7 @@ def run_cycle(
     run_started_at_utc: str,
     divines_per_mirror: float = DIVINES_PER_MIRROR,
     price_history: dict[str, list[float]] | None = None,
-    alert_state: dict[str, tuple[int, float]] | None = None,
+    alert_state: dict[str, tuple[int, float, str, float]] | None = None,
     alert_config: AlertConfig | None = None,
     inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
     sales_webhook_url: str = "",
@@ -2987,8 +2989,25 @@ def run_cycle(
                         last_alert = alert_state.get(item_key)
                         suppress_for_cooldown = False
                         if last_alert is not None and alert_config.cooldown_cycles > 0:
-                            last_cycle, last_price = last_alert
-                            same_price = abs(last_price - low_mirror) <= max(0.01, last_price * 0.01)
+                            last_cycle, last_price, last_raw_cur, last_raw_amt = last_alert
+                            # Use raw native-currency amount when both the previous and current
+                            # cheapest listing are in the same non-mirror currency (e.g. divines).
+                            # This prevents a change in the divine-to-mirror ratio from being
+                            # mistaken for an actual price change and bypassing the cooldown.
+                            curr_raw_cur = cheapest_raw[0] if cheapest_raw else ""
+                            curr_raw_amt = cheapest_raw[1] if cheapest_raw else 0.0
+                            if (
+                                last_raw_cur
+                                and curr_raw_cur
+                                and last_raw_cur == curr_raw_cur
+                                and last_raw_cur != "mirror"
+                                and last_raw_amt > 0
+                                and curr_raw_amt > 0
+                            ):
+                                # Compare by native price (e.g. divine amount) to ignore ratio drift.
+                                same_price = abs(last_raw_amt - curr_raw_amt) <= max(0.5, last_raw_amt * 0.01)
+                            else:
+                                same_price = abs(last_price - low_mirror) <= max(0.01, last_price * 0.01)
                             if same_price and (cycle - last_cycle) < alert_config.cooldown_cycles:
                                 suppress_for_cooldown = True
 
@@ -3007,7 +3026,9 @@ def run_cycle(
                                 listing_summary=top_listing_summary,
                                 item_image_url=cheapest_icon_url,
                             )
-                            alert_state[item_key] = (cycle, low_mirror)
+                            curr_raw_cur_store = cheapest_raw[0] if cheapest_raw else ""
+                            curr_raw_amt_store = cheapest_raw[1] if cheapest_raw else 0.0
+                            alert_state[item_key] = (cycle, low_mirror, curr_raw_cur_store, curr_raw_amt_store)
                             if variant_id:
                                 storage.upsert_price_alert_cooldown(
                                     variant_id=variant_id,
