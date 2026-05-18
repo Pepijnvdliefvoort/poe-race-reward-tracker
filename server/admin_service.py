@@ -204,7 +204,7 @@ class PollerManager:
         self._last_start_ts: float | None = None
 
     def _default_cmd(self) -> list[str]:
-        return [sys.executable, "-m", "poller"]
+        return [sys.executable, "-m", "poller", "--poll-interval", "0"]
 
     def _build_cmd(self) -> list[str]:
         raw = (os.environ.get("POE_POLLER_CMD") or "").strip()
