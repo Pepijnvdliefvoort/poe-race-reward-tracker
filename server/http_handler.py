@@ -363,6 +363,48 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_admin_auth_not_configured(self, *, want_json: bool) -> None:
+        message = "Admin authentication is not configured on this server."
+        if want_json:
+            body = json.dumps({"error": message}).encode("utf-8")
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self._send_error_page(503, title="Admin auth not configured", message=message)
+
+    def _require_admin_auth(
+        self,
+        *,
+        auth_header: str | None,
+        query_token: str | None,
+        cookie_header: str | None,
+        want_json: bool,
+    ) -> bool:
+        if not admin_security_enabled():
+            self._send_admin_auth_not_configured(want_json=want_json)
+            return False
+        if self._reject_if_admin_ip_locked(want_json=want_json):
+            return False
+        if not admin_authorized(auth_header, query_token, cookie_header):
+            self._note_failed_admin_auth_if_applicable(auth_header, query_token, cookie_header)
+            if want_json:
+                body = json.dumps({"error": "Forbidden"}).encode("utf-8")
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self._send_admin_unauthorized_page()
+            return False
+        self._note_admin_auth_success()
+        return True
+
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress logging for static assets; only log API requests."""
         # args[0] contains the request line like 'GET /path HTTP/1.1'
@@ -404,10 +446,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         token_param = params.get("token", [None])[0]
         cookie_header = self.headers.get("Cookie")
 
-        if admin_security_enabled() and (
-            req_path in {"/admin", "/admin/", "/admin/db", "/admin/db/"} or req_path.startswith("/api/admin/")
-        ):
-            if self._reject_if_admin_ip_locked(want_json=req_path.startswith("/api/admin/")):
+        if req_path in {"/admin", "/admin/", "/admin/db", "/admin/db/"}:
+            if not admin_security_enabled():
+                self._send_admin_auth_not_configured(want_json=False)
+                return
+            if self._reject_if_admin_ip_locked(want_json=False):
+                return
+
+        if req_path.startswith("/api/admin/"):
+            if not admin_security_enabled():
+                self._send_admin_auth_not_configured(want_json=True)
+                return
+            if self._reject_if_admin_ip_locked(want_json=True):
                 return
 
         if req_path in {"/admin", "/admin/"} and should_issue_admin_session_cookie(token_param):
@@ -420,24 +470,33 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
-        if req_path in {"/admin", "/admin/"} and os.environ.get("ADMIN_TOKEN", "").strip():
-            if not admin_authorized(auth_header, token_param, cookie_header):
-                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
-                self._send_admin_unauthorized_page()
+        if req_path in {"/admin", "/admin/"}:
+            if not self._require_admin_auth(
+                auth_header=auth_header,
+                query_token=token_param,
+                cookie_header=cookie_header,
+                want_json=False,
+            ):
                 return
 
-        if req_path in {"/admin/db", "/admin/db/"} and os.environ.get("ADMIN_TOKEN", "").strip():
-            if not admin_authorized(auth_header, token_param, cookie_header):
-                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
-                self._send_admin_unauthorized_page()
+        if req_path in {"/admin/db", "/admin/db/"}:
+            if not self._require_admin_auth(
+                auth_header=auth_header,
+                query_token=token_param,
+                cookie_header=cookie_header,
+                want_json=False,
+            ):
                 return
 
         # Prevent direct access to the underlying admin HTML file.
         # The canonical route is /admin/db (which is auth-protected).
-        if req_path in {"/db.html"} and os.environ.get("ADMIN_TOKEN", "").strip():
-            if not admin_authorized(auth_header, token_param, cookie_header):
-                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
-                self._send_admin_unauthorized_page()
+        if req_path in {"/db.html"}:
+            if not self._require_admin_auth(
+                auth_header=auth_header,
+                query_token=token_param,
+                cookie_header=cookie_header,
+                want_json=False,
+            ):
                 return
             q = parsed.query
             loc = "/admin/db" + (f"?{q}" if q else "")
@@ -447,18 +506,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
 
         if req_path.startswith("/api/admin/"):
-            if not admin_authorized(auth_header, token_param, cookie_header):
-                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
-                body = json.dumps({"error": "Forbidden"}).encode("utf-8")
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+            if not self._require_admin_auth(
+                auth_header=auth_header,
+                query_token=token_param,
+                cookie_header=cookie_header,
+                want_json=True,
+            ):
                 return
-
-            self._note_admin_auth_success()
 
             if req_path == "/api/admin/db/overview":
                 payload = db_overview(root_dir=ROOT_DIR)
@@ -1067,15 +1121,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
         if parsed.path == "/api/companion/auth":
-            if admin_security_enabled():
+            if not admin_security_enabled():
+                payload = {
+                    "ok": True,
+                    "authenticated": False,
+                    "configured": False,
+                }
+            else:
                 if self._reject_if_admin_ip_locked(want_json=True):
                     return
                 authorized = admin_authorized(auth_header, token_param, cookie_header)
                 if authorized:
                     self._note_admin_auth_success()
-            else:
-                authorized = True
-            payload = {"ok": True, "authenticated": authorized}
+                payload = {
+                    "ok": True,
+                    "authenticated": bool(authorized),
+                    "configured": True,
+                }
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1151,21 +1213,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         cookie_header = self.headers.get("Cookie")
 
         if parsed.path.startswith("/api/admin/"):
-            if admin_security_enabled():
-                if self._reject_if_admin_ip_locked(want_json=True):
-                    return
-            if not admin_authorized(auth_header, token_param, cookie_header):
-                self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
-                body = json.dumps({"error": "Forbidden"}).encode("utf-8")
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+            if not self._require_admin_auth(
+                auth_header=auth_header,
+                query_token=token_param,
+                cookie_header=cookie_header,
+                want_json=True,
+            ):
                 return
-
-            self._note_admin_auth_success()
 
             if parsed.path == "/api/admin/db/query":
                 length = int(self.headers.get("Content-Length", 0))
@@ -2447,20 +2501,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/companion/recommend":
-            if admin_security_enabled():
-                if self._reject_if_admin_ip_locked(want_json=True):
-                    return
-                if not admin_authorized(auth_header, token_param, cookie_header):
-                    self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
-                    body = json.dumps({"ok": False, "error": "Forbidden"}).encode("utf-8")
-                    self.send_response(403)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                self._note_admin_auth_success()
+            if not self._require_admin_auth(
+                auth_header=auth_header,
+                query_token=token_param,
+                cookie_header=cookie_header,
+                want_json=True,
+            ):
+                return
 
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length)
@@ -2489,20 +2536,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/config":
-            if admin_security_enabled():
-                if self._reject_if_admin_ip_locked(want_json=True):
-                    return
-                if not admin_authorized(auth_header, token_param, cookie_header):
-                    self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
-                    body = json.dumps({"error": "Forbidden"}).encode("utf-8")
-                    self.send_response(403)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                self._note_admin_auth_success()
+            if not self._require_admin_auth(
+                auth_header=auth_header,
+                query_token=token_param,
+                cookie_header=cookie_header,
+                want_json=True,
+            ):
+                return
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length)
             try:

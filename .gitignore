@@ -67,3 +67,7 @@ ML/**/promotion_summary.json
 # Secrets and deployment
 deploy/secrets.env
 deploy/.env
+ML/training_30d.backtest_report.json
+ML/training_30d.csv
+ML/training_30d.meta.json
+ML/training_30d.training_report.json
