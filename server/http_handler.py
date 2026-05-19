@@ -753,6 +753,36 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            if req_path == "/api/admin/ml-retrain-status":
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    row = con.execute(
+                        "SELECT value_json FROM app_config WHERE key = ?",
+                        ("ml_retrain",),
+                    ).fetchone()
+                finally:
+                    con.close()
+
+                cfg: dict[str, Any] = {}
+                if row and row["value_json"]:
+                    try:
+                        parsed = json.loads(str(row["value_json"]))
+                        if isinstance(parsed, dict):
+                            cfg = parsed
+                    except Exception:
+                        cfg = {}
+                if not isinstance(cfg, dict):
+                    cfg = {}
+                body = json.dumps({"ok": True, "status": cfg}, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             if req_path.rstrip("/").endswith("/stats"):
                 payload = system_stats_payload()
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")

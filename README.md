@@ -20,7 +20,7 @@ This README reflects the current implementation in this repository.
   - inferred sales rows (with late-relist reversal)
 - Detects potential flip opportunities and can send Discord alerts.
 - Serves a browser UI with charts, filters, compare pages, admin panel, DB explorer, and account compare.
-- Provides a companion recommendations endpoint (`/api/companion/recommend`) using heuristic ranking.
+- Provides a companion recommendations endpoint (`/api/companion/recommend`) with heuristic ranking plus optional ML shadow/hybrid scoring.
 
 ## Current Architecture
 
@@ -144,6 +144,85 @@ python -m server.server
 
 - `http://127.0.0.1:8080`
 
+## Automated ML Retraining
+
+Run the full retrain pipeline (dataset rebuild -> train candidate models -> backtest -> quality-gated promotion):
+
+```powershell
+python .\scripts\retrain_ml_pipeline.py
+```
+
+What it does:
+
+- rebuilds `ML/training_30d.csv` from `data/market.db`
+- trains candidate artifacts under `ML/candidates/<timestamp>/`
+- backtests the candidate models
+- compares candidate metrics against current live reports
+- promotes candidate models/reports only when gates pass
+- archives live artifacts to `ML/archive/<timestamp>/` before promotion
+
+Default quality gates:
+
+- classifier PR-AUC drop <= `0.02`
+- classifier ROC-AUC drop <= `0.02`
+- regressor MAPE increase <= `0.10`
+- backtest `avgRealizedEdgeAllLift` at top-k `20,50,100` remains non-negative and does not drop by more than `0.05`
+
+Useful flags:
+
+```powershell
+python .\scripts\retrain_ml_pipeline.py --required-lift-k 20,50,100 --max-lift-drop 0.03
+python .\scripts\retrain_ml_pipeline.py --friction 0.25
+python .\scripts\retrain_ml_pipeline.py --retain-candidate-days 90 --retain-archive-days 180
+python .\scripts\retrain_ml_pipeline.py --force-promote
+```
+
+For unattended scheduling on Windows Task Scheduler, use a task action like:
+
+```text
+Program/script: C:\Users\pepij\Documents\Repos\poe-market-flips\.venv\Scripts\python.exe
+Add arguments: scripts\retrain_ml_pipeline.py
+Start in: C:\Users\pepij\Documents\Repos\poe-market-flips
+```
+
+### Poller Weekly Trigger
+
+The poller now includes a built-in weekly retrain trigger (similar to daily DB export scheduling).
+When enabled, each poll cycle checks whether the scheduled weekly slot has passed and runs:
+
+```text
+python scripts/retrain_ml_pipeline.py
+```
+
+State is persisted in SQLite config key `ml_retrain`, so it runs at most once per scheduled week.
+The retrain process is launched in the background with a lock file (`logs/ml_retrain.lock`) so poll cycles continue while training runs.
+
+Admin status endpoint:
+
+- `/api/admin/ml-retrain-status`
+
+Environment variables:
+
+- `POE_ML_RETRAIN_WEEKLY_ENABLED` (`1`/`0`, default `1`)
+- `POE_ML_RETRAIN_WEEKDAY` (`0..6`, Monday=0, default `6` for Sunday)
+- `POE_ML_RETRAIN_HOUR` (`0..23`, default `3`)
+- `POE_ML_RETRAIN_MINUTE` (`0..59`, default `30`)
+- `POE_ML_RETRAIN_TZ_OFFSET_MINUTES` (default `120`, GMT+2)
+- `POE_ML_RETRAIN_TIMEOUT_SECONDS` (default `7200`)
+- `POE_ML_RETRAIN_PYTHON` (optional explicit interpreter path)
+- `POE_ML_RETRAIN_SCRIPT` (optional script path, default `scripts/retrain_ml_pipeline.py`)
+
+Example (`.env.local`):
+
+```text
+POE_ML_RETRAIN_WEEKLY_ENABLED=1
+POE_ML_RETRAIN_WEEKDAY=0
+POE_ML_RETRAIN_HOUR=4
+POE_ML_RETRAIN_MINUTE=15
+POE_ML_RETRAIN_TZ_OFFSET_MINUTES=120
+POE_ML_RETRAIN_TIMEOUT_SECONDS=10800
+```
+
 ## Poller CLI
 
 `python -m poller [options]`
@@ -258,6 +337,7 @@ Admin route groups (require auth when `ADMIN_TOKEN` is set):
   - `/api/admin/app-config`
   - `/api/admin/app-config/get`
   - `POST /api/admin/app-config/set`
+  - `/api/admin/ml-retrain-status`
   - `/api/admin/stats`
   - `/api/admin/logs`
   - `/api/admin/visitor-map`
@@ -344,12 +424,22 @@ Pattern:
 
 ## ML Ranking Status
 
-ML-assisted ranking docs exist:
+ML artifacts are consolidated under `ML/`.
 
-- `ML_ASSISTED_RANKING.md`
-- `ML_ASSISTED_RANKING_IMPLEMENTATION.md`
+Current baseline and assets:
 
-As of now, runtime recommendations are heuristic (`server/recommendation_service.py`) and `tools/ml/` is empty.
+- `ML/ML_FEATURE_BASELINE.md`
+- `ML/build_training_dataset.py`
+- `ML/training_30d.csv`
+- `ML/training_30d.meta.json`
+
+Runtime recommendations support:
+
+- heuristic ranking (default-safe path)
+- ML shadow inference fields in API responses
+- hybrid ranking gate (`ml_hybrid_enabled`, alpha blending, confidence-tier gating)
+
+Runtime scoring logic is in `server/recommendation_service.py`.
 
 ## Known Limitations / Notes
 

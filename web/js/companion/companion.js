@@ -357,6 +357,86 @@ function createOutlookBlock(title, lines, tone = "") {
   return block;
 }
 
+function createFactList(items) {
+  const facts = document.createElement("dl");
+  facts.className = "companion-facts";
+
+  for (const [label, value] of items) {
+    if (!value) continue;
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = value;
+    facts.append(term, detail);
+  }
+
+  return facts;
+}
+
+function summarizeWhyPicked(rec) {
+  const parts = [];
+  const sales = Number(rec.inferredSales30d ?? 0);
+  const trend = Number(rec.trendPct30d);
+  const entry = Number(rec.priceMirror);
+  const wealthShare = Number(rec.wealthShare);
+  const expectedValue = Number(rec.expectedValue30d);
+
+  if (rec.rankingSource === "hybrid" && Number.isFinite(expectedValue)) {
+    parts.push(
+      expectedValue > 0
+        ? `ML favors the 30-day value at ${formatMirrorDelta(expectedValue)}.`
+        : `ML still ranked it highly even with ${formatMirrorDelta(expectedValue)} expected 30-day value.`,
+    );
+  } else if (rec.flip?.viable) {
+    parts.push(`Picked for the immediate ladder gap of ${formatMirrorDelta(rec.flip.expectedProfitMirror)}.`);
+  } else if (sales > 0) {
+    parts.push(`Picked for active demand with about ${sales} inferred sale${sales === 1 ? "" : "s"} in 30 days.`);
+  } else {
+    parts.push("Picked as a higher-risk setup rather than a proven liquid market.");
+  }
+
+  if (Number.isFinite(trend)) {
+    if (trend >= 15) {
+      parts.push(`Momentum is strong at ${formatPercent(trend)}.`);
+    } else if (trend <= -15) {
+      parts.push(`Price is off ${formatPercent(trend)}, so this reads more like a rebound setup.`);
+    } else {
+      parts.push(`Recent pricing is stable at ${formatPercent(trend)}.`);
+    }
+  }
+
+  if (Number.isFinite(entry) && Number.isFinite(wealthShare)) {
+    parts.push(`Entry is ${formatMirror(entry)} using ${Math.round(wealthShare * 100)}% of bankroll.`);
+  }
+
+  return parts.join(" ");
+}
+
+function buildFlipFacts(flip) {
+  if (!flip) return [];
+  if (flip.viable) {
+    return [
+      ["Buy", formatMirror(flip.buyPriceMirror)],
+      ["Relist", formatMirror(flip.relistPriceMirror)],
+      ["Gross edge", `${formatMirrorDelta(flip.expectedProfitMirror)} (${formatPercent(flip.expectedProfitPct)})`],
+      ["Setup", flip.sellCondition || flip.reason],
+    ];
+  }
+  return [
+    ["Status", flip.reason || "No clean immediate flip gap in the latest ladder."],
+    ["Next listing", flip.nextMarketPriceMirror ? formatMirror(flip.nextMarketPriceMirror) : "n/a"],
+  ];
+}
+
+function buildHoldFacts(hold) {
+  if (!hold) return [];
+  return [
+    ["Target", formatMirror(hold.expectedPriceMirror)],
+    ["30d return", `${formatMirrorDelta(hold.expectedProfitMirror)} (${formatPercent(hold.expectedReturnPct)})`],
+    ["Plan", hold.sellTiming],
+  ];
+}
+
 function renderRecommendation(rec, options = {}) {
   const { portfolio = false } = options;
   const card = document.createElement("article");
@@ -408,45 +488,44 @@ function renderRecommendation(rec, options = {}) {
     );
   }
 
-  const reasons = document.createElement("ul");
-  reasons.className = "companion-reasons";
-  for (const reason of rec.reasons || []) {
-    const item = document.createElement("li");
-    item.textContent = reason;
-    reasons.appendChild(item);
-  }
+  const summary = document.createElement("p");
+  summary.className = "companion-pick-summary";
+  summary.textContent = summarizeWhyPicked(rec);
 
-  body.append(headingRow, metrics, reasons);
+  body.append(headingRow, metrics, summary);
 
   if (rec.flip) {
     const flip = rec.flip;
-    const flipLines = flip.viable
-      ? [
-          `Buy at ${formatMirror(flip.buyPriceMirror)}, then relist for ${formatMirror(flip.relistPriceMirror)}.`,
-          `That is about ${formatMirrorDelta(flip.expectedProfitMirror)} gross profit (${formatPercent(flip.expectedProfitPct)}).`,
-          flip.sellCondition,
-        ]
-      : [
-          flip.reason || "No clean immediate flip gap was found in the latest whole-mirror ladder.",
-          flip.nextMarketPriceMirror ? `Next listing: ${formatMirror(flip.nextMarketPriceMirror)}.` : "",
-        ];
-    body.appendChild(createOutlookBlock(flip.viable ? "Immediate flip" : "No clean flip", flipLines, flip.viable ? "good" : "muted"));
+    const block = document.createElement("div");
+    block.className = flip.viable ? "companion-outlook companion-outlook-good" : "companion-outlook companion-outlook-muted";
+
+    const heading = document.createElement("strong");
+    heading.className = "companion-outlook-title";
+    heading.textContent = flip.viable ? "Immediate flip" : "Flip setup";
+
+    block.append(heading, createFactList(buildFlipFacts(flip)));
+    body.appendChild(block);
   }
 
   if (rec.hold30d) {
     const hold = rec.hold30d;
-    body.appendChild(
-      createOutlookBlock(
-        "30-day hold",
-        [
-          `Expected price: ${formatMirror(hold.expectedPriceMirror)}.`,
-          `Expected return: ${formatMirrorDelta(hold.expectedProfitMirror)} (${formatPercent(hold.expectedReturnPct)}).`,
-          hold.sellTiming,
-          hold.cycleNote,
-        ],
-        Number(hold.expectedProfitMirror) > 0 ? "good" : "muted",
-      ),
-    );
+    const block = document.createElement("div");
+    block.className = Number(hold.expectedProfitMirror) > 0 ? "companion-outlook companion-outlook-good" : "companion-outlook companion-outlook-muted";
+
+    const heading = document.createElement("strong");
+    heading.className = "companion-outlook-title";
+    heading.textContent = "30-day hold";
+
+    block.append(heading, createFactList(buildHoldFacts(hold)));
+
+    if (hold.cycleNote) {
+      const note = document.createElement("p");
+      note.className = "companion-outlook-note";
+      note.textContent = hold.cycleNote;
+      block.appendChild(note);
+    }
+
+    body.appendChild(block);
   }
 
   if (portfolio && rec.portfolioReason) {

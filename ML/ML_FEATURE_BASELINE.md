@@ -4,6 +4,57 @@ Last updated: 2026-05-19
 Owner: poe-market-flips
 Status: Baseline specification for future ML implementation
 
+## Implementation Progress Tracker
+
+### Done
+- [x] Baseline specification created in this file.
+- [x] First-step offline dataset builder implemented: ML/build_training_dataset.py.
+- [x] Leakage-safe ordering applied in builder (features computed from <= t, labels from (t, t+30d]).
+- [x] First output contract defined and implemented:
+  - training CSV: ML/training_30d.csv
+  - metadata JSON: ML/training_30d.meta.json
+- [x] Builder smoke test executed successfully (2026-05-19):
+  - generated rows: 90138
+  - outputs written to ML/training_30d.csv and ML/training_30d.meta.json
+- [x] Dataset profiling checks implemented and validated (2026-05-19):
+  - usedGreaterThanTotal=0 after bounded feature handling
+  - usedExceedsTotalFlagCount=392 retained for diagnostics
+  - acceptance ratio bounds checks clean
+- [x] Anomaly drilldown export added: ML/extract_profile_anomalies.py.
+- [x] Baseline training pipeline implemented: ML/train_model.py.
+- [x] First baseline training run completed (2026-05-19):
+  - classifier model: ML/model_sellprob_30d.pkl
+  - regressor model: ML/model_execprice_30d.pkl
+  - report: ML/training_30d.training_report.json
+  - classifier test: PR-AUC=0.1932, ROC-AUC=0.7884, Brier=0.2168
+  - regressor test: MAE=8.6530, MAPE=0.7827
+- [x] Offline backtest script and benchmark artifact implemented: ML/backtest_recommendations.py.
+- [x] First backtest run completed (2026-05-19):
+  - report: ML/training_30d.backtest_report.json
+  - includes top-k ML vs heuristic comparison with deltas and relative lift
+- [x] Server-side shadow-mode model loader integrated in recommendations.
+- [x] Recommendation payload now emits ML fields without applying ML ranking:
+  - mlEnabled
+  - mlModelVersion
+  - mlConfidenceTier
+  - sellProb30d
+  - expectedExecPrice30d
+  - expectedValue30d
+  - mlFallbackReason
+- [x] Hybrid-ranking config gate integrated with safe default-off rollout.
+- [x] Hybrid-ranking telemetry added:
+  - fallback reason counters
+  - confidence tier counters
+  - hybrid applied/skip counters
+  - ranking source per recommendation
+
+### In Progress
+- [ ] Finalize friction assumptions for EV calculation.
+- [ ] Confirm confidence tier thresholds for sparse/medium/strong sales support.
+- [ ] Review first-run training metrics and decide feature/algorithm iteration plan.
+
+### Not Started
+
 ## Purpose
 This file is the baseline reference for future work on ML-assisted recommendations.
 It captures the agreed approach for thin markets where listing prices are often unreliable and realized sales should anchor valuation.
@@ -74,6 +125,47 @@ Feature cutoff rule:
 
 Label horizon:
 - Labels may only use information in (t, t+30d].
+
+## Dataset Contract v1 (Frozen 2026-05-19)
+The first training contract is frozen to avoid feature drift during initial model training and backtesting.
+
+Columns:
+- item_poll_id
+- item_variant_id
+- requested_at_utc
+- base_item_name
+- display_name
+- mode
+- query_id
+- entry_price_mirror
+- listing_anchor_mirror
+- sale_anchor_mirror
+- fair_value_mirror
+- ask_to_fair_gap_pct
+- ask_to_sale_anchor_gap_pct
+- sales_count_30d_past
+- sales_count_90d_past
+- days_since_last_sale
+- acceptance_ratio_10pct
+- acceptance_ratio_20pct
+- total_results
+- used_results
+- used_results_raw
+- used_exceeds_total_flag
+- used_to_total_ratio
+- inf_confirmed_transfer_30d
+- inf_likely_instant_sale_30d
+- inf_likely_non_instant_online_30d
+- confirmed_share_of_signals
+- sales_support_tier
+- stale_price_flag
+- y_sell_30d
+- y_exec_price_30d
+
+Contract notes:
+- used_results is bounded to total_results for model-facing stability.
+- used_results_raw preserves original source value for diagnostics.
+- used_exceeds_total_flag marks rows where original used exceeded total.
 
 ## Labels (Targets)
 1. y_sell_30d (classification)
@@ -208,10 +300,10 @@ Phase D: Tune alpha only after sustained metric improvement.
 4. Fallback path remains stable and non-breaking.
 
 ## Implementation Artifacts (Planned)
-- tools/ml/build_training_dataset.py
-- tools/ml/train_model.py
-- tools/ml/backtest_recommendations.py
-- server/ml_service.py
+- ML/build_training_dataset.py
+- ML/train_model.py
+- ML/backtest_recommendations.py
+- ML/ml_service.py
 - server/recommendation_service.py (integration points)
 
 ## Non-Goals (First Iteration)

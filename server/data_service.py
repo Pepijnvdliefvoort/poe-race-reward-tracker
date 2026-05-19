@@ -27,6 +27,10 @@ DEFAULT_CONFIG = {
     "alert_low_liquidity_extra_drop_pct": 20.0,
     "alert_cooldown_cycles": 6,
     "sales_discord_window_days": 90,
+    "ml_shadow_enabled": True,
+    "ml_hybrid_enabled": False,
+    "ml_hybrid_alpha_heuristic": 0.85,
+    "ml_hybrid_min_confidence_tier": "medium",
 }
 
 

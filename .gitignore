@@ -43,6 +43,12 @@ data/market.db
 data/market.repaired*.db
 requests/*
 .cursor
+storage/exports/
+
+# Generated ML retrain artifacts (local automation outputs)
+ML/candidates/
+ML/archive/
+ML/**/promotion_summary.json
 
 # Temporary files
 *.tmp

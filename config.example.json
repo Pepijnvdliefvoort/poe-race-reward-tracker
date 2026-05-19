@@ -25,6 +25,10 @@
   "notify_always_if_buy_currency_exalted": true,
 
   "sales_discord_window_days": 90,
+  "ml_shadow_enabled": true,
+  "ml_hybrid_enabled": true,
+  "ml_hybrid_alpha_heuristic": 0.5,
+  "ml_hybrid_min_confidence_tier": "medium",
   "discord_market_watch_users": [
     {
       "seller_name": "iNeoxiz",
