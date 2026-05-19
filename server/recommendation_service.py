@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import pickle
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,9 @@ from server.data_service import _get_image_path
 from server.storage_service import ServerStorage
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+ML_DIR = ROOT_DIR / "ML"
+DEFAULT_CLASSIFIER_PATH = ML_DIR / "model_sellprob_30d.pkl"
+DEFAULT_REGRESSOR_PATH = ML_DIR / "model_execprice_30d.pkl"
 
 VALID_CURRENCIES = {"mirror", "divine"}
 VALID_RISKS = {"safe", "balanced", "speculative"}
@@ -18,6 +22,16 @@ STALE_PRICE_DAYS = 90
 RECENT_WINDOW_DAYS = 30
 MAX_RECOMMENDATIONS = 8
 MIN_FLIP_PROFIT_MIRRORS = 1.0
+ML_CONFIDENCE_ORDER = {"sparse": 0, "medium": 1, "strong": 2}
+
+_ML_MODEL_CACHE: dict[str, Any] = {
+    "classifier": None,
+    "regressor": None,
+    "classifierMtime": None,
+    "regressorMtime": None,
+    "modelVersion": None,
+    "loadError": None,
+}
 
 
 class RecommendationInputError(ValueError):
@@ -54,6 +68,173 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
 
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raw = str(value or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(f):
+        return default
+    return f
+
+
+def _as_confidence_tier(value: Any, default: str = "medium") -> str:
+    raw = str(value or "").strip().lower()
+    if raw in ML_CONFIDENCE_ORDER:
+        return raw
+    return default
+
+
+def _tier_rank(tier: str | None) -> int:
+    if not tier:
+        return -1
+    return ML_CONFIDENCE_ORDER.get(str(tier).strip().lower(), -1)
+
+
+def _load_ml_rollout_config(storage: ServerStorage) -> dict[str, Any]:
+    cfg: dict[str, Any] = {}
+    try:
+        loaded = storage.get_market_config()
+        if isinstance(loaded, dict):
+            cfg = loaded
+    except Exception:
+        cfg = {}
+
+    shadow_enabled = _as_bool(cfg.get("ml_shadow_enabled"), True)
+    hybrid_enabled = _as_bool(cfg.get("ml_hybrid_enabled"), False)
+    alpha_heuristic = _clamp(_as_float(cfg.get("ml_hybrid_alpha_heuristic"), 0.85), 0.0, 1.0)
+    min_conf = _as_confidence_tier(cfg.get("ml_hybrid_min_confidence_tier"), "medium")
+
+    return {
+        "shadowEnabled": shadow_enabled,
+        "hybridEnabled": hybrid_enabled,
+        "alphaHeuristic": alpha_heuristic,
+        "minConfidenceTier": min_conf,
+    }
+
+
+def _ml_score_from_expected_value(expected_value_mirror: float | None, entry_price_mirror: float) -> float | None:
+    if expected_value_mirror is None or not math.isfinite(expected_value_mirror):
+        return None
+    denom = max(1.0, entry_price_mirror)
+    edge_ratio = expected_value_mirror / denom
+    # Smoothly map EV ratio to [0,1] for blending with normalized heuristic score.
+    return _clamp(0.5 + 0.5 * math.tanh(edge_ratio))
+
+
+def _ratio(numer: float | None, denom: float | None) -> float | None:
+    if numer is None or denom is None or denom == 0:
+        return None
+    return numer / denom
+
+
+def _gap_pct(current: float | None, anchor: float | None) -> float | None:
+    if current is None or anchor is None or anchor <= 0:
+        return None
+    return (current - anchor) / anchor
+
+
+def _tier_ordinal(tier: str) -> float:
+    if tier == "strong":
+        return 2.0
+    if tier == "medium":
+        return 1.0
+    return 0.0
+
+
+def _safe_model_predictor_array(values: list[float | None]) -> list[list[float]]:
+    row: list[float] = []
+    for v in values:
+        if v is None or not math.isfinite(v):
+            row.append(float("nan"))
+        else:
+            row.append(float(v))
+    return [row]
+
+
+def _model_version_for_mtime(classifier_mtime: float, regressor_mtime: float) -> str:
+    c = int(classifier_mtime)
+    r = int(regressor_mtime)
+    return f"sellprob@{c}-execprice@{r}"
+
+
+def _load_shadow_models(root_dir: Path | None = None) -> dict[str, Any]:
+    base_dir = Path(root_dir) if root_dir is not None else ROOT_DIR
+    cls_path = base_dir / "ML" / "model_sellprob_30d.pkl"
+    reg_path = base_dir / "ML" / "model_execprice_30d.pkl"
+
+    if not cls_path.is_file() or not reg_path.is_file():
+        return {
+            "enabled": False,
+            "classifier": None,
+            "regressor": None,
+            "modelVersion": None,
+            "fallbackReason": "ml-model-files-missing",
+        }
+
+    cls_mtime = cls_path.stat().st_mtime
+    reg_mtime = reg_path.stat().st_mtime
+
+    cached_ok = (
+        _ML_MODEL_CACHE.get("classifier") is not None
+        and _ML_MODEL_CACHE.get("regressor") is not None
+        and _ML_MODEL_CACHE.get("classifierMtime") == cls_mtime
+        and _ML_MODEL_CACHE.get("regressorMtime") == reg_mtime
+    )
+    if cached_ok:
+        return {
+            "enabled": True,
+            "classifier": _ML_MODEL_CACHE["classifier"],
+            "regressor": _ML_MODEL_CACHE["regressor"],
+            "modelVersion": _ML_MODEL_CACHE["modelVersion"],
+            "fallbackReason": None,
+        }
+
+    try:
+        with cls_path.open("rb") as fh:
+            classifier = pickle.load(fh)
+        with reg_path.open("rb") as fh:
+            regressor = pickle.load(fh)
+    except Exception as exc:
+        _ML_MODEL_CACHE["loadError"] = str(exc)
+        return {
+            "enabled": False,
+            "classifier": None,
+            "regressor": None,
+            "modelVersion": None,
+            "fallbackReason": f"ml-model-load-failed: {exc}",
+        }
+
+    model_version = _model_version_for_mtime(cls_mtime, reg_mtime)
+    _ML_MODEL_CACHE["classifier"] = classifier
+    _ML_MODEL_CACHE["regressor"] = regressor
+    _ML_MODEL_CACHE["classifierMtime"] = cls_mtime
+    _ML_MODEL_CACHE["regressorMtime"] = reg_mtime
+    _ML_MODEL_CACHE["modelVersion"] = model_version
+    _ML_MODEL_CACHE["loadError"] = None
+
+    return {
+        "enabled": True,
+        "classifier": classifier,
+        "regressor": regressor,
+        "modelVersion": model_version,
+        "fallbackReason": None,
+    }
+
+
 def _latest_divines_per_mirror(storage: ServerStorage) -> float | None:
     con = storage.connect()
     try:
@@ -81,6 +262,7 @@ def _load_variant_history(storage: ServerStorage) -> dict[int, list[dict[str, An
               i.name AS base_item_name,
               v.display_name,
               v.mode,
+                            v.image_name_filter,
               v.sort_order,
               i.icon_path,
               ip.id AS item_poll_id,
@@ -197,7 +379,11 @@ def _trend_pct(rows: list[dict[str, Any]], current_price: float, now: datetime) 
 
 
 def _recent_sales(rows: list[dict[str, Any]], now: datetime) -> int:
-    cutoff = now.timestamp() - RECENT_WINDOW_DAYS * 86400
+    return _recent_sales_window(rows, now, RECENT_WINDOW_DAYS)
+
+
+def _recent_sales_window(rows: list[dict[str, Any]], now: datetime, days: int) -> int:
+    cutoff = now.timestamp() - days * 86400
     total = 0
     for row in rows:
         row_dt = _parse_iso(row.get("requested_at_utc"))
@@ -207,6 +393,169 @@ def _recent_sales(rows: list[dict[str, Any]], now: datetime) -> int:
         total += int(row.get("inf_likely_instant_sale") or 0)
         total += int(row.get("inf_likely_non_instant_online") or 0)
     return max(0, total)
+
+
+def _recent_inference_counts(rows: list[dict[str, Any]], now: datetime, days: int) -> tuple[int, int, int]:
+    cutoff = now.timestamp() - days * 86400
+    confirmed = 0
+    instant = 0
+    noninstant = 0
+    for row in rows:
+        row_dt = _parse_iso(row.get("requested_at_utc"))
+        if not row_dt or row_dt.timestamp() < cutoff:
+            continue
+        confirmed += int(row.get("inf_confirmed_transfer") or 0)
+        instant += int(row.get("inf_likely_instant_sale") or 0)
+        noninstant += int(row.get("inf_likely_non_instant_online") or 0)
+    return max(0, confirmed), max(0, instant), max(0, noninstant)
+
+
+def _days_since_last_inferred_sale(rows: list[dict[str, Any]], now: datetime) -> float | None:
+    last_sale_dt: datetime | None = None
+    for row in reversed(rows):
+        sale_count = int(row.get("inf_confirmed_transfer") or 0)
+        sale_count += int(row.get("inf_likely_instant_sale") or 0)
+        sale_count += int(row.get("inf_likely_non_instant_online") or 0)
+        if sale_count <= 0:
+            continue
+        row_dt = _parse_iso(row.get("requested_at_utc"))
+        if row_dt is not None:
+            last_sale_dt = row_dt
+            break
+    if last_sale_dt is None:
+        return None
+    return max(0.0, (now - last_sale_dt).total_seconds() / 86400.0)
+
+
+def _listing_anchor_from_rows(rows: list[dict[str, Any]], now: datetime, days: int = 30) -> float | None:
+    cutoff = now.timestamp() - days * 86400
+    prices: list[float] = []
+    for row in rows:
+        row_dt = _parse_iso(row.get("requested_at_utc"))
+        if not row_dt or row_dt.timestamp() < cutoff:
+            continue
+        p = _row_price(row)
+        if p is not None:
+            prices.append(p)
+    if not prices:
+        return None
+    prices.sort()
+    n = len(prices)
+    mid = n // 2
+    if n % 2 == 1:
+        return prices[mid]
+    return (prices[mid - 1] + prices[mid]) / 2.0
+
+
+def _sales_support_tier(sales_90d: int) -> str:
+    if sales_90d <= 1:
+        return "sparse"
+    if sales_90d <= 4:
+        return "medium"
+    return "strong"
+
+
+def _ml_shadow_fields(
+    *,
+    ml_ctx: dict[str, Any],
+    rows: list[dict[str, Any]],
+    now: datetime,
+    entry_price: float,
+    total_results: int,
+    used_results_raw: int,
+    stale_price_flag: int,
+) -> dict[str, Any]:
+    if not ml_ctx.get("enabled"):
+        return {
+            "mlEnabled": False,
+            "mlModelVersion": ml_ctx.get("modelVersion"),
+            "mlConfidenceTier": None,
+            "sellProb30d": None,
+            "expectedExecPrice30d": None,
+            "expectedValue30d": None,
+            "mlFallbackReason": ml_ctx.get("fallbackReason") or "ml-disabled",
+        }
+
+    sales_30d = _recent_sales_window(rows, now, 30)
+    sales_90d = _recent_sales_window(rows, now, 90)
+    inf_confirmed_30d, inf_instant_30d, inf_noninstant_30d = _recent_inference_counts(rows, now, 30)
+    signal_total = inf_confirmed_30d + inf_instant_30d + inf_noninstant_30d
+    confirmed_share = (inf_confirmed_30d / signal_total) if signal_total > 0 else None
+    days_since_last_sale = _days_since_last_inferred_sale(rows, now)
+
+    listing_anchor = _listing_anchor_from_rows(rows, now, 30)
+    fair_value = listing_anchor if listing_anchor is not None else entry_price
+    sale_anchor = None
+
+    total_results_clean = max(0, int(total_results))
+    used_results_clean = max(0, int(used_results_raw))
+    used_exceeds_total_flag = 1 if used_results_clean > total_results_clean else 0
+    used_results_bounded = min(used_results_clean, total_results_clean)
+
+    tier = _sales_support_tier(sales_90d)
+    feature_values = [
+        entry_price,
+        listing_anchor,
+        sale_anchor,
+        fair_value,
+        _gap_pct(entry_price, fair_value),
+        _gap_pct(entry_price, sale_anchor),
+        float(sales_30d),
+        float(sales_90d),
+        days_since_last_sale,
+        None,  # acceptance_ratio_10pct
+        None,  # acceptance_ratio_20pct
+        float(total_results_clean),
+        float(used_results_bounded),
+        float(used_results_clean),
+        float(used_exceeds_total_flag),
+        _ratio(float(used_results_bounded), float(total_results_clean) if total_results_clean > 0 else None),
+        float(inf_confirmed_30d),
+        float(inf_instant_30d),
+        float(inf_noninstant_30d),
+        confirmed_share,
+        float(stale_price_flag),
+        _tier_ordinal(tier),
+    ]
+
+    classifier = ml_ctx.get("classifier")
+    regressor = ml_ctx.get("regressor")
+    if classifier is None or regressor is None:
+        return {
+            "mlEnabled": False,
+            "mlModelVersion": ml_ctx.get("modelVersion"),
+            "mlConfidenceTier": tier,
+            "sellProb30d": None,
+            "expectedExecPrice30d": None,
+            "expectedValue30d": None,
+            "mlFallbackReason": "ml-model-unavailable",
+        }
+
+    try:
+        X = _safe_model_predictor_array(feature_values)
+        sell_prob = float(classifier.predict_proba(X)[0][1])
+        expected_exec = float(regressor.predict(X)[0])
+        expected_value = float((sell_prob * expected_exec) - entry_price)
+    except Exception as exc:
+        return {
+            "mlEnabled": False,
+            "mlModelVersion": ml_ctx.get("modelVersion"),
+            "mlConfidenceTier": tier,
+            "sellProb30d": None,
+            "expectedExecPrice30d": None,
+            "expectedValue30d": None,
+            "mlFallbackReason": f"ml-inference-failed: {exc}",
+        }
+
+    return {
+        "mlEnabled": True,
+        "mlModelVersion": ml_ctx.get("modelVersion"),
+        "mlConfidenceTier": tier,
+        "sellProb30d": round(max(0.0, min(1.0, sell_prob)), 4),
+        "expectedExecPrice30d": round(max(0.0, expected_exec), 2),
+        "expectedValue30d": round(expected_value, 2),
+        "mlFallbackReason": None,
+    }
 
 
 def _fit_score(price: float, wealth_mirror: float, risk: str) -> tuple[float, float]:
@@ -438,7 +787,8 @@ def _mode_to_is_aa(mode: Any) -> bool | None:
 def _recommendation_image_path(row: dict[str, Any]) -> str | None:
     base_name = str(row.get("base_item_name") or "").strip()
     mode = str(row.get("mode") or "").strip()
-    resolved = _get_image_path(base_name, _mode_to_is_aa(mode))
+    image_name_filter = str(row.get("image_name_filter") or "").strip() or None
+    resolved = _get_image_path(base_name, _mode_to_is_aa(mode), image_name_filter)
     if resolved:
         return resolved
     raw = str(row.get("icon_path") or "").strip()
@@ -565,6 +915,8 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
         raise RecommendationInputError("wealth converts to zero mirrors")
 
     now = _utc_now()
+    ml_ctx = _load_shadow_models(root_dir=root_dir)
+    ml_rollout = _load_ml_rollout_config(storage)
     histories = _load_variant_history(storage)
     latest_poll_ids = [int(rows[-1]["item_poll_id"]) for rows in histories.values() if rows and rows[-1].get("item_poll_id")]
     listing_ladders = _load_latest_listing_ladders(storage, latest_poll_ids)
@@ -576,6 +928,23 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
 
     recommendations: list[dict[str, Any]] = []
     skipped = {"unaffordable": 0, "no_price": 0, "stale": 0}
+    ml_telemetry: dict[str, Any] = {
+        "totalCandidates": 0,
+        "shadowEnabledCandidates": 0,
+        "hybridAppliedCandidates": 0,
+        "fallbackReasonCounts": {},
+        "confidenceTierCounts": {},
+        "hybridSkippedReasonCounts": {},
+    }
+
+    def _telemetry_inc(bucket: str, key: str | None) -> None:
+        if not key:
+            return
+        mapping = ml_telemetry.get(bucket)
+        if not isinstance(mapping, dict):
+            return
+        mapping[key] = int(mapping.get(key) or 0) + 1
+
     for rows in histories.values():
         if not rows:
             continue
@@ -621,7 +990,7 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
             - market_penalty
         )
         score = _clamp(score)
-        score_100 = round(score * 100)
+        heuristic_score_100 = round(score * 100)
 
         target_allocation = {"safe": 0.35, "balanced": 0.55, "speculative": 0.75}[risk] * wealth_mirror
         units = max(1, int(target_allocation // entry_price))
@@ -639,6 +1008,63 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
         if ladder_floor is not None:
             reasons.append("Entry price uses the latest instant whole-mirror listing ladder.")
 
+        ml_fields = _ml_shadow_fields(
+            ml_ctx=ml_ctx,
+            rows=rows,
+            now=now,
+            entry_price=entry_price,
+            total_results=total_results,
+            used_results_raw=used_results,
+            stale_price_flag=1 if price_is_last_known else 0,
+        )
+
+        if not ml_rollout["shadowEnabled"]:
+            ml_fields = {
+                "mlEnabled": False,
+                "mlModelVersion": ml_fields.get("mlModelVersion"),
+                "mlConfidenceTier": ml_fields.get("mlConfidenceTier"),
+                "sellProb30d": None,
+                "expectedExecPrice30d": None,
+                "expectedValue30d": None,
+                "mlFallbackReason": "ml-shadow-disabled-by-config",
+            }
+
+        ml_telemetry["totalCandidates"] = int(ml_telemetry["totalCandidates"]) + 1
+        if ml_fields.get("mlEnabled"):
+            ml_telemetry["shadowEnabledCandidates"] = int(ml_telemetry["shadowEnabledCandidates"]) + 1
+        _telemetry_inc("fallbackReasonCounts", str(ml_fields.get("mlFallbackReason") or ""))
+        _telemetry_inc("confidenceTierCounts", str(ml_fields.get("mlConfidenceTier") or "unknown"))
+
+        ranking_source = "heuristic"
+        ranking_score_100 = heuristic_score_100
+        hybrid_score_100: int | None = None
+        if ml_rollout["hybridEnabled"]:
+            skip_reason: str | None = None
+            if not ml_fields.get("mlEnabled"):
+                skip_reason = "ml-disabled"
+            elif _tier_rank(str(ml_fields.get("mlConfidenceTier") or "")) < _tier_rank(ml_rollout["minConfidenceTier"]):
+                skip_reason = "below-min-confidence"
+            else:
+                expected_value = ml_fields.get("expectedValue30d")
+                if expected_value is None:
+                    skip_reason = "missing-expected-value"
+                else:
+                    ml_norm = _ml_score_from_expected_value(float(expected_value), entry_price)
+                    if ml_norm is None:
+                        skip_reason = "invalid-ml-score"
+                    else:
+                        heuristic_norm = _clamp(heuristic_score_100 / 100.0)
+                        alpha = float(ml_rollout["alphaHeuristic"])
+                        hybrid_norm = _clamp((alpha * heuristic_norm) + ((1.0 - alpha) * ml_norm))
+                        hybrid_score_100 = round(hybrid_norm * 100)
+                        ranking_score_100 = hybrid_score_100
+                        ranking_source = "hybrid"
+                        ml_telemetry["hybridAppliedCandidates"] = int(ml_telemetry["hybridAppliedCandidates"]) + 1
+            if skip_reason:
+                _telemetry_inc("hybridSkippedReasonCounts", skip_reason)
+
+        category_score = ranking_score_100
+
         recommendations.append(
             {
                 "itemName": str(latest.get("display_name") or latest.get("base_item_name") or ""),
@@ -653,8 +1079,11 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
                 "wealthShare": round(ratio, 3),
                 "suggestedUnits": units,
                 "suggestedAllocationMirror": allocation_mirror,
-                "score": score_100,
-                "category": _category(score_100, risk, sales_30d, trend, bool(flip.get("viable"))),
+                "score": ranking_score_100,
+                "heuristicScore": heuristic_score_100,
+                "hybridScore": hybrid_score_100,
+                "rankingSource": ranking_source,
+                "category": _category(category_score, risk, sales_30d, trend, bool(flip.get("viable"))),
                 "trendPct30d": round(trend, 1) if trend is not None else None,
                 "inferredSales30d": sales_30d,
                 "totalListings": total_results,
@@ -669,6 +1098,13 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
                     price_is_last_known=price_is_last_known,
                     ratio=ratio,
                 ),
+                "mlEnabled": ml_fields["mlEnabled"],
+                "mlModelVersion": ml_fields["mlModelVersion"],
+                "mlConfidenceTier": ml_fields["mlConfidenceTier"],
+                "sellProb30d": ml_fields["sellProb30d"],
+                "expectedExecPrice30d": ml_fields["expectedExecPrice30d"],
+                "expectedValue30d": ml_fields["expectedValue30d"],
+                "mlFallbackReason": ml_fields["mlFallbackReason"],
             }
         )
 
@@ -692,6 +1128,16 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
         "divinesPerMirror": divines_per_mirror,
         "risk": risk,
         "mode": mode,
+        "mlShadow": {
+            "enabled": bool(ml_ctx.get("enabled")) and bool(ml_rollout.get("shadowEnabled")),
+            "modelVersion": ml_ctx.get("modelVersion"),
+            "fallbackReason": ml_ctx.get("fallbackReason"),
+            "hybridEnabled": bool(ml_rollout.get("hybridEnabled")),
+            "alphaHeuristic": float(ml_rollout.get("alphaHeuristic") or 0.0),
+            "minConfidenceTier": str(ml_rollout.get("minConfidenceTier") or "medium"),
+            "rankingApplied": bool(ml_rollout.get("hybridEnabled")) and int(ml_telemetry["hybridAppliedCandidates"]) > 0,
+        },
+        "mlTelemetry": ml_telemetry,
         "recommendations": recommendations[:limit],
         "portfolio": portfolio if mode == "portfolio" else None,
         "skipped": skipped,

@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import sys
 import statistics
 import time
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from server.sales_discord_notify import (
 
 from storage.service import StorageService, VariantSpec
 from .db_export import DbExportConfig, maybe_export_db_to_discord
+from .ml_retrain import MlRetrainConfig, maybe_run_weekly_ml_retrain
 
 BASE_URL = "https://www.pathofexile.com/api/trade"
 DEFAULT_LEAGUE = "Standard"
@@ -172,6 +174,46 @@ def load_discord_ops_webhook_url_from_env() -> str:
         if value:
             return value
     return ""
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _env_int(name: str, default: int, low: int, high: int) -> int:
+    raw = str(os.getenv(name, "")).strip()
+    try:
+        value = int(float(raw)) if raw else int(default)
+    except Exception:
+        value = int(default)
+    return max(low, min(high, value))
+
+
+def load_ml_retrain_config_from_env() -> MlRetrainConfig:
+    enabled = _env_bool("POE_ML_RETRAIN_WEEKLY_ENABLED", True)
+    tz_offset_minutes = _env_int("POE_ML_RETRAIN_TZ_OFFSET_MINUTES", 120, -720, 840)
+    schedule_weekday = _env_int("POE_ML_RETRAIN_WEEKDAY", 6, 0, 6)
+    schedule_hour = _env_int("POE_ML_RETRAIN_HOUR", 3, 0, 23)
+    schedule_minute = _env_int("POE_ML_RETRAIN_MINUTE", 30, 0, 59)
+    timeout_seconds = _env_int("POE_ML_RETRAIN_TIMEOUT_SECONDS", 7200, 300, 43200)
+    python_executable = str(os.getenv("POE_ML_RETRAIN_PYTHON", "")).strip() or sys.executable
+    script_rel_path = str(os.getenv("POE_ML_RETRAIN_SCRIPT", "")).strip() or "scripts/retrain_ml_pipeline.py"
+
+    return MlRetrainConfig(
+        enabled=enabled,
+        tz_offset_minutes=tz_offset_minutes,
+        schedule_weekday=schedule_weekday,
+        schedule_hour=schedule_hour,
+        schedule_minute=schedule_minute,
+        timeout_seconds=timeout_seconds,
+        python_executable=python_executable,
+        script_rel_path=script_rel_path,
+    )
 
 
 def _seller_name_matches_watch(seller_name: str, watch_name: str) -> bool:
@@ -3095,6 +3137,7 @@ def main() -> None:
     logged_reprices_webhook_cfg = False
     logged_db_export_webhook_cfg = False
     logged_ops_webhook_cfg = False
+    logged_ml_retrain_cfg = False
     ops_alert_last_sent: dict[str, float] = {}
     log_line(
         "cycle",
@@ -3158,6 +3201,13 @@ def main() -> None:
             "Set DISCORD_WEBHOOK_URL_OPS (or POE_DISCORD_WEBHOOK_URL_OPS).",
         )
 
+    ml_retrain_cfg = load_ml_retrain_config_from_env()
+    if not ml_retrain_cfg.enabled:
+        log_line(
+            "warn",
+            "Weekly ML retrain trigger is disabled (POE_ML_RETRAIN_WEEKLY_ENABLED=0).",
+        )
+
     while cfg.max_cycles is None or cycles_done < cfg.max_cycles:
         cycle += 1
         cycles_done += 1
@@ -3175,6 +3225,7 @@ def main() -> None:
         sales_window_days = load_sales_discord_window_days(storage)
         db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
         ops_health_cfg = load_ops_health_config(storage, cfg.poll_interval)
+        ml_retrain_cfg = load_ml_retrain_config_from_env()
         discord_watch_users = load_discord_market_watch_users(storage)
         if sales_webhook_url and not logged_sales_webhook_cfg:
             msg = f"Sales Discord webhook active; est.-sold window={sales_window_days}d"
@@ -3207,6 +3258,17 @@ def main() -> None:
                 ),
             )
             logged_ops_webhook_cfg = True
+        if ml_retrain_cfg.enabled and not logged_ml_retrain_cfg:
+            log_line(
+                "cycle",
+                (
+                    "Weekly ML retrain trigger active; "
+                    f"weekday={ml_retrain_cfg.schedule_weekday} hour={ml_retrain_cfg.schedule_hour:02d}:{ml_retrain_cfg.schedule_minute:02d} "
+                    f"tz_offset={ml_retrain_cfg.tz_offset_minutes}m timeout={ml_retrain_cfg.timeout_seconds}s "
+                    f"script={ml_retrain_cfg.script_rel_path}"
+                ),
+            )
+            logged_ml_retrain_cfg = True
 
         maybe_run_ops_health_checks(
             session,
@@ -3226,6 +3288,13 @@ def main() -> None:
                     schedule_hour=12,
                     schedule_minute=0,
                 ),
+                log=log_line,
+            )
+
+        if ml_retrain_cfg.enabled:
+            maybe_run_weekly_ml_retrain(
+                storage=storage,
+                cfg=ml_retrain_cfg,
                 log=log_line,
             )
 

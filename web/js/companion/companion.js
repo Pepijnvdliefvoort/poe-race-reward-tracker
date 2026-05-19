@@ -30,10 +30,16 @@ const CATEGORY_HELP = {
   Watchlist: "Decent candidate, but without a stronger specific signal.",
 };
 
+const RISK_POLICY = {
+  safe: { deploy: 0.6, position: 0.22 },
+  balanced: { deploy: 0.75, position: 0.3 },
+  speculative: { deploy: 0.85, position: 0.4 },
+};
+
 const RISK_HELP = {
-  safe: "Safe risk favors steadier picks with stronger liquidity and avoids concentrating too much wealth in one item.",
-  balanced: "Balanced risk mixes liquidity, price fit, and trend so the suggestions are not too conservative or too speculative.",
-  speculative: "Speculative risk gives more weight to trend movement and upside, so it can include thinner or more volatile markets.",
+  safe: "Safe mode leans toward proven demand, cleaner entries, and tighter position sizing. Hybrid ML only nudges names that clear the confidence gate.",
+  balanced: "Balanced mode blends demand, price fit, trend, and whole-mirror ladder structure, then lets hybrid ML nudge medium- and strong-confidence names instead of fully overriding the ranking.",
+  speculative: "Speculative mode gives more room to trend and upside, but still treats thin listings and weak sales support as risk rather than proof of value.",
 };
 
 function formatMirror(value) {
@@ -75,6 +81,7 @@ function wait(ms) {
 
 function scrollThreadToBottom() {
   if (!threadEl) return;
+  if (threadEl.scrollHeight > threadEl.clientHeight) return;
   threadEl.scrollTop = threadEl.scrollHeight;
 }
 
@@ -357,6 +364,167 @@ function createOutlookBlock(title, lines, tone = "") {
   return block;
 }
 
+function formatPercentWhole(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "n/a";
+  return `${Math.round(n)}%`;
+}
+
+function buildHybridSummary(payload) {
+  const mlShadow = payload?.mlShadow || {};
+  const telemetry = payload?.mlTelemetry || {};
+  const alpha = Number(mlShadow.alphaHeuristic);
+  const heuristicWeight = Number.isFinite(alpha) ? Math.round(alpha * 100) : null;
+  const mlWeight = Number.isFinite(alpha) ? Math.round((1 - alpha) * 100) : null;
+  const minTier = String(mlShadow.minConfidenceTier || "medium");
+  const total = Number(telemetry.totalCandidates ?? 0);
+  const applied = Number(telemetry.hybridAppliedCandidates ?? 0);
+  const skippedBelowConfidence = Number(telemetry.hybridSkippedReasonCounts?.["below-min-confidence"] ?? 0);
+
+  if (!mlShadow.enabled) {
+    return "ML is off, so ranking is heuristic-only.";
+  }
+
+  if (!mlShadow.hybridEnabled) {
+    return "ML is shadow-only; ranking still comes from the heuristic stack.";
+  }
+
+  if (heuristicWeight != null && mlWeight != null) {
+    return `Hybrid ranking: ${heuristicWeight}% heuristic, ${mlWeight}% ML for ${formatCompanionChoice(minTier)}+ confidence.`;
+  }
+  if (total > 0 && skippedBelowConfidence > 0) {
+    return `Hybrid ranking applied to ${applied}/${total}; ${skippedBelowConfidence} stayed heuristic-only below ${formatCompanionChoice(minTier)} confidence.`;
+  }
+  return `Hybrid ranking is on with a ${formatCompanionChoice(minTier)} confidence gate.`;
+}
+
+function buildRankingValueSummary(payload) {
+  const risk = String(payload?.risk || "balanced").toLowerCase();
+  if (risk === "safe") {
+    return "Safe mode prioritizes demand and clean entries first.";
+  }
+  if (risk === "speculative") {
+    return "Speculative mode gives more weight to trend and upside.";
+  }
+  return "Balanced mode weighs demand, price fit, trend, and real ladder structure.";
+}
+
+function buildPortfolioDeploymentSummary(payload) {
+  const portfolio = payload?.portfolio || {};
+  const positions = Array.isArray(portfolio.positions) ? portfolio.positions : [];
+  const risk = String(payload?.risk || "balanced").toLowerCase();
+  const policy = RISK_POLICY[risk] || RISK_POLICY.balanced;
+  const wealthMirror = Number(payload?.wealthMirror ?? 0);
+  const targetDeploy = Number(portfolio.targetDeployedMirror ?? wealthMirror * policy.deploy);
+  const deployedMirror = Number(portfolio.deployedMirror ?? 0);
+  const cashReserveMirror = Number(portfolio.cashReserveMirror ?? 0);
+
+  let message = `I built a portfolio plan for ${formatMirror(wealthMirror)}. It deploys ${formatMirror(deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(cashReserveMirror)} liquid.`;
+
+  if (Number.isFinite(targetDeploy) && deployedMirror < targetDeploy) {
+    message += ` Target was ${formatMirror(targetDeploy)}, but more names did not clear the filters.`;
+  }
+
+  return message;
+}
+
+function buildPortfolioNotes(payload) {
+  const portfolio = payload?.portfolio || {};
+  const risk = String(payload?.risk || "balanced").toLowerCase();
+  const policy = RISK_POLICY[risk] || RISK_POLICY.balanced;
+  const notes = [
+    `${formatCompanionChoice(risk)} targets about ${formatPercentWhole(policy.deploy * 100)} deployed with positions capped near ${formatPercentWhole(policy.position * 100)}.`,
+  ];
+
+  const targetDeploy = Number(portfolio.targetDeployedMirror ?? 0);
+  const deployedMirror = Number(portfolio.deployedMirror ?? 0);
+  if (Number.isFinite(targetDeploy) && Number.isFinite(deployedMirror) && deployedMirror < targetDeploy) {
+    notes.push("Unused cash stays liquid because the remaining names were weaker, thinner, or too large.");
+  }
+
+  return notes;
+}
+
+function createFactList(items) {
+  const facts = document.createElement("dl");
+  facts.className = "companion-facts";
+
+  for (const [label, value] of items) {
+    if (!value) continue;
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = value;
+    facts.append(term, detail);
+  }
+
+  return facts;
+}
+
+function summarizeWhyPicked(rec) {
+  const parts = [];
+  const sales = Number(rec.inferredSales30d ?? 0);
+  const trend = Number(rec.trendPct30d);
+  const entry = Number(rec.priceMirror);
+  const wealthShare = Number(rec.wealthShare);
+  const expectedValue = Number(rec.expectedValue30d);
+
+  if (rec.rankingSource === "hybrid" && Number.isFinite(expectedValue)) {
+    parts.push(
+      expectedValue > 0
+        ? `ML favors the 30-day value at ${formatMirrorDelta(expectedValue)}.`
+        : `ML still ranked it highly even with ${formatMirrorDelta(expectedValue)} expected 30-day value.`,
+    );
+  } else if (rec.flip?.viable) {
+    parts.push(`Picked for the immediate ladder gap of ${formatMirrorDelta(rec.flip.expectedProfitMirror)}.`);
+  } else if (sales > 0) {
+    parts.push(`Picked for active demand with about ${sales} inferred sale${sales === 1 ? "" : "s"} in 30 days.`);
+  } else {
+    parts.push("Picked as a higher-risk setup rather than a proven liquid market.");
+  }
+
+  if (Number.isFinite(trend)) {
+    if (trend >= 15) {
+      parts.push(`Momentum is strong at ${formatPercent(trend)}.`);
+    } else if (trend <= -15) {
+      parts.push(`Price is off ${formatPercent(trend)}, so this reads more like a rebound setup.`);
+    } else {
+      parts.push(`Recent pricing is stable at ${formatPercent(trend)}.`);
+    }
+  }
+
+  if (Number.isFinite(entry) && Number.isFinite(wealthShare)) {
+    parts.push(`Entry is ${formatMirror(entry)} using ${Math.round(wealthShare * 100)}% of bankroll.`);
+  }
+
+  return parts.join(" ");
+}
+
+function buildFlipFacts(flip) {
+  if (!flip) return [];
+  if (flip.viable) {
+    return [
+      ["Buy", formatMirror(flip.buyPriceMirror)],
+      ["Relist", formatMirror(flip.relistPriceMirror)],
+      ["Gross edge", `${formatMirrorDelta(flip.expectedProfitMirror)} (${formatPercent(flip.expectedProfitPct)})`],
+      ["Setup", flip.sellCondition || flip.reason],
+    ];
+  }
+  return [
+    ["Status", flip.reason || "No clean immediate flip gap in the latest ladder."],
+    ["Next listing", flip.nextMarketPriceMirror ? formatMirror(flip.nextMarketPriceMirror) : "n/a"],
+  ];
+}
+
+function buildHoldFacts(hold) {
+  if (!hold) return [];
+  return [
+    ["Target", formatMirror(hold.expectedPriceMirror)],
+    ["30d return", `${formatMirrorDelta(hold.expectedProfitMirror)} (${formatPercent(hold.expectedReturnPct)})`],
+    ["Plan", hold.sellTiming],
+  ];
+}
+
 function renderRecommendation(rec, options = {}) {
   const { portfolio = false } = options;
   const card = document.createElement("article");
@@ -408,45 +576,44 @@ function renderRecommendation(rec, options = {}) {
     );
   }
 
-  const reasons = document.createElement("ul");
-  reasons.className = "companion-reasons";
-  for (const reason of rec.reasons || []) {
-    const item = document.createElement("li");
-    item.textContent = reason;
-    reasons.appendChild(item);
-  }
+  const summary = document.createElement("p");
+  summary.className = "companion-pick-summary";
+  summary.textContent = summarizeWhyPicked(rec);
 
-  body.append(headingRow, metrics, reasons);
+  body.append(headingRow, metrics, summary);
 
   if (rec.flip) {
     const flip = rec.flip;
-    const flipLines = flip.viable
-      ? [
-          `Buy at ${formatMirror(flip.buyPriceMirror)}, then relist for ${formatMirror(flip.relistPriceMirror)}.`,
-          `That is about ${formatMirrorDelta(flip.expectedProfitMirror)} gross profit (${formatPercent(flip.expectedProfitPct)}).`,
-          flip.sellCondition,
-        ]
-      : [
-          flip.reason || "No clean immediate flip gap was found in the latest whole-mirror ladder.",
-          flip.nextMarketPriceMirror ? `Next listing: ${formatMirror(flip.nextMarketPriceMirror)}.` : "",
-        ];
-    body.appendChild(createOutlookBlock(flip.viable ? "Immediate flip" : "No clean flip", flipLines, flip.viable ? "good" : "muted"));
+    const block = document.createElement("div");
+    block.className = flip.viable ? "companion-outlook companion-outlook-good" : "companion-outlook companion-outlook-muted";
+
+    const heading = document.createElement("strong");
+    heading.className = "companion-outlook-title";
+    heading.textContent = flip.viable ? "Immediate flip" : "Flip setup";
+
+    block.append(heading, createFactList(buildFlipFacts(flip)));
+    body.appendChild(block);
   }
 
   if (rec.hold30d) {
     const hold = rec.hold30d;
-    body.appendChild(
-      createOutlookBlock(
-        "30-day hold",
-        [
-          `Expected price: ${formatMirror(hold.expectedPriceMirror)}.`,
-          `Expected return: ${formatMirrorDelta(hold.expectedProfitMirror)} (${formatPercent(hold.expectedReturnPct)}).`,
-          hold.sellTiming,
-          hold.cycleNote,
-        ],
-        Number(hold.expectedProfitMirror) > 0 ? "good" : "muted",
-      ),
-    );
+    const block = document.createElement("div");
+    block.className = Number(hold.expectedProfitMirror) > 0 ? "companion-outlook companion-outlook-good" : "companion-outlook companion-outlook-muted";
+
+    const heading = document.createElement("strong");
+    heading.className = "companion-outlook-title";
+    heading.textContent = "30-day hold";
+
+    block.append(heading, createFactList(buildHoldFacts(hold)));
+
+    if (hold.cycleNote) {
+      const note = document.createElement("p");
+      note.className = "companion-outlook-note";
+      note.textContent = hold.cycleNote;
+      block.appendChild(note);
+    }
+
+    body.appendChild(block);
   }
 
   if (portfolio && rec.portfolioReason) {
@@ -476,12 +643,14 @@ async function renderPortfolio(payload, sequenceId) {
   }
 
   const topics = [
-    `I built a portfolio plan for ${formatMirror(payload.wealthMirror)}. It deploys ${formatMirror(portfolio.deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(portfolio.cashReserveMirror)} liquid.`,
-    "Ranking favors inferred demand, trend, and real whole-mirror ladder gaps. Raw listing count is risk context, not a buy signal.",
+    buildPortfolioDeploymentSummary(payload),
+    buildHybridSummary(payload),
+    buildRankingValueSummary(payload),
     RISK_HELP[payload.risk] || RISK_HELP.balanced,
   ];
-  if (Array.isArray(portfolio.notes) && portfolio.notes.length) {
-    topics.push(portfolio.notes.join(" "));
+  const portfolioNotes = buildPortfolioNotes(payload);
+  if (portfolioNotes.length) {
+    topics.push(portfolioNotes.join(" "));
   }
 
   const renderedTopics = await appendBotTopicMessages(topics, sequenceId);
@@ -519,7 +688,8 @@ async function renderResults(payload, sequenceId) {
 
   const topics = [
     `I found ${recommendations.length} ranked estimate${recommendations.length === 1 ? "" : "s"} for a ${formatMirror(payload.wealthMirror)} budget.`,
-    "Ranking now favors inferred sale activity, price trend, and real whole-mirror ladder gaps. Raw listing count is used as risk context, not as a reason to buy.",
+    buildHybridSummary(payload),
+    buildRankingValueSummary(payload),
     RISK_HELP[payload.risk] || RISK_HELP.balanced,
   ];
   const renderedTopics = await appendBotTopicMessages(topics, sequenceId);

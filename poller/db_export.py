@@ -36,10 +36,36 @@ class DbExportConfig:
     tz_offset_minutes: int = 120  # GMT+2 default
     schedule_hour: int = 12
     schedule_minute: int = 0
+    retention_days: int = 45
 
 
 # Keep parts safely below lower-tier Discord webhook limits to avoid HTTP 413.
 DISCORD_SAFE_PART_SIZE_BYTES = 7 * 1024 * 1024  # 7 MiB
+
+
+def _cleanup_old_exports(*, exports_dir: Path, retention_days: int, log: callable) -> None:
+    if retention_days < 0 or not exports_dir.exists():
+        return
+    cutoff = _utc_now() - timedelta(days=int(retention_days))
+    removed = 0
+    for path in exports_dir.iterdir():
+        if not path.is_file():
+            continue
+        if not path.name.startswith("market."):
+            continue
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        except Exception:
+            continue
+        if mtime >= cutoff:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            removed += 1
+        except Exception:
+            continue
+    if removed > 0:
+        log("cycle", f"DB export retention removed {removed} old file(s) (>{retention_days}d).")
 
 
 def _snapshot_sqlite_db(src_db_path: Path, dst_db_path: Path) -> None:
@@ -283,10 +309,12 @@ def maybe_export_db_to_discord(
                 "tz_offset_minutes": int(cfg.tz_offset_minutes),
                 "schedule_hour": int(cfg.schedule_hour),
                 "schedule_minute": int(cfg.schedule_minute),
+                "retention_days": int(cfg.retention_days),
                 "last_uploaded_file": zip_path.name,
                 "last_uploaded_size_bytes": size_bytes,
             },
         )
+        _cleanup_old_exports(exports_dir=exports_dir, retention_days=int(cfg.retention_days), log=log)
         log("cycle", f"Uploaded daily DB export to Discord: {zip_path.name} ({size_mb:.2f} MiB)")
     except Exception as exc:  # noqa: BLE001
         log("warn", f"DB export to Discord failed: {exc}")
@@ -351,11 +379,13 @@ def export_db_to_discord_now(
             "tz_offset_minutes": int(cfg.tz_offset_minutes),
             "schedule_hour": int(cfg.schedule_hour),
             "schedule_minute": int(cfg.schedule_minute),
+            "retention_days": int(cfg.retention_days),
             "last_uploaded_file": zip_path.name,
             "last_uploaded_size_bytes": size_bytes,
             "last_uploaded_mode": "manual",
         },
     )
+    _cleanup_old_exports(exports_dir=exports_dir, retention_days=int(cfg.retention_days), log=log)
     log("cycle", f"Uploaded manual DB export to Discord: {zip_path.name} ({size_mb:.2f} MiB)")
     return {
         "ok": True,
