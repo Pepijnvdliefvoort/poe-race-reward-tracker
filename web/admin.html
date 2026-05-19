@@ -218,6 +218,22 @@
     </section>
 
     <section class="admin-section">
+      <div class="admin-section-head admin-section-head-row">
+        <div>
+          <h2>ML retrain</h2>
+          <p class="admin-muted">Weekly model retrain status. Clearing the week key forces the poller to retrain on its next cycle.</p>
+        </div>
+        <div class="admin-header-actions">
+          <span id="mlRetrainHint" class="admin-muted admin-marketcfg-status" aria-live="polite"></span>
+          <button id="mlRetrainTriggerBtn" class="admin-btn" type="button">Trigger retrain</button>
+        </div>
+      </div>
+      <div class="admin-appconfig-card" id="mlRetrainStatus" aria-label="ML retrain status">
+        <p class="admin-muted" style="margin:0">Loading…</p>
+      </div>
+    </section>
+
+    <section class="admin-section">
       <div class="admin-section-head">
         <h2>Visitors</h2>
         <p class="admin-muted" id="visitorStats"></p>

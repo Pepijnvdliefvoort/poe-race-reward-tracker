@@ -2430,6 +2430,48 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            if parsed.path == "/api/admin/trigger-ml-retrain":
+                # Clear last_run_week_key so the next poller cycle launches the retrain.
+                updated_at = datetime.now(timezone.utc).isoformat()
+                storage = ServerStorage(ROOT_DIR)
+                con = storage.connect()
+                try:
+                    row = con.execute(
+                        "SELECT value_json FROM app_config WHERE key = ?", ("ml_retrain",)
+                    ).fetchone()
+                    if row:
+                        try:
+                            current = json.loads(str(row["value_json"] or "{}"))
+                        except Exception:
+                            current = {}
+                        if not isinstance(current, dict):
+                            current = {}
+                    else:
+                        current = {}
+                    current["last_run_week_key"] = ""
+                    new_val = json.dumps(current, ensure_ascii=False)
+                    con.execute(
+                        """
+                        INSERT INTO app_config(key, value_json, updated_at_utc)
+                        VALUES(?, ?, ?)
+                        ON CONFLICT(key) DO UPDATE SET
+                          value_json=excluded.value_json,
+                          updated_at_utc=excluded.updated_at_utc
+                        """,
+                        ("ml_retrain", new_val, updated_at),
+                    )
+                    con.commit()
+                finally:
+                    con.close()
+                body = json.dumps({"ok": True}, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             if parsed.path == "/api/admin/restart-poller":
                 try:
                     payload = restart_poller()
