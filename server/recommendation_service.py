@@ -262,6 +262,7 @@ def _load_variant_history(storage: ServerStorage) -> dict[int, list[dict[str, An
               i.name AS base_item_name,
               v.display_name,
               v.mode,
+                            v.image_name_filter,
               v.sort_order,
               i.icon_path,
               ip.id AS item_poll_id,
@@ -786,7 +787,8 @@ def _mode_to_is_aa(mode: Any) -> bool | None:
 def _recommendation_image_path(row: dict[str, Any]) -> str | None:
     base_name = str(row.get("base_item_name") or "").strip()
     mode = str(row.get("mode") or "").strip()
-    resolved = _get_image_path(base_name, _mode_to_is_aa(mode))
+    image_name_filter = str(row.get("image_name_filter") or "").strip() or None
+    resolved = _get_image_path(base_name, _mode_to_is_aa(mode), image_name_filter)
     if resolved:
         return resolved
     raw = str(row.get("icon_path") or "").strip()

@@ -30,10 +30,16 @@ const CATEGORY_HELP = {
   Watchlist: "Decent candidate, but without a stronger specific signal.",
 };
 
+const RISK_POLICY = {
+  safe: { deploy: 0.6, position: 0.22 },
+  balanced: { deploy: 0.75, position: 0.3 },
+  speculative: { deploy: 0.85, position: 0.4 },
+};
+
 const RISK_HELP = {
-  safe: "Safe risk favors steadier picks with stronger liquidity and avoids concentrating too much wealth in one item.",
-  balanced: "Balanced risk mixes liquidity, price fit, and trend so the suggestions are not too conservative or too speculative.",
-  speculative: "Speculative risk gives more weight to trend movement and upside, so it can include thinner or more volatile markets.",
+  safe: "Safe mode leans toward proven demand, cleaner entries, and tighter position sizing. Hybrid ML only nudges names that clear the confidence gate.",
+  balanced: "Balanced mode blends demand, price fit, trend, and whole-mirror ladder structure, then lets hybrid ML nudge medium- and strong-confidence names instead of fully overriding the ranking.",
+  speculative: "Speculative mode gives more room to trend and upside, but still treats thin listings and weak sales support as risk rather than proof of value.",
 };
 
 function formatMirror(value) {
@@ -75,6 +81,7 @@ function wait(ms) {
 
 function scrollThreadToBottom() {
   if (!threadEl) return;
+  if (threadEl.scrollHeight > threadEl.clientHeight) return;
   threadEl.scrollTop = threadEl.scrollHeight;
 }
 
@@ -357,6 +364,87 @@ function createOutlookBlock(title, lines, tone = "") {
   return block;
 }
 
+function formatPercentWhole(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "n/a";
+  return `${Math.round(n)}%`;
+}
+
+function buildHybridSummary(payload) {
+  const mlShadow = payload?.mlShadow || {};
+  const telemetry = payload?.mlTelemetry || {};
+  const alpha = Number(mlShadow.alphaHeuristic);
+  const heuristicWeight = Number.isFinite(alpha) ? Math.round(alpha * 100) : null;
+  const mlWeight = Number.isFinite(alpha) ? Math.round((1 - alpha) * 100) : null;
+  const minTier = String(mlShadow.minConfidenceTier || "medium");
+  const total = Number(telemetry.totalCandidates ?? 0);
+  const applied = Number(telemetry.hybridAppliedCandidates ?? 0);
+  const skippedBelowConfidence = Number(telemetry.hybridSkippedReasonCounts?.["below-min-confidence"] ?? 0);
+
+  if (!mlShadow.enabled) {
+    return "ML is off, so ranking is heuristic-only.";
+  }
+
+  if (!mlShadow.hybridEnabled) {
+    return "ML is shadow-only; ranking still comes from the heuristic stack.";
+  }
+
+  if (heuristicWeight != null && mlWeight != null) {
+    return `Hybrid ranking: ${heuristicWeight}% heuristic, ${mlWeight}% ML for ${formatCompanionChoice(minTier)}+ confidence.`;
+  }
+  if (total > 0 && skippedBelowConfidence > 0) {
+    return `Hybrid ranking applied to ${applied}/${total}; ${skippedBelowConfidence} stayed heuristic-only below ${formatCompanionChoice(minTier)} confidence.`;
+  }
+  return `Hybrid ranking is on with a ${formatCompanionChoice(minTier)} confidence gate.`;
+}
+
+function buildRankingValueSummary(payload) {
+  const risk = String(payload?.risk || "balanced").toLowerCase();
+  if (risk === "safe") {
+    return "Safe mode prioritizes demand and clean entries first.";
+  }
+  if (risk === "speculative") {
+    return "Speculative mode gives more weight to trend and upside.";
+  }
+  return "Balanced mode weighs demand, price fit, trend, and real ladder structure.";
+}
+
+function buildPortfolioDeploymentSummary(payload) {
+  const portfolio = payload?.portfolio || {};
+  const positions = Array.isArray(portfolio.positions) ? portfolio.positions : [];
+  const risk = String(payload?.risk || "balanced").toLowerCase();
+  const policy = RISK_POLICY[risk] || RISK_POLICY.balanced;
+  const wealthMirror = Number(payload?.wealthMirror ?? 0);
+  const targetDeploy = Number(portfolio.targetDeployedMirror ?? wealthMirror * policy.deploy);
+  const deployedMirror = Number(portfolio.deployedMirror ?? 0);
+  const cashReserveMirror = Number(portfolio.cashReserveMirror ?? 0);
+
+  let message = `I built a portfolio plan for ${formatMirror(wealthMirror)}. It deploys ${formatMirror(deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(cashReserveMirror)} liquid.`;
+
+  if (Number.isFinite(targetDeploy) && deployedMirror < targetDeploy) {
+    message += ` Target was ${formatMirror(targetDeploy)}, but more names did not clear the filters.`;
+  }
+
+  return message;
+}
+
+function buildPortfolioNotes(payload) {
+  const portfolio = payload?.portfolio || {};
+  const risk = String(payload?.risk || "balanced").toLowerCase();
+  const policy = RISK_POLICY[risk] || RISK_POLICY.balanced;
+  const notes = [
+    `${formatCompanionChoice(risk)} targets about ${formatPercentWhole(policy.deploy * 100)} deployed with positions capped near ${formatPercentWhole(policy.position * 100)}.`,
+  ];
+
+  const targetDeploy = Number(portfolio.targetDeployedMirror ?? 0);
+  const deployedMirror = Number(portfolio.deployedMirror ?? 0);
+  if (Number.isFinite(targetDeploy) && Number.isFinite(deployedMirror) && deployedMirror < targetDeploy) {
+    notes.push("Unused cash stays liquid because the remaining names were weaker, thinner, or too large.");
+  }
+
+  return notes;
+}
+
 function createFactList(items) {
   const facts = document.createElement("dl");
   facts.className = "companion-facts";
@@ -555,12 +643,14 @@ async function renderPortfolio(payload, sequenceId) {
   }
 
   const topics = [
-    `I built a portfolio plan for ${formatMirror(payload.wealthMirror)}. It deploys ${formatMirror(portfolio.deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(portfolio.cashReserveMirror)} liquid.`,
-    "Ranking favors inferred demand, trend, and real whole-mirror ladder gaps. Raw listing count is risk context, not a buy signal.",
+    buildPortfolioDeploymentSummary(payload),
+    buildHybridSummary(payload),
+    buildRankingValueSummary(payload),
     RISK_HELP[payload.risk] || RISK_HELP.balanced,
   ];
-  if (Array.isArray(portfolio.notes) && portfolio.notes.length) {
-    topics.push(portfolio.notes.join(" "));
+  const portfolioNotes = buildPortfolioNotes(payload);
+  if (portfolioNotes.length) {
+    topics.push(portfolioNotes.join(" "));
   }
 
   const renderedTopics = await appendBotTopicMessages(topics, sequenceId);
@@ -598,7 +688,8 @@ async function renderResults(payload, sequenceId) {
 
   const topics = [
     `I found ${recommendations.length} ranked estimate${recommendations.length === 1 ? "" : "s"} for a ${formatMirror(payload.wealthMirror)} budget.`,
-    "Ranking now favors inferred sale activity, price trend, and real whole-mirror ladder gaps. Raw listing count is used as risk context, not as a reason to buy.",
+    buildHybridSummary(payload),
+    buildRankingValueSummary(payload),
     RISK_HELP[payload.risk] || RISK_HELP.balanced,
   ];
   const renderedTopics = await appendBotTopicMessages(topics, sequenceId);
