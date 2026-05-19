@@ -782,6 +782,29 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             self.end_headers()
                             self.wfile.write(body)
                             return
+                    if key == "ml_retrain":
+                        # Row doesn't exist yet on a fresh deployment (written only after first retrain).
+                        # Return an empty-state default so the admin UI can render instead of 404.
+                        default_value = {
+                            "running": False,
+                            "last_status": None,
+                            "last_run_week_key": None,
+                            "last_attempt_at_utc": None,
+                            "last_completed_at_utc": None,
+                            "last_exit_code": None,
+                            "last_log_tail": None,
+                            "last_log_path": None,
+                        }
+                        raw = json.dumps(default_value, ensure_ascii=False, sort_keys=True, indent=2)
+                        payload = {"ok": True, "key": "ml_retrain", "value_json": raw, "updated_at_utc": ""}
+                        body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
                     body = json.dumps({"ok": False, "error": "Not found"}).encode("utf-8")
                     self.send_response(404)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
