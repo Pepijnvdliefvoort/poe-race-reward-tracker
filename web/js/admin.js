@@ -1758,6 +1758,77 @@ function setupDbDownload() {
   });
 }
 
+function setupMlRetrain() {
+  const btn = document.getElementById("mlRetrainTriggerBtn");
+  const hint = document.getElementById("mlRetrainHint");
+  const statusEl = document.getElementById("mlRetrainStatus");
+  if (!btn || !statusEl) return;
+
+  const setHint = (text, isWarn = false) => {
+    if (!hint) return;
+    hint.textContent = text || "";
+    hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
+  };
+
+  const renderStatus = (status) => {
+    if (!status || Object.keys(status).length === 0) {
+      statusEl.innerHTML = '<p class="admin-muted" style="margin:0">No retrain has run yet.</p>';
+      return;
+    }
+    const rows = [
+      ["Status", status.last_status ?? "—"],
+      ["Running", status.running ? "Yes" : "No"],
+      ["Last run week", status.last_run_week_key || "—"],
+      ["Last attempt", status.last_attempt_at_utc || "—"],
+      ["Last completed", status.last_completed_at_utc || "—"],
+      ["Exit code", status.last_exit_code != null ? String(status.last_exit_code) : "—"],
+      ["Log path", status.last_log_path || "—"],
+    ];
+    const rowsHtml = rows
+      .map(([k, v]) => `<div class="admin-appconfig-row"><span class="admin-appconfig-k">${k}</span><span class="admin-appconfig-v">${v}</span></div>`)
+      .join("");
+    statusEl.innerHTML = rowsHtml;
+    if (status.last_log_tail) {
+      statusEl.innerHTML += `<details style="margin-top:10px"><summary class="admin-muted">Log tail</summary><pre class="admin-console" style="margin-top:6px;max-height:200px;overflow:auto">${status.last_log_tail}</pre></details>`;
+    }
+  };
+
+  // Load status on page load.
+  fetchJson("/api/admin/ml-retrain-status")
+    .then((d) => renderStatus(d?.status ?? {}))
+    .catch((e) => {
+      statusEl.innerHTML = `<p class="admin-muted" style="margin:0;color:var(--warn)">${adminEndpointErrorMessage(e, "ML retrain status")}</p>`;
+    });
+
+  btn.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "Force-trigger the ML retrain now?\n\nThis clears the week key so the poller will launch the retrain on its next cycle (within ~30s).\n\nContinue?",
+    );
+    if (!ok) return;
+
+    btn.disabled = true;
+    setHint("Triggering…");
+    try {
+      const payload = await fetchJsonWithInit("/api/admin/trigger-ml-retrain", { method: "POST" });
+      if (!payload?.ok) {
+        setHint(payload?.error ? `Trigger failed: ${payload.error}` : "Trigger failed.", true);
+        return;
+      }
+      setHint("Triggered. The poller will start the retrain on its next cycle.");
+      // Refresh status after a short delay.
+      setTimeout(() => {
+        fetchJson("/api/admin/ml-retrain-status")
+          .then((d) => renderStatus(d?.status ?? {}))
+          .catch(() => {});
+      }, 3000);
+    } catch (e) {
+      setHint(adminEndpointErrorMessage(e, "ML retrain trigger"), true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 function setupRunDbExport() {
   const btn = document.getElementById("runDbExportBtn");
   const hint = document.getElementById("adminDataHint");
@@ -2771,6 +2842,7 @@ function main() {
   setupAlertTestTool();
   setupDeleteSalesTool();
   setupMarketConfigEditor();
+  setupMlRetrain();
   setupStopPoller();
   setupRestartPoller();
   setupMapResize();

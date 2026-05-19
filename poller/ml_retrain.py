@@ -201,7 +201,9 @@ def maybe_run_weekly_ml_retrain(*, storage: StorageService, cfg: MlRetrainConfig
     schedule_weekday = max(0, min(6, int(cfg.schedule_weekday)))
     days_since_schedule = (now_local.weekday() - schedule_weekday) % 7
     scheduled_date = now_local.date() - timedelta(days=days_since_schedule)
-    after_schedule = (now_local.hour, now_local.minute) >= (int(cfg.schedule_hour), int(cfg.schedule_minute))
+    # On the scheduled weekday itself, only fire after the scheduled time of day.
+    # On any later day (retrain is overdue), fire immediately regardless of time.
+    after_schedule = days_since_schedule > 0 or (now_local.hour, now_local.minute) >= (int(cfg.schedule_hour), int(cfg.schedule_minute))
     if not after_schedule:
         return
 
