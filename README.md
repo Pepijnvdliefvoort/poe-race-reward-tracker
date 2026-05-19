@@ -1,45 +1,101 @@
-# Path of Exile Race Reward Tracker
-
 [![Deploy to VPS](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml/badge.svg)](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml)
 
-Small Path of Exile price polling project for race reward and unique items.
+# poe-market-flips
 
-It has 2 parts:
-- A poller script that queries the PoE trade API and appends summarized prices to `price_poll.csv`.
-- A local dashboard server that reads the CSV and shows live cards/charts in the browser.
+Path of Exile unique-item market tracker with:
 
-## Project Layout
+- a poller (`python -m poller`) that queries PoE Trade and stores market snapshots
+- a web server (`python -m server.server`) that serves the dashboard, compare tools, admin tools, and companion recommendation API
+- SQLite as the source of truth (`data/market.db`)
 
-- `poller/`: trade API polling package — run as `python -m poller` from the repo root (`poll_item_prices.py`, `sale_inference_engine.py`)
-- `items.txt`: tracked items (one per line, with optional mode)
-- `price_poll.csv`: legacy output (no longer written; SQLite is the source of truth)
-- `server/`: dashboard HTTP server (`python -m server.server` entrypoint), `http_handler.py`, and `data_service.py`
-- `web/index.html`, `web/css/*.css`: dashboard shell and modular styling (layout, filters, cards, mobile/desktop breakpoints)
-- `web/js/app.js`: dashboard entrypoint (module graph under `web/js/`)
-- `web/js/core/`: shared state and utilities
-- `web/js/ui/`: renderer, filters, cards, theme, and filter UI wiring
-- `web/js/domain/`: pricing, sorting, and trend helpers
-- `web/js/cards/`: listings popover module
-- `web/assets/icons/`: local item icons used by the dashboard
+This README reflects the current implementation in this repository.
+
+## What It Does
+
+- Tracks items listed in `items.txt` (including separate art variants via `image_name_filter`).
+- Polls the PoE Trade API (Standard league) and stores:
+  - poll runs and per-item price summaries
+  - listing snapshots used for hover previews and analysis
+  - inference events (sale/relist/reprice/new-row signals)
+  - inferred sales rows (with late-relist reversal)
+- Detects potential flip opportunities and can send Discord alerts.
+- Serves a browser UI with charts, filters, compare pages, admin panel, DB explorer, and account compare.
+- Provides a companion recommendations endpoint (`/api/companion/recommend`) using heuristic ranking.
+
+## Current Architecture
+
+- Poller package: `poller/`
+  - entrypoint: `poller/__main__.py`
+  - main loop and API/inference logic: `poller/poll_item_prices.py`
+  - DB export helper: `poller/db_export.py`
+- Server package: `server/`
+  - entrypoint: `server/server.py`
+  - HTTP routing: `server/http_handler.py`
+  - dashboard payload shaping: `server/data_service.py`
+  - admin auth/restart/log tools: `server/admin_service.py`
+  - recommendations engine: `server/recommendation_service.py`
+- Storage layer: `storage/`
+  - DB init/migrations: `storage/db.py`, `storage/schema.py`
+  - repos and service methods: `storage/repos.py`, `storage/service.py`
+- Frontend:
+  - pages in `web/` (`index.html`, `admin.html`, `compare.html`, `db.html`)
+  - JS modules in `web/js/`
+  - CSS modules in `web/css/`
+  - icon assets in `web/assets/icons/`
+
+## Data Storage
+
+Primary store:
+
+- `data/market.db`
+
+Schema version in code:
+
+- `SCHEMA_VERSION = 12` (`storage/schema.py`)
+
+Important tables include:
+
+- `items`, `item_variants`
+- `poll_runs`, `item_polls`
+- `listing_snapshots`
+- `inference_events`
+- `inference_state_signals`, `inference_state_pending`
+- `sales`
+- `price_alert_cooldown`
+- `app_config`
+- visitor/admin support tables (`visits`, `ip_geo_cache`)
+
+Notes:
+
+- `price_poll.csv` is legacy and not the active source of truth.
+- `items.txt` and `config.json` are bootstrap inputs; runtime state is persisted in SQLite/app_config.
 
 ## Requirements
 
 - Python 3.10+
-- Internet access (for PoE trade API)
-- Python package:
-  - `requests`
+- Internet access to `www.pathofexile.com`
 
-Install dependency:
+Python dependencies (`requirements.txt`):
+
+- `requests>=2.31.0`
+- `psutil>=5.9.8`
+
+Install:
 
 ```bash
-pip install requests
+pip install -r requirements.txt
 ```
 
-## Local .env Support
+## Local Environment Variables
 
-For local testing, you can create a root `.env` file. The poller (`python -m poller`) and server (`python -m server.server`) load `.env.local` first, then `.env`, at startup.
+Both poller and server load local env files automatically at startup:
 
-Example keys:
+- `.env.local`
+- `.env`
+
+Load order is `.env.local` then `.env`. Existing process env variables win by default.
+
+Common keys:
 
 ```text
 DISCORD_WEBHOOK_URL=
@@ -48,200 +104,261 @@ DISCORD_WEBHOOK_URL_REPRICES=
 DISCORD_WEBHOOK_URL_DB_EXPORT=
 DISCORD_WEBHOOK_URL_OPS=
 ADMIN_TOKEN=
+PUBLIC_BASE_URL=
+POE_POLLER_RESTART_STRATEGY=
+POE_POLLER_SYSTEMD_SERVICE=
+POE_POLLER_AUTOSTART=
+POE_POLLER_CMD=
+POE_VISITORS_INCLUDE_LOCAL=
 ```
 
-See `.env.example` for a template. Existing exported environment variables still take precedence over `.env` values.
+Aliases also supported by code for some webhooks:
+
+- `POE_DISCORD_WEBHOOK_URL`
+- `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`
+- `POE_DISCORD_WEBHOOK_URL_OPS`
 
 ## Quick Start (Windows PowerShell)
 
-1. Create and activate a virtual environment:
+1. Create and activate venv:
 
 ```powershell
 python -m venv .venv
 & .\.venv\Scripts\Activate.ps1
-pip install requests
+pip install -r requirements.txt
 ```
 
-2. Run the poller (writes to `price_poll.csv`; working directory must be the repo root):
+2. Start poller from repo root:
 
 ```powershell
 python -m poller
 ```
 
-Optional custom interval (seconds):
-
-```powershell
-python -m poller --poll-interval 1800
-```
-
-Run exactly one cycle (useful for local testing):
-
-```powershell
-python -m poller --max-cycles 1
-```
-
-Override sale-inference fetch cap for this run (`0` disables inference fetches):
-
-```powershell
-python -m poller --inference-cap 50
-```
-
-Prioritize specific items by name substring (case-insensitive):
-
-```powershell
-python -m poller --only Mokou --max-cycles 1
-python -m poller --only "Demigod's" Headhunter --max-cycles 1
-```
-
-Poller CLI arguments summary:
-
-- `--poll-interval <seconds>`: sleep between cycles (default `3600`, use `0` for back-to-back)
-- `--max-cycles <n>`: stop after `n` cycles
-- `--inference-cap <n>`: max listing IDs fetched for inference (`0` disables)
-- `--only <substr...>`: move matching item names to the front of each cycle
-
-3. In another terminal, run the dashboard server:
+3. Start server in another terminal:
 
 ```powershell
 python -m server.server
 ```
 
-4. Open the dashboard:
+4. Open:
 
-- http://127.0.0.1:8080
+- `http://127.0.0.1:8080`
+
+## Poller CLI
+
+`python -m poller [options]`
+
+Options:
+
+- `--poll-interval <seconds>` (default `3600`; use `0` for back-to-back)
+- `--max-cycles <n>` (stop after `n` cycles)
+- `--inference-cap <n>` (`0` disables inference fetches; max clamped to PoE search cap)
+- `--only <substr...>` (prioritize matched item names first)
+
+Examples:
+
+```powershell
+python -m poller --max-cycles 1
+python -m poller --poll-interval 1800
+python -m poller --inference-cap 50 --max-cycles 1
+python -m poller --only Mokou "Demigod's" --max-cycles 1
+```
 
 ## items.txt Format
 
-Each non-empty line is one item. Lines starting with `#` are ignored.
+Each non-empty, non-comment line is parsed as:
 
-Supported formats:
+- `Item Name`
+- `Item Name|mode`
+- `Item Name|mode|category`
+- `Item Name|mode|category|image_name_filter`
 
-- `Item Name` (default: alternate art only)
-- `Item Name|aa` (alternate art only)
-- `Item Name|normal` (non-alternate-art only)
-- `Item Name|any` (either alt or non-alt)
+Where `mode` is one of:
+
+- `aa`
+- `normal`
+- `any`
+
+`category` is UI metadata.
+
+`image_name_filter` lets you track multiple art variants of the same base item (for example specific icon filename stems).
 
 Examples:
 
 ```text
-Tabula Rasa
-Demigod's Stride|normal
-Headhunter|any
+Headhunter|aa|Belt
+Demigod's Touch|aa|Gloves|DemigodsTouchAlt.png
+Demigod's Touch|aa|Gloves|DemigodsTouch.png
 ```
 
-## Output CSV
+## App Config (market)
 
-`price_poll.csv` is append-only and includes fields such as:
+Runtime config lives under `app_config.key = "market"` in SQLite.
 
-- timestamp and cycle
-- item name/mode
-- query id
-- total/used listings
-- mirror and divine low/median/high summaries
-- sale inference counts from `poller/sale_inference_engine.py` (see `sale_inference_state.json` beside the CSV): `inference_confirmed_transfer`, `inference_likely_instant_sale`, `inference_relist_same_seller`, `inference_non_instant_removed`, `inference_reprice_same_seller`, `inference_multi_seller_same_fingerprint`, `inference_new_listing_rows` (inference fetches listing payloads for every search `result` id up to PoE’s cap (`TRADE_SEARCH_RESULT_MAX` in `poller/poll_item_prices.py`, default 100), further limited by app config `inference_listings_fetch_cap` if set lower; pricing and the listing hover preview stay on the top `TOP_IDS_LIMIT` fetches)
+The project can bootstrap this from `config.json` once if no DB config exists.
 
-If the CSV header does not match the current schema, the poller creates a backup and writes a fresh file with the expected header.
+`config.example.json` contains practical defaults. Current keys include:
 
-## Alert Noise Control
+- alerting controls:
+  - `alert_enabled`
+  - `alert_require_flip_signal`
+  - `alert_threshold_pct`
+  - `alert_history_cycles`
+  - `alert_min_total_results`
+  - `alert_min_floor_listings`
+  - `alert_floor_band_pct`
+  - `alert_low_liquidity_extra_drop_pct`
+  - `alert_cooldown_cycles`
+- inference controls:
+  - `inference_listings_fetch_cap`
+  - `inference_truncation_safe_margin_pct`
+  - `inference_sale_baseline_history_cycles`
+  - `inference_sale_unlist_if_above_baseline_pct`
+  - `inference_sale_floor_ignore_if_floor_below_mirrors`
+  - `inference_sale_baseline_range_mirrors`
+  - `late_relist_window_days`
+- flip/notify behavior:
+  - `notify_flip_min_profit_mirrors_over_1`
+  - `notify_flip_min_profit_divines_at_or_below_1`
+  - `notify_always_if_cheap_enabled`
+  - `notify_always_if_cheap_max_buy_divines`
+  - `notify_always_if_cheap_if_next_price_at_least_mirrors`
+  - `notify_always_if_buy_currency_exalted`
+- other:
+  - `sales_discord_window_days`
+  - `discord_market_watch_users`
+  - `trade_status_option`
+  - ops health settings (`ops_health_enabled`, `ops_stale_poll_seconds`, etc.)
 
-Alerts compare current cheapest listing vs. a history-based baseline, but low-liquidity markets can produce false positives.
-They also require a live resale path: after buying the cheapest listing, the poller checks whether you can relist on your pricing grid and still undercut the next remaining listing.
+## HTTP API (Current)
 
-Current resale grid:
+Public GET routes:
 
-- below or equal to `10` mirrors: relist prices can step in `0.5` mirror increments
-- above `10` mirrors: relist prices must leave a full `1` mirror gap
+- `/api/prices`
+- `/api/config` (GET)
+- `/api/listings?queryId=...` (or `variantId`)
+- `/api/account-compare`
+- `/api/companion/auth`
 
-Examples:
+Companion route:
 
-- `3.5, 5, 8, 8, 8` alerts because buying at `3.5` can be relisted at `4` or `4.5` and still stay below the next `5` mirror listing
-- `5, 5, 8, 8, 8` does not alert because buying one `5` mirror listing still leaves another `5` mirror competitor, so there is no profitable undercut price
-- `11, 12, 12, 14, 16` does not alert because the best whole-mirror relist below `12` is `11`, which leaves no profit
+- `POST /api/companion/recommend`
+  - input fields: `wealth`, `currency` (`mirror|divine`), `risk` (`safe|balanced|speculative`), `mode` (`ranked|portfolio`), optional `limit`
 
-Copy `config.example.json` to `config.json` to override defaults on a given machine (bootstrap only; DB is the source of truth after first run).
+Admin route groups (require auth when `ADMIN_TOKEN` is set):
 
-You can tune these `config.json` keys to reduce noise:
+- DB explorer and query:
+  - `/api/admin/db/overview`
+  - `/api/admin/db/tables`
+  - `/api/admin/db/er`
+  - `/api/admin/db/table`
+  - `/api/admin/db/preview`
+  - `POST /api/admin/db/query` (read-only SQL)
+- Config/admin operations:
+  - `/api/admin/app-config`
+  - `/api/admin/app-config/get`
+  - `POST /api/admin/app-config/set`
+  - `/api/admin/stats`
+  - `/api/admin/logs`
+  - `/api/admin/visitor-map`
+  - `/api/admin/download/market.db`
+  - `POST /api/admin/clear-data`
+  - `POST /api/admin/restart-poller`
+  - `POST /api/admin/stop-poller`
+  - `POST /api/admin/run-db-export`
+- Sales/inference admin tools:
+  - `/api/admin/market/variants-sales`
+  - `/api/admin/market/sales`
+  - `POST /api/admin/sales/delete`
+  - `POST /api/admin/sales/resend-alert`
+  - `POST /api/admin/inference/reset-counters`
+  - `POST /api/admin/market/wipe-variant`
+  - `POST /api/admin/alerts/test`
 
-- `alert_min_total_results` (default `10`): requires enough total market listings before alerts can fire.
-- `alert_min_floor_listings` (default `2`): requires at least this many listings near the cheapest price.
-- `alert_floor_band_pct` (default `7.5`): defines what "near the floor" means.
-- `alert_low_liquidity_extra_drop_pct` (default `20`): extra discount required when total listings are below `alert_min_total_results`.
-- `alert_cooldown_cycles` (default `6`): suppresses repeated alerts for essentially the same floor price.
+## Admin Auth Model
 
-For very thin markets, increase `alert_low_liquidity_extra_drop_pct` to reduce false positives while still allowing alerts for rare 1-2 listing opportunities.
+If `ADMIN_TOKEN` is set:
 
-Discord webhook URL is no longer stored in `config.json` or editable in the web UI.
-Set it through an environment secret:
+- admin UI and admin API endpoints require auth
+- accepted credentials:
+  - `?token=...` (can establish a session cookie)
+  - `Authorization: Bearer <token>`
+  - `admin_session` cookie (HMAC-derived from token)
+- lockout protection is enabled for repeated failed credential attempts
 
-- `DISCORD_WEBHOOK_URL` (preferred)
-- `POE_DISCORD_WEBHOOK_URL` (fallback alias)
+If `ADMIN_TOKEN` is not set, admin security is effectively disabled.
 
-Optional separate webhook when inferred estimated sales change on a poll (confirmed transfer + likely instant, including relist undo negatives):
+## Discord Notifications
 
-- `DISCORD_WEBHOOK_URL_SALES`
+Webhook routing:
 
-Optional separate webhook for repricing notifications (Rule 5 same-seller listed price changes):
+- main alerts: `DISCORD_WEBHOOK_URL` (or `POE_DISCORD_WEBHOOK_URL`)
+- estimated sales: `DISCORD_WEBHOOK_URL_SALES` (fallback to main)
+- reprices/new-item watch: `DISCORD_WEBHOOK_URL_REPRICES` (fallback to sales/main)
+- DB export uploads: `DISCORD_WEBHOOK_URL_DB_EXPORT` (or `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`)
+- ops health alerts: `DISCORD_WEBHOOK_URL_OPS` (or `POE_DISCORD_WEBHOOK_URL_OPS`)
 
-- `DISCORD_WEBHOOK_URL_REPRICES`
+`discord_market_watch_users` in market config supports mention tagging by seller prefix match.
 
-Optional separate webhook for the admin DB export button:
+## Logging and Runtime Files
 
-- `DISCORD_WEBHOOK_URL_DB_EXPORT`
+- app logs directory: `logs/`
+- server log: `logs/server.log`
+- poller log: `logs/poller.log`
+- poller stdio log (when managed by server subprocess mode): `logs/poller-stdio.log`
+- admin lockout state: `logs/admin_auth_lockout.json`
+- DB file: `data/market.db`
 
-Optional separate webhook for operational health alerts (API failures, stale polling, DB integrity issues):
+## VPS Deployment
 
-- `DISCORD_WEBHOOK_URL_OPS`
+Main docs:
 
-Optional market watch list for reprice / new-item mentions in the reprice channel:
+- `VPS_DEPLOYMENT.md`
 
-- `discord_market_watch_users` in the `market` app config JSON (editable from the admin page's Advanced JSON view)
-- Each entry should include a `seller_name` prefix and a Discord `user_id`
-- Matching is prefix-based, so `ABVT` matches `ABVT#1234`
+Runtime unit files in repo:
 
-Example:
+- `deploy/systemd/poe-market-server.service`
+- `deploy/systemd/poe-market-poller.service`
 
-```json
-"discord_market_watch_users": [
-  {"seller_name": "ABVT", "user_id": "184699151986982912"}
-]
-```
+Current service entrypoints:
 
-Optional `app_config.market` key `sales_discord_window_days` (default `90`) sets the rolling window for the total in that message (sum of per-poll signals, same idea as the chart est. sold line).
+- server: `python -m server.server`
+- poller: `python -m poller --poll-interval 0`
 
-## Notes
+Deployment helper script:
 
-- Run the poller with `python -m poller` from the **repository root** so `items.txt`, `config.json`, and `web/listings_cache.json` resolve as before. The dashboard’s in-process poller and the VPS systemd unit use the same form.
-- Poll timing is aligned to a fixed start-time grid, not just "sleep N seconds after completion".
-- The poller includes adaptive rate-limit pacing using response headers.
-- Stop either process with `Ctrl+C`.
+- `deploy/deploy_on_vps.sh`
 
-## Deploy On A VPS
+It pulls latest code, installs dependencies, syncs secrets, updates systemd units, restarts services, and reloads Caddy.
 
-This project runs well on a small VPS with two always-on services:
+## Caddy Setup
 
-- `python -m server.server` (dashboard + API)
-- `python -m poller` (CSV poller; systemd unit uses this form)
+Template config:
 
-Use the full step-by-step deployment guide here:
+- `deploy/caddy/Caddyfile`
 
-- [VPS_DEPLOYMENT.md](VPS_DEPLOYMENT.md)
+Pattern:
 
-Quick update commands after you push new code:
+- serve static assets directly from `/opt/poe-market-flips/web`
+- reverse proxy dynamic/API traffic to `127.0.0.1:8080`
 
-```bash
-cd /opt/poe-market-flips
-git pull
-.venv/bin/pip install -r requirements.txt
-sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
-sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl restart poe-market-server
-sudo systemctl restart poe-market-poller
-sudo systemctl reload caddy
-```
+## ML Ranking Status
 
-Re-copying the unit files keeps systemd aligned with the repo (for example the dashboard entrypoint `python -m server.server` and the poller’s `python -m poller` `ExecStart`).
+ML-assisted ranking docs exist:
 
-Automatic deploy is also supported via GitHub Actions. See:
+- `ML_ASSISTED_RANKING.md`
+- `ML_ASSISTED_RANKING_IMPLEMENTATION.md`
 
-- [VPS_DEPLOYMENT.md](VPS_DEPLOYMENT.md#10-automatic-deploy-on-every-push-recommended)
+As of now, runtime recommendations are heuristic (`server/recommendation_service.py`) and `tools/ml/` is empty.
+
+## Known Limitations / Notes
+
+- Poller currently targets `Standard` league (`DEFAULT_LEAGUE = "Standard"`).
+- This tracker is built around unique/equipment market queries and item-name search payloads from PoE Trade.
+- Admin DB query endpoint intentionally allows read-only SQL only.
+
+## Development Notes
+
+- Run commands from repository root.
+- Server and poller both handle `Ctrl+C` for local shutdown.
+- If you edit `items.txt`, startup sync/upsert keeps tracked variants aligned in DB.
