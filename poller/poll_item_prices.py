@@ -29,6 +29,7 @@ from server.sales_discord_notify import (
 )
 
 from storage.service import StorageService, VariantSpec
+from .daily_summary import DailySummaryConfig, maybe_send_daily_summary_to_discord
 from .db_export import DbExportConfig, maybe_export_db_to_discord
 from .ml_retrain import MlRetrainConfig, maybe_run_weekly_ml_retrain
 
@@ -176,6 +177,20 @@ def load_discord_ops_webhook_url_from_env() -> str:
     return ""
 
 
+def load_discord_daily_summary_webhook_url_from_env() -> tuple[str, bool]:
+    """
+    Webhook URL for the daily market summary (charts + stats).
+
+    Falls back to ``DISCORD_WEBHOOK_URL`` / ``POE_DISCORD_WEBHOOK_URL`` when unset.
+    Returns ``(url, dedicated)`` where ``dedicated`` is True when a summary-specific env var was set.
+    """
+    for env_name in ("DISCORD_WEBHOOK_URL_DAILY_SUMMARY", "POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value, True
+    return load_discord_webhook_url_from_env(), False
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = str(os.getenv(name, "")).strip().lower()
     if raw in {"1", "true", "yes", "on"}:
@@ -213,6 +228,28 @@ def load_ml_retrain_config_from_env() -> MlRetrainConfig:
         timeout_seconds=timeout_seconds,
         python_executable=python_executable,
         script_rel_path=script_rel_path,
+    )
+
+
+def load_daily_summary_config_from_env() -> DailySummaryConfig:
+    from env_loader import load_local_env
+
+    load_local_env()
+    enabled = _env_bool("POE_DAILY_SUMMARY_ENABLED", True)
+    tz_offset_minutes = _env_int("POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES", 120, -720, 840)
+    schedule_hour = _env_int("POE_DAILY_SUMMARY_HOUR", 8, 0, 23)
+    schedule_minute = _env_int("POE_DAILY_SUMMARY_MINUTE", 0, 0, 59)
+    top_items_limit = _env_int("POE_DAILY_SUMMARY_TOP_ITEMS", 8, 3, 15)
+    webhook_url, _dedicated = load_discord_daily_summary_webhook_url_from_env()
+    if not webhook_url:
+        enabled = False
+    return DailySummaryConfig(
+        enabled=enabled,
+        webhook_url=webhook_url,
+        tz_offset_minutes=tz_offset_minutes,
+        schedule_hour=schedule_hour,
+        schedule_minute=schedule_minute,
+        top_items_limit=top_items_limit,
     )
 
 
@@ -3138,6 +3175,7 @@ def main() -> None:
     logged_db_export_webhook_cfg = False
     logged_ops_webhook_cfg = False
     logged_ml_retrain_cfg = False
+    logged_daily_summary_cfg = False
     ops_alert_last_sent: dict[str, float] = {}
     log_line(
         "cycle",
@@ -3208,6 +3246,14 @@ def main() -> None:
             "Weekly ML retrain trigger is disabled (POE_ML_RETRAIN_WEEKLY_ENABLED=0).",
         )
 
+    daily_summary_cfg = load_daily_summary_config_from_env()
+    if not daily_summary_cfg.enabled:
+        log_line(
+            "warn",
+            "Daily Discord summary is disabled (no webhook or POE_DAILY_SUMMARY_ENABLED=0). "
+            "Set DISCORD_WEBHOOK_URL_DAILY_SUMMARY (preferred) or DISCORD_WEBHOOK_URL.",
+        )
+
     while cfg.max_cycles is None or cycles_done < cfg.max_cycles:
         cycle += 1
         cycles_done += 1
@@ -3226,6 +3272,7 @@ def main() -> None:
         db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
         ops_health_cfg = load_ops_health_config(storage, cfg.poll_interval)
         ml_retrain_cfg = load_ml_retrain_config_from_env()
+        daily_summary_cfg = load_daily_summary_config_from_env()
         discord_watch_users = load_discord_market_watch_users(storage)
         if sales_webhook_url and not logged_sales_webhook_cfg:
             msg = f"Sales Discord webhook active; est.-sold window={sales_window_days}d"
@@ -3270,6 +3317,18 @@ def main() -> None:
             )
             logged_ml_retrain_cfg = True
 
+        if daily_summary_cfg.enabled and not logged_daily_summary_cfg:
+            _daily_url, daily_dedicated = load_discord_daily_summary_webhook_url_from_env()
+            msg = (
+                "Daily summary Discord webhook active; "
+                f"schedule={daily_summary_cfg.schedule_hour:02d}:{daily_summary_cfg.schedule_minute:02d} "
+                f"tz_offset={daily_summary_cfg.tz_offset_minutes}m"
+            )
+            if not daily_dedicated:
+                msg += " (using main alert webhook; set DISCORD_WEBHOOK_URL_DAILY_SUMMARY for a separate channel)"
+            log_line("cycle", msg)
+            logged_daily_summary_cfg = True
+
         maybe_run_ops_health_checks(
             session,
             storage,
@@ -3295,6 +3354,13 @@ def main() -> None:
             maybe_run_weekly_ml_retrain(
                 storage=storage,
                 cfg=ml_retrain_cfg,
+                log=log_line,
+            )
+
+        if daily_summary_cfg.enabled:
+            maybe_send_daily_summary_to_discord(
+                storage=storage,
+                cfg=daily_summary_cfg,
                 log=log_line,
             )
 

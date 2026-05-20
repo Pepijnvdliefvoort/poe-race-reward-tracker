@@ -37,6 +37,11 @@ _geo_lock = threading.Lock()
 _geo_cache: dict[str, dict[str, Any]] | None = None
 _poller_log_lock = threading.Lock()
 
+# Admin log consoles: enough history to debug issues hours after they occur.
+ADMIN_LOG_DEFAULT_LIMIT = 20_000
+ADMIN_LOG_MAX_LIMIT = 20_000
+ADMIN_LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024  # 16 MiB tail window for snapshots
+
 _DEFAULT_SYSTEMD_POLLER_SERVICE = "poe-market-poller"
 
 
@@ -461,6 +466,32 @@ def read_log_file_since(path: Path, cursor: int, max_bytes: int = 262_144) -> tu
         return "", 0
 
 
+def _is_important_log_entry(entry: dict[str, Any]) -> bool:
+    lvl = str(entry.get("level") or "").lower()
+    return lvl in {"warning", "warn", "error", "critical"}
+
+
+def _cap_log_entries(entries: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Keep warnings/errors when trimming; drop oldest routine info lines first."""
+    if len(entries) <= limit:
+        return entries
+    important: list[dict[str, Any]] = []
+    routine: list[dict[str, Any]] = []
+    for e in entries:
+        if _is_important_log_entry(e):
+            important.append(e)
+        else:
+            routine.append(e)
+    max_routine = max(0, limit - len(important))
+    if len(routine) > max_routine:
+        routine = routine[-max_routine:]
+    merged = important + routine
+    merged.sort(key=lambda e: str(e.get("ts") or ""))
+    if len(merged) > limit:
+        return merged[-limit:]
+    return merged
+
+
 def _parse_jsonl_logs(text: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for raw in text.splitlines():
@@ -483,10 +514,10 @@ def _parse_jsonl_logs(text: str) -> list[dict[str, Any]]:
 def query_log_entries(
     path: Path,
     *,
-    limit: int = 2000,
+    limit: int = ADMIN_LOG_DEFAULT_LIMIT,
     level: str = "all",
     q: str = "",
-    max_bytes: int = 1_048_576,
+    max_bytes: int = ADMIN_LOG_TAIL_MAX_BYTES,
     cursor: int | None = None,
     include_counts: bool = True,
     since: str = "session",
@@ -517,7 +548,7 @@ def query_log_entries(
                 return False
         return True
 
-    limit = max(1, min(int(limit or 2000), 5000))
+    limit = max(1, min(int(limit or ADMIN_LOG_DEFAULT_LIMIT), ADMIN_LOG_MAX_LIMIT))
     since_mode = (since or "session").strip().lower()
 
     # Snapshot parsing (for counts + initial render).
@@ -535,7 +566,7 @@ def query_log_entries(
                 "entries": [],
                 "cursor": 0,
             }
-        snapshot_entries = snapshot_entries[-limit:]
+        snapshot_entries = _cap_log_entries(snapshot_entries, limit)
 
         if since_mode == "session":
             last_start_idx: int | None = None
