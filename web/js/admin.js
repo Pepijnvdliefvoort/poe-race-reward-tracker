@@ -1204,6 +1204,36 @@ function setupLogSplitView() {
   };
 }
 
+// Keep enough lines for several hours of poller activity (~20k at typical rates).
+const ADMIN_LOG_MAX_ENTRIES = 20000;
+
+function isImportantLogEntry(entry) {
+  const lvl = String(entry?.level || "info").toLowerCase();
+  return lvl === "warning" || lvl === "warn" || lvl === "error" || lvl === "critical";
+}
+
+function trimLogEntries(entries) {
+  if (!Array.isArray(entries) || entries.length <= ADMIN_LOG_MAX_ENTRIES) {
+    return Array.isArray(entries) ? entries : [];
+  }
+  const important = [];
+  const routine = [];
+  for (const e of entries) {
+    (isImportantLogEntry(e) ? important : routine).push(e);
+  }
+  const maxRoutine = Math.max(0, ADMIN_LOG_MAX_ENTRIES - important.length);
+  const trimmedRoutine =
+    routine.length > maxRoutine ? routine.slice(routine.length - maxRoutine) : routine;
+  const merged = important.concat(trimmedRoutine);
+  merged.sort((a, b) => {
+    const ta = Date.parse(a?.ts || "") || 0;
+    const tb = Date.parse(b?.ts || "") || 0;
+    return ta - tb;
+  });
+  if (merged.length <= ADMIN_LOG_MAX_ENTRIES) return merged;
+  return merged.slice(merged.length - ADMIN_LOG_MAX_ENTRIES);
+}
+
 class LogViewer {
   constructor({ preEl, toolbarEl, onChange }) {
     this.preEl = preEl;
@@ -1277,7 +1307,7 @@ class LogViewer {
   }
 
   setEntries({ entries, counts }) {
-    this.entries = Array.isArray(entries) ? entries : [];
+    this.entries = trimLogEntries(Array.isArray(entries) ? entries : []);
     const c = counts && typeof counts === "object" ? counts : null;
     if (c) {
       const all = Number.isFinite(c.all) ? c.all : this.entries.length;
@@ -1294,10 +1324,7 @@ class LogViewer {
   appendEntries({ entries }) {
     const next = Array.isArray(entries) ? entries : [];
     if (!next.length) return;
-    this.entries = this.entries.concat(next);
-    if (this.entries.length > 2000) {
-      this.entries = this.entries.slice(this.entries.length - 2000);
-    }
+    this.entries = trimLogEntries(this.entries.concat(next));
     this.render();
   }
 
@@ -1432,7 +1459,7 @@ async function refreshLogs() {
           since: "session",
           level,
           q,
-          limit: "2000",
+          limit: String(ADMIN_LOG_MAX_ENTRIES),
           ...(filterChanged || viewer?.cursor == null ? {} : { cursor: String(viewer?.cursor || 0) }),
           counts: doCounts ? "1" : "0",
         }),

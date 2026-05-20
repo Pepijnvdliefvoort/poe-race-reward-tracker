@@ -103,6 +103,7 @@ DISCORD_WEBHOOK_URL_SALES=
 DISCORD_WEBHOOK_URL_REPRICES=
 DISCORD_WEBHOOK_URL_DB_EXPORT=
 DISCORD_WEBHOOK_URL_OPS=
+DISCORD_WEBHOOK_URL_DAILY_SUMMARY=
 ADMIN_TOKEN=
 PUBLIC_BASE_URL=
 POE_POLLER_RESTART_STRATEGY=
@@ -117,6 +118,7 @@ Aliases also supported by code for some webhooks:
 - `POE_DISCORD_WEBHOOK_URL`
 - `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`
 - `POE_DISCORD_WEBHOOK_URL_OPS`
+- `POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY`
 
 ## Quick Start (Windows PowerShell)
 
@@ -196,6 +198,33 @@ python scripts/retrain_ml_pipeline.py
 
 State is persisted in SQLite config key `ml_retrain`, so it runs at most once per scheduled week.
 The retrain process is launched in the background with a lock file (`logs/ml_retrain.lock`) so poll cycles continue while training runs.
+
+### Poller Daily Discord Summary
+
+The poller can post a once-per-day market summary (charts + stats) to Discord after a configured local time.
+Each run covers the **last 24 hours** ending at send time.
+
+When enabled, each poll cycle checks whether the scheduled daily slot has passed and posts at most once per day.
+State is persisted in SQLite config key `daily_summary`.
+
+Environment variables:
+
+- `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (optional; falls back to `DISCORD_WEBHOOK_URL`)
+- `POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (alias)
+- `POE_DAILY_SUMMARY_ENABLED` (`1`/`0`, default `1`)
+- `POE_DAILY_SUMMARY_HOUR` (`0..23`, default `8`)
+- `POE_DAILY_SUMMARY_MINUTE` (`0..59`, default `0`)
+- `POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES` (default `120`, GMT+2)
+- `POE_DAILY_SUMMARY_TOP_ITEMS` (default `8`, bar chart limit)
+
+Example (`.env.local`):
+
+```text
+DISCORD_WEBHOOK_URL_DAILY_SUMMARY=https://discord.com/api/webhooks/...
+POE_DAILY_SUMMARY_HOUR=8
+POE_DAILY_SUMMARY_MINUTE=15
+POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES=120
+```
 
 Admin status endpoint:
 
@@ -377,8 +406,12 @@ Webhook routing:
 - reprices/new-item watch: `DISCORD_WEBHOOK_URL_REPRICES` (fallback to sales/main)
 - DB export uploads: `DISCORD_WEBHOOK_URL_DB_EXPORT` (or `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`)
 - ops health alerts: `DISCORD_WEBHOOK_URL_OPS` (or `POE_DISCORD_WEBHOOK_URL_OPS`)
+- daily summary (charts + stats): `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (fallback to main)
 
 `discord_market_watch_users` in market config supports mention tagging by seller prefix match.
+
+The daily summary embed includes est. sales, mirrors moved (sales), reprices, top items, item floor direction (up/down counts), and biggest risers/fallers for the rolling 24h window.
+Chart PNGs post first (one message per chart, full-width in Discord), then the text summary embed. Dashboard-themed: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
 
 ## Logging and Runtime Files
 

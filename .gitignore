@@ -71,3 +71,5 @@ ML/training_30d.backtest_report.json
 ML/training_30d.csv
 ML/training_30d.meta.json
 ML/training_30d.training_report.json
+ML/model_execprice_30d.pkl
+ML/model_sellprob_30d.pkl

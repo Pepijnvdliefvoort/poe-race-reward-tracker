@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from .admin_service import (
+    ADMIN_LOG_DEFAULT_LIMIT,
     POLLER_LOG_PATH,
     SERVER_LOG_PATH,
     admin_authorized,
@@ -881,13 +882,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     level = params.get("level", ["all"])[0]
                     q = params.get("q", [""])[0]
                     since = params.get("since", ["session"])[0]
-                    limit_raw = params.get("limit", ["2000"])[0]
+                    limit_raw = params.get("limit", [str(ADMIN_LOG_DEFAULT_LIMIT)])[0]
                     cursor_raw = params.get("cursor", [None])[0]
                     counts_raw = params.get("counts", ["1"])[0]
                     try:
                         limit = int(limit_raw)
                     except ValueError:
-                        limit = 2000
+                        limit = ADMIN_LOG_DEFAULT_LIMIT
                     cursor = None
                     if cursor_raw is not None:
                         try:
