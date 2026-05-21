@@ -410,7 +410,7 @@ Webhook routing:
 
 `discord_market_watch_users` in market config supports mention tagging by seller prefix match.
 
-The daily summary embed includes est. sales, mirrors moved (sales), reprices, top items, item floor direction (up/down counts), and biggest risers/fallers for the rolling 24h window.
+The daily summary embed includes est. sales, mirrors moved (sales), reprices, top items, and biggest risers/fallers for the rolling 24h window.
 For forum (or media) channels, each run creates a new forum post (`thread_name` = `Market summary · YYYY-MM-DD`); chart PNGs and the stats embed are posted inside that thread. Dashboard-themed charts: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
 
 ## Logging and Runtime Files

@@ -346,11 +346,11 @@ def _priced_outside_baseline_range_sub10(
     baseline_range_mirrors: float,
 ) -> bool:
     """
-    Guardrail: in low-price markets, ignore inferred sales far from the recent
-    baseline (more likely unlist/reprice than a true sale).
+    Guardrail: in low-price markets, ignore inferred sales far above the floor when they
+    are also above the baseline (more likely unlist/reprice than a true sale).
 
-    The low-price gate still uses the current floor, while the vanish price must stay
-    within +/- baseline_range_mirrors from baseline to be considered sale-like.
+    Vanishes at or below the baseline are always sale-like. Floor-priced rows count too
+    even when the baseline median is much higher.
     """
     if cheapest_mirror is None:
         return False
@@ -378,7 +378,16 @@ def _priced_outside_baseline_range_sub10(
     if m is None or m <= 0:
         return False
 
-    return abs(m - base) > range_delta
+    # At or below baseline: always sale-like (buyers take cheap listings).
+    if m <= base:
+        return False
+
+    # Above baseline but still at/near the floor band (e.g. 4m when floor is 4m).
+    if m <= floor + range_delta:
+        return False
+
+    # Far above the floor and above baseline → likely an unlist, not a sale.
+    return m > floor + range_delta
 
 
 def safe_to_infer_vanish(
