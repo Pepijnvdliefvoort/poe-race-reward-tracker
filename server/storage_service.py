@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,41 @@ def _last_known_mirror_fields_from_history(points: list[dict[str, Any]]) -> dict
                 out[key] = float(v)
                 break
     return out
+
+
+_MIRROR_SNAPSHOT_STATS_SQL = """
+    SELECT
+      CASE
+        WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
+        WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
+          THEN ls.amount / NULLIF(pr.divines_per_mirror, 0)
+        WHEN LOWER(TRIM(ls.currency)) IN ('exalted', 'exalt', 'exa', 'exalted orb', 'exalted orbs')
+          THEN (ls.amount / 60.0) / NULLIF(pr.divines_per_mirror, 0)
+        ELSE NULL
+      END AS mirror_equiv
+    FROM listing_snapshots ls
+    JOIN item_polls ip ON ip.id = ls.item_poll_id
+    JOIN poll_runs pr ON pr.id = ip.poll_run_id
+    WHERE ls.item_poll_id = ?
+      AND ls.amount IS NOT NULL
+      AND ls.amount > 0
+"""
+
+
+def _mirror_stats_from_listing_snapshots(con: sqlite3.Connection, *, item_poll_id: int) -> dict[str, float]:
+    rows = con.execute(_MIRROR_SNAPSHOT_STATS_SQL, (int(item_poll_id),)).fetchall()
+    values = [
+        float(r["mirror_equiv"])
+        for r in rows
+        if r["mirror_equiv"] is not None and math.isfinite(float(r["mirror_equiv"])) and float(r["mirror_equiv"]) > 0
+    ]
+    if not values:
+        return {}
+    return {
+        "lowestMirror": float(min(values)),
+        "highestMirror": float(max(values)),
+        "medianMirror": float(statistics.median(values)),
+    }
 
 
 def _attach_last_known_mirror_prices(item: dict[str, Any]) -> None:
@@ -318,6 +354,7 @@ class ServerStorage:
                         "highestDivine": r["highest_divine"],
                         "totalResults": int(r["total_results"] or 0),
                         "usedResults": int(r["used_results"] or 0),
+                        "fetchedForInference": int(r["fetched_for_inference"] or 0),
                         "inferenceConfirmedTransfer": int(r["inf_confirmed_transfer"] or 0),
                         "inferenceLikelyInstantSale": int(r["inf_likely_instant_sale"] or 0),
                         "inferenceLikelyNonInstantOnline": int(r["inf_likely_non_instant_online"] or 0),
@@ -336,6 +373,16 @@ class ServerStorage:
                     qid = str(r["query_id"] or "").strip()
                     if qid:
                         series["queryId"] = qid
+
+                latest_row = rows[-1] if rows else None
+                if latest_row is not None and series.get("latest"):
+                    latest_point = series["latest"]
+                    if not _valid_positive_mirror(latest_point.get("lowestMirror")):
+                        snap_stats = _mirror_stats_from_listing_snapshots(con, item_poll_id=int(latest_row["id"]))
+                        if snap_stats:
+                            latest_point.update(snap_stats)
+                            if series["points"]:
+                                series["points"][-1].update(snap_stats)
 
             for variant_key, variant_id in variant_ids_by_key.items():
                 if variant_key not in items:
@@ -405,10 +452,12 @@ class ServerStorage:
                         "fingerprint": r["fingerprint"],
                     }
                 )
+            matched = int(row["fetched_for_inference"] or 0)
             return {
                 "queryId": cleaned,
                 "league": str(row["league"] or "Standard"),
                 "totalResults": int(row["total_results"] or 0),
+                "matchedResults": matched,
                 "listings": listings,
                 "updatedAt": str(row["requested_at_utc"] or ""),
                 "source": "db",

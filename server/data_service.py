@@ -540,6 +540,7 @@ def load_price_data() -> dict[str, Any]:
                 "highestDivine": _parse_float(row.get("highest_divine") or ""),
                 "totalResults": int(row.get("total_results") or 0),
                 "usedResults": int(row.get("used_results") or 0),
+                "fetchedForInference": int(row.get("fetched_for_inference") or 0),
                 "inferenceConfirmedTransfer": _parse_nonneg_int(row.get("inference_confirmed_transfer")),
                 "inferenceLikelyInstantSale": _parse_signed_int(row.get("inference_likely_instant_sale")),
                 "inferenceLikelyNonInstantOnline": _parse_signed_int(row.get("inference_likely_non_instant_online")),

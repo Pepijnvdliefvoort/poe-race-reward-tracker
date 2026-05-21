@@ -228,14 +228,21 @@ function setListingsPreviewSubline(entry, payload) {
     return;
   }
 
+  const matched = Number.isFinite(payload.matchedResults) ? payload.matchedResults : null;
   const total = Number.isFinite(payload.totalResults) ? payload.totalResults : null;
   const leagueLabel = payload.league || "Standard";
-  if (total == null) {
+  if (matched == null && total == null) {
     entry.listingsPopoverSubline.textContent = `Top live listings (${leagueLabel})`;
     return;
   }
 
-  entry.listingsPopoverSubline.textContent = `${total} total listings (${leagueLabel})`;
+  if (matched != null && total != null && matched !== total) {
+    entry.listingsPopoverSubline.textContent = `${matched} matching listings (${total} in search, ${leagueLabel})`;
+    return;
+  }
+
+  const count = matched != null ? matched : total;
+  entry.listingsPopoverSubline.textContent = `${count} total listings (${leagueLabel})`;
 }
 
 function aggregateListingsForDisplay(listings) {

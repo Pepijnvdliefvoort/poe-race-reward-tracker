@@ -669,7 +669,11 @@ export function updateCard(item, onFavoriteToggle) {
   trendIndicator.textContent = `${trendPercentage}${trendSymbol}`;
 
   const listingsCount = latestValid
-    ? (Number.isFinite(latest.usedResults) ? latest.usedResults : (latest.totalResults ?? 0))
+    ? (Number.isFinite(latest.fetchedForInference) && latest.fetchedForInference > 0
+        ? latest.fetchedForInference
+        : Number.isFinite(latest.usedResults)
+          ? latest.usedResults
+          : (latest.totalResults ?? 0))
     : "n/a";
   trendListings.textContent = `Listings: ${listingsCount}`;
 
