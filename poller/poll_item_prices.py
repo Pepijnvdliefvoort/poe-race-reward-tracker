@@ -2755,7 +2755,13 @@ def run_cycle(
 
         # Listing previews + inference events are persisted in SQLite (no JSON cache file).
 
-        raw_mirror_prices, divine_prices, unsupported_count = extract_listing_prices(listings)
+        # Art-filtered variants often have 0 matches in the top-20 ladder while the deeper
+        # inference fetch has the real listings (e.g. minority alt art with few expensive mirrors).
+        pricing_listings = listings
+        if item.image_name_filter and listings_inference:
+            pricing_listings = listings_inference
+
+        raw_mirror_prices, divine_prices, unsupported_count = extract_listing_prices(pricing_listings)
 
         # Convert all divine-priced listings (from the regular ladder) to mirror equivalents.
         converted = [p / divines_per_mirror for p in divine_prices]
@@ -2767,7 +2773,7 @@ def run_cycle(
         divine_only_listings: list[dict[str, Any]] = []
         # Trigger the fallback if *any* of the fetched top listings includes a `1 mirror` anchor,
         # not only when it happens to be the "first priced listing".
-        if has_unit_mirror_listing(listings) and len(divine_prices) <= 1:
+        if has_unit_mirror_listing(pricing_listings) and len(divine_prices) <= 1:
             divine_query_id, divine_only_ids, _ = search_item(
                 session,
                 rate_limiter,
@@ -2810,7 +2816,9 @@ def run_cycle(
         mirror_prices = raw_mirror_prices + converted + divine_only_converted
 
         low_mirror, high_mirror, median_mirror = summarize_prices(mirror_prices)
-        cheapest_raw = find_cheapest_supported_listing_price(listings, divines_per_mirror=float(divines_per_mirror))
+        cheapest_raw = find_cheapest_supported_listing_price(
+            pricing_listings, divines_per_mirror=float(divines_per_mirror)
+        )
         resale_opportunity = find_resale_opportunity(
             mirror_prices,
             divines_per_mirror=float(divines_per_mirror),
