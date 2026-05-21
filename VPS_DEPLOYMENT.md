@@ -152,7 +152,7 @@ This repo includes:
 
 	- `DISCORD_WEBHOOK_URL_DB_EXPORT` (optional) = webhook used by the admin “Export DB” action
 	- `DISCORD_WEBHOOK_URL_OPS` (optional) = webhook for ops health alerts (API failures, stale polling, DB integrity)
-	- `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (optional) = webhook for daily market summary (charts + stats; falls back to main alert webhook)
+	- `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (optional) = webhook for daily recap (charts + stats; falls back to main alert webhook)
 
 ### Generate an SSH key for deploy (if you do not already have one)
 

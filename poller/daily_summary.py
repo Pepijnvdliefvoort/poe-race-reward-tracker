@@ -1,4 +1,4 @@
-"""Daily market summary: aggregate SQLite stats, render charts, post to Discord."""
+"""Daily recap: aggregate SQLite stats, render charts, post to Discord."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ _DAILY_SUMMARY_WEBHOOK_ENV_KEYS = (
 
 def resolve_daily_summary_webhook_url(*, cfg_url: str = "") -> str:
     """
-    Resolve the daily-summary webhook from config, then repo ``.env`` files, then os.environ.
+    Resolve the daily-recap webhook from config, then repo ``.env`` files, then os.environ.
     """
     url = (cfg_url or "").strip()
     if url:
@@ -783,7 +783,7 @@ def _build_embed(*, data: dict[str, Any]) -> dict[str, Any]:
                 )
 
     return {
-        "title": "Market summary (24h)",
+        "title": "Daily recap (24h)",
         "description": "\n".join(lines)[:4096],
         "color": 0xFF7A2F,
         "footer": {"text": "poe-market-flips"},
@@ -811,7 +811,7 @@ def _forum_thread_name(*, period: SummaryPeriod) -> str:
     end = period.end_utc
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
-    return f"Market summary · {end.strftime('%Y-%m-%d')}"[:100]
+    return f"Daily recap · {end.strftime('%Y-%m-%d')}"[:100]
 
 
 def _webhook_execute_url(
@@ -901,7 +901,7 @@ def _send_summary_for_period(
 
     embed = _build_embed(data=data)
     ts = int(_utc_now().timestamp())
-    content = f"**24h market summary** — <t:{ts}:F>"
+    content = f"**24h recap** — <t:{ts}:F>"
 
     starter = _discord_webhook_post_message(
         webhook_url=webhook_url,
@@ -914,7 +914,7 @@ def _send_summary_for_period(
     thread_id = _thread_id_from_webhook_message_response(starter)
     if thread_id is None:
         raise RuntimeError(
-            "Daily summary starter posted but Discord did not return a forum thread id; "
+            "Daily recap starter posted but Discord did not return a forum thread id; "
             "ensure the webhook targets a forum or media channel."
         )
 
@@ -944,7 +944,7 @@ def _send_summary_for_period(
     log(
         "cycle",
         (
-            f"Posted daily market summary to Discord for {period.label} "
+            f"Posted daily recap to Discord for {period.label} "
             f"(sales={data['total_sales']}, volume={_fmt_mirrors(data['total_volume'])}, "
             f"charts={len(chart_paths)}, forum_thread={bool(thread_id)})."
         ),
@@ -958,7 +958,7 @@ def maybe_send_daily_summary_to_discord(
     log: callable,
 ) -> None:
     """
-    Post a market summary once per local calendar day after the configured schedule.
+    Post a daily recap once per local calendar day after the configured schedule.
 
     Covers the **last 24 hours** ending at send time. State is stored in SQLite `daily_summary`.
     """
@@ -987,7 +987,7 @@ def maybe_send_daily_summary_to_discord(
     try:
         _send_summary_for_period(storage=storage, cfg=cfg, period=period, log=log)
     except Exception as exc:  # noqa: BLE001
-        log("warn", f"Daily summary Discord post failed: {exc}")
+        log("warn", f"Daily recap Discord post failed: {exc}")
         return
 
     storage.set_config(
@@ -1015,7 +1015,7 @@ def send_daily_summary_to_discord_now(
         return {
             "ok": False,
             "error": (
-                "Daily summary webhook is not configured. "
+                "Daily recap webhook is not configured. "
                 "Set DISCORD_WEBHOOK_URL_DAILY_SUMMARY or DISCORD_WEBHOOK_URL in .env "
                 "(or export it in the shell before running)."
             ),

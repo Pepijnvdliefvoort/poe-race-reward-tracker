@@ -199,10 +199,10 @@ python scripts/retrain_ml_pipeline.py
 State is persisted in SQLite config key `ml_retrain`, so it runs at most once per scheduled week.
 The retrain process is launched in the background with a lock file (`logs/ml_retrain.lock`) so poll cycles continue while training runs.
 
-### Poller Daily Discord Summary
+### Poller Daily Discord Recap
 
-The poller can post a once-per-day market summary (charts + stats) to Discord after a configured local time.
-Each run covers the **last 24 hours** ending at send time. Point the daily-summary webhook at a **forum** (or media) channel so each run opens a new post and replies inside that thread.
+The poller can post a once-per-day daily recap (charts + stats) to Discord after a configured local time.
+Each run covers the **last 24 hours** ending at send time. Point the daily-recap webhook at a **forum** (or media) channel so each run opens a new post and replies inside that thread.
 
 When enabled, each poll cycle checks whether the scheduled daily slot has passed and posts at most once per day.
 State is persisted in SQLite config key `daily_summary`.
@@ -406,12 +406,12 @@ Webhook routing:
 - reprices/new-item watch: `DISCORD_WEBHOOK_URL_REPRICES` (fallback to sales/main)
 - DB export uploads: `DISCORD_WEBHOOK_URL_DB_EXPORT` (or `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`)
 - ops health alerts: `DISCORD_WEBHOOK_URL_OPS` (or `POE_DISCORD_WEBHOOK_URL_OPS`)
-- daily summary (charts + stats): `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (fallback to main)
+- daily recap (charts + stats): `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (fallback to main)
 
 `discord_market_watch_users` in market config supports mention tagging by seller prefix match.
 
-The daily summary embed includes est. sales, mirrors moved (sales), reprices, top items, and biggest risers/fallers for the rolling 24h window.
-For forum (or media) channels, each run creates a new forum post (`thread_name` = `Market summary · YYYY-MM-DD`); chart PNGs and the stats embed are posted inside that thread. Dashboard-themed charts: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
+The daily recap embed includes est. sales, mirrors moved (sales), reprices, top items, and biggest risers/fallers for the rolling 24h window.
+For forum (or media) channels, each run creates a new forum post (`thread_name` = `Daily recap · YYYY-MM-DD`); chart PNGs and the stats embed are posted inside that thread. Dashboard-themed charts: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
 
 ## Logging and Runtime Files
 
