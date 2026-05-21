@@ -179,7 +179,7 @@ def load_discord_ops_webhook_url_from_env() -> str:
 
 def load_discord_daily_summary_webhook_url_from_env() -> tuple[str, bool]:
     """
-    Webhook URL for the daily market summary (charts + stats).
+    Webhook URL for the daily recap (charts + stats).
 
     Falls back to ``DISCORD_WEBHOOK_URL`` / ``POE_DISCORD_WEBHOOK_URL`` when unset.
     Returns ``(url, dedicated)`` where ``dedicated`` is True when a summary-specific env var was set.
@@ -3250,7 +3250,7 @@ def main() -> None:
     if not daily_summary_cfg.enabled:
         log_line(
             "warn",
-            "Daily Discord summary is disabled (no webhook or POE_DAILY_SUMMARY_ENABLED=0). "
+            "Daily Discord recap is disabled (no webhook or POE_DAILY_SUMMARY_ENABLED=0). "
             "Set DISCORD_WEBHOOK_URL_DAILY_SUMMARY (preferred) or DISCORD_WEBHOOK_URL.",
         )
 
@@ -3320,7 +3320,7 @@ def main() -> None:
         if daily_summary_cfg.enabled and not logged_daily_summary_cfg:
             _daily_url, daily_dedicated = load_discord_daily_summary_webhook_url_from_env()
             msg = (
-                "Daily summary Discord webhook active; "
+                "Daily recap Discord webhook active; "
                 f"schedule={daily_summary_cfg.schedule_hour:02d}:{daily_summary_cfg.schedule_minute:02d} "
                 f"tz_offset={daily_summary_cfg.tz_offset_minutes}m"
             )
