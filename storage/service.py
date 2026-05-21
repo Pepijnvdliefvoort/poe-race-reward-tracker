@@ -13,6 +13,37 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _reconcile_inference_counts_from_events(
+    inference_counts: dict[str, int],
+    inference_events: list[dict[str, Any]],
+) -> dict[str, int]:
+    """
+    Keep per-poll summary counters aligned with persisted sale events.
+
+    The engine can emit sale events while pending bookkeeping nets the cycle counter to 0;
+    totals and Discord alerts use these counts plus `sales` rows.
+    """
+    counts = dict(inference_counts or {})
+    instant_ev = sum(
+        1 for ev in inference_events or [] if isinstance(ev, dict) and str(ev.get("rule") or "") == "likely_instant_sale"
+    )
+    online_ev = sum(
+        1
+        for ev in inference_events or []
+        if isinstance(ev, dict) and str(ev.get("rule") or "") == "likely_non_instant_online_sale"
+    )
+    xfer_ev = sum(
+        1 for ev in inference_events or [] if isinstance(ev, dict) and str(ev.get("rule") or "") == "confirmed_transfer"
+    )
+    if instant_ev > int(counts.get("likelyInstantSale", 0)):
+        counts["likelyInstantSale"] = instant_ev
+    if online_ev > int(counts.get("likelyNonInstantOnline", 0)):
+        counts["likelyNonInstantOnline"] = online_ev
+    if xfer_ev > int(counts.get("confirmedTransfer", 0)):
+        counts["confirmedTransfer"] = xfer_ev
+    return counts
+
+
 @dataclass(frozen=True)
 class VariantSpec:
     base_item_name: str
@@ -294,6 +325,7 @@ class StorageService:
         (curr_signals, pending_instant, pending_online_non_instant) and will be persisted for next cycle comparisons.
         """
         self.ensure_initialized()
+        inference_counts = _reconcile_inference_counts_from_events(inference_counts, inference_events)
         con = self._db.connect()
         try:
             polls = PollsRepo(con)
