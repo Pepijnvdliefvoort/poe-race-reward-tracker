@@ -51,8 +51,17 @@ def _fmt_int(value: float) -> str:
     return str(int(round(float(value))))
 
 
+def _fmt_amount(value: float) -> str:
+    """One decimal place only when the tenths digit is non-zero (e.g. 20.5, not 20.0)."""
+    v = round(float(value), 1)
+    whole = round(v)
+    if abs(v - whole) < 1e-9:
+        return str(int(whole))
+    return f"{v:.1f}"
+
+
 def _fmt_mirrors(value: float) -> str:
-    return f"{_fmt_int(value)} mirrors"
+    return f"{_fmt_amount(value)} mirrors"
 
 
 def _fmt_pct(value: float) -> str:
@@ -555,6 +564,16 @@ def _style_integer_axis(ax: Any, *, axis: str = "y") -> None:
         ax.yaxis.set_major_formatter(formatter)
 
 
+def _style_amount_axis(ax: Any, *, axis: str = "y") -> None:
+    from matplotlib.ticker import FuncFormatter
+
+    formatter = FuncFormatter(lambda x, _pos: _fmt_amount(x))
+    if axis in ("x", "both"):
+        ax.xaxis.set_major_formatter(formatter)
+    if axis in ("y", "both"):
+        ax.yaxis.set_major_formatter(formatter)
+
+
 def _empty_ax(ax: Any, message: str) -> None:
     ax.text(0.5, 0.5, message, ha="center", va="center", color=_DASH["ink_soft"], transform=ax.transAxes, fontsize=11)
 
@@ -594,7 +613,7 @@ def _chart_top_items(*, data: dict[str, Any], path: Path, plt: Any, top_n: int) 
                 fontsize=8,
             )
         ax.set_xlim(0, ymax * 1.18 if ymax else 1)
-        _style_integer_axis(ax, axis="x")
+        _style_amount_axis(ax, axis="x")
     else:
         _empty_ax(ax, "No sales in the last 24 hours")
     fig.subplots_adjust(left=0.28, right=0.97, top=0.84, bottom=0.10)
@@ -678,13 +697,13 @@ def _chart_mirrors_moved(*, data: dict[str, Any], path: Path, plt: Any) -> None:
     )
     if has_sales or len(times) >= 2:
         ymax = max(cum) if cum else 0.0
-        y_top = max(int(round(ymax * 1.12)), 1)
+        y_top = max(ymax * 1.12, 1.0)
         ax.fill_between(times, cum, 0, color=_DASH["accent"], alpha=0.18, zorder=1)
         ax.plot(times, cum, color=_DASH["accent"], linewidth=2.6, marker="o", markersize=4, zorder=3)
         ax.set_ylabel("Cumulative mirrors", color=_DASH["ink_soft"], fontsize=9)
         _style_time_axis(ax, fig, plt, start_utc=period.start_utc, end_utc=period.end_utc)
         ax.set_ylim(0, y_top)
-        _style_integer_axis(ax, axis="y")
+        _style_amount_axis(ax, axis="y")
         ax.margins(x=0)
     else:
         _empty_ax(ax, "No sales in the last 24 hours")
@@ -742,15 +761,6 @@ def _build_embed(*, data: dict[str, Any]) -> dict[str, Any]:
         if reprice.get("avg_down_pct") is not None:
             reprice_line += f" (avg ↓ {_fmt_int(reprice['avg_down_pct'])}%)"
         lines.append(reprice_line)
-
-    if int(item_trends.get("tracked_items") or 0) > 0:
-        lines.append(
-            f"**Item floors (window open → now):** "
-            f"↑ {item_trends.get('items_up', 0)} · "
-            f"↓ {item_trends.get('items_down', 0)} · "
-            f"≈ {item_trends.get('items_flat', 0)} flat "
-            f"(of {item_trends.get('tracked_items', 0)})"
-        )
 
     top_items: list[dict[str, Any]] = data.get("top_items") or []
     if top_items:
