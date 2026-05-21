@@ -202,7 +202,7 @@ The retrain process is launched in the background with a lock file (`logs/ml_ret
 ### Poller Daily Discord Summary
 
 The poller can post a once-per-day market summary (charts + stats) to Discord after a configured local time.
-Each run covers the **last 24 hours** ending at send time.
+Each run covers the **last 24 hours** ending at send time. Point the daily-summary webhook at a **forum** (or media) channel so each run opens a new post and replies inside that thread.
 
 When enabled, each poll cycle checks whether the scheduled daily slot has passed and posts at most once per day.
 State is persisted in SQLite config key `daily_summary`.
@@ -411,7 +411,7 @@ Webhook routing:
 `discord_market_watch_users` in market config supports mention tagging by seller prefix match.
 
 The daily summary embed includes est. sales, mirrors moved (sales), reprices, top items, item floor direction (up/down counts), and biggest risers/fallers for the rolling 24h window.
-Chart PNGs post first (one message per chart, full-width in Discord), then the text summary embed. Dashboard-themed: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
+For forum (or media) channels, each run creates a new forum post (`thread_name` = `Market summary · YYYY-MM-DD`); chart PNGs and the stats embed are posted inside that thread. Dashboard-themed charts: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
 
 ## Logging and Runtime Files
 

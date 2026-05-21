@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 from dataclasses import dataclass
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -795,28 +796,71 @@ def _chart_message_content(path: Path) -> str:
     return ""
 
 
+def _forum_thread_name(*, period: SummaryPeriod) -> str:
+    """Discord thread_name limit is 100 characters."""
+    end = period.end_utc
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return f"Market summary · {end.strftime('%Y-%m-%d')}"[:100]
+
+
+def _webhook_execute_url(
+    webhook_url: str,
+    *,
+    thread_id: str | None = None,
+    wait: bool = False,
+) -> str:
+    parsed = urlparse(webhook_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if thread_id:
+        query["thread_id"] = thread_id
+    if wait:
+        query["wait"] = "true"
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _thread_id_from_webhook_message_response(resp: requests.Response) -> str | None:
+    """Forum thread id is the ``channel_id`` on the starter message when ``wait=true``."""
+    if not resp.ok:
+        return None
+    try:
+        data = resp.json()
+    except (json.JSONDecodeError, ValueError):
+        return None
+    channel_id = data.get("channel_id")
+    if channel_id is None:
+        return None
+    return str(channel_id)
+
+
 def _discord_webhook_post_message(
     *,
     webhook_url: str,
     content: str = "",
     embed: dict[str, Any] | None = None,
     image_path: Path | None = None,
+    thread_name: str | None = None,
+    thread_id: str | None = None,
+    wait: bool = False,
     timeout: float,
 ) -> requests.Response:
     """Post one Discord webhook message (optionally with a single image attachment)."""
+    url = _webhook_execute_url(webhook_url, thread_id=thread_id, wait=wait)
     payload: dict[str, Any] = {}
     if embed is not None:
         payload["embeds"] = [embed]
     if content.strip():
         payload["content"] = content
+    if thread_name:
+        payload["thread_name"] = thread_name[:100]
     headers = {"Accept": "*/*"}
     if image_path is None or not image_path.is_file():
-        return requests.post(webhook_url, headers=headers, json=payload, timeout=timeout)
+        return requests.post(url, headers=headers, json=payload, timeout=timeout)
 
     with image_path.open("rb") as fh:
         files = {"files[0]": (image_path.name, fh, "image/png")}
         return requests.post(
-            webhook_url,
+            url,
             headers=headers,
             data={"payload_json": json.dumps(payload)},
             files=files,
@@ -849,19 +893,35 @@ def _send_summary_for_period(
     ts = int(_utc_now().timestamp())
     content = f"**24h market summary** — <t:{ts}:F>"
 
+    starter = _discord_webhook_post_message(
+        webhook_url=webhook_url,
+        content=content,
+        thread_name=_forum_thread_name(period=period),
+        wait=True,
+        timeout=30.0,
+    )
+    starter.raise_for_status()
+    thread_id = _thread_id_from_webhook_message_response(starter)
+    if thread_id is None:
+        raise RuntimeError(
+            "Daily summary starter posted but Discord did not return a forum thread id; "
+            "ensure the webhook targets a forum or media channel."
+        )
+
     for path in chart_paths:
         chart_resp = _discord_webhook_post_message(
             webhook_url=webhook_url,
             content=_chart_message_content(path),
             image_path=path,
+            thread_id=thread_id,
             timeout=60.0,
         )
         chart_resp.raise_for_status()
 
     resp = _discord_webhook_post_message(
         webhook_url=webhook_url,
-        content=content,
         embed=embed,
+        thread_id=thread_id,
         timeout=30.0,
     )
     resp.raise_for_status()
@@ -876,7 +936,7 @@ def _send_summary_for_period(
         (
             f"Posted daily market summary to Discord for {period.label} "
             f"(sales={data['total_sales']}, volume={_fmt_mirrors(data['total_volume'])}, "
-            f"charts={len(chart_paths)})."
+            f"charts={len(chart_paths)}, forum_thread={bool(thread_id)})."
         ),
     )
 
