@@ -22,6 +22,10 @@ def _reconcile_inference_counts_from_events(
 
     The engine can emit sale events while pending bookkeeping nets the cycle counter to 0;
     totals and Discord alerts use these counts plus `sales` rows.
+
+    Relist undos (negative per-poll deltas) must be preserved: a relist poll often has no
+    sale events, only ``relist_same_seller``, so we only lift counts when the engine value
+    is non-negative.
     """
     counts = dict(inference_counts or {})
     instant_ev = sum(
@@ -35,12 +39,17 @@ def _reconcile_inference_counts_from_events(
     xfer_ev = sum(
         1 for ev in inference_events or [] if isinstance(ev, dict) and str(ev.get("rule") or "") == "confirmed_transfer"
     )
-    if instant_ev > int(counts.get("likelyInstantSale", 0)):
-        counts["likelyInstantSale"] = instant_ev
-    if online_ev > int(counts.get("likelyNonInstantOnline", 0)):
-        counts["likelyNonInstantOnline"] = online_ev
-    if xfer_ev > int(counts.get("confirmedTransfer", 0)):
-        counts["confirmedTransfer"] = xfer_ev
+
+    def _lift_if_sale_events(count_key: str, event_count: int) -> None:
+        current = int(counts.get(count_key, 0))
+        if current < 0:
+            return
+        if event_count > current:
+            counts[count_key] = event_count
+
+    _lift_if_sale_events("likelyInstantSale", instant_ev)
+    _lift_if_sale_events("likelyNonInstantOnline", online_ev)
+    _lift_if_sale_events("confirmedTransfer", xfer_ev)
     return counts
 
 
