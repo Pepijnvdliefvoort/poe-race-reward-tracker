@@ -319,6 +319,8 @@ def send_estimated_sales_change_notification(
     likely_non_instant_online: int = 0,
     divines_per_mirror: float | None = None,
     inference_events: list[dict[str, Any]] | None = None,
+    content: str | None = None,
+    allowed_user_ids: list[str] | None = None,
 ) -> None:
     embed = build_estimated_sales_embed(
         item_name=item_name,
@@ -332,7 +334,7 @@ def send_estimated_sales_change_notification(
         divines_per_mirror=divines_per_mirror,
         inference_events=inference_events,
     )
-    payload: dict[str, Any] = {"embeds": [embed]}
+    payload = _build_discord_payload(embed=embed, content=content, allowed_user_ids=allowed_user_ids)
     resp = session.post(webhook_url, json=payload, timeout=10.0)
     resp.raise_for_status()
 
