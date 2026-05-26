@@ -338,6 +338,40 @@ def _format_user_mentions(user_ids: list[str]) -> str:
     return " ".join(f"<@{uid}>" for uid in unique_ids)
 
 
+def _sale_watch_mentions(
+    *,
+    sale_events: list[dict[str, Any]],
+    watch_users: list[DiscordWatchUser],
+) -> tuple[str | None, list[str]]:
+    if not sale_events or not watch_users:
+        return None, []
+
+    mention_ids: list[str] = []
+    seen_ids: set[str] = set()
+    for ev in sale_events:
+        if not isinstance(ev, dict):
+            continue
+        rule = str(ev.get("rule") or "")
+        if rule == "confirmed_transfer":
+            seller_name = str(ev.get("from_seller") or "").strip()
+        elif rule in {"likely_instant_sale", "likely_non_instant_online_sale"}:
+            seller_name = str(ev.get("seller") or "").strip()
+        else:
+            continue
+        if not seller_name:
+            continue
+
+        for watch in watch_users:
+            if watch.user_id in seen_ids:
+                continue
+            if _seller_name_matches_watch(seller_name, watch.seller_name):
+                seen_ids.add(watch.user_id)
+                mention_ids.append(watch.user_id)
+
+    content = _format_user_mentions(mention_ids)
+    return (content or None), mention_ids
+
+
 def _reprice_watch_mentions(
     *,
     reprice_events: list[dict[str, Any]],
@@ -2884,6 +2918,16 @@ def run_cycle(
             )
             if sales_webhook_url and (cycle_est != 0 or has_relist_signal):
                 try:
+                    sale_mentions_content, sale_mention_ids = _sale_watch_mentions(
+                        sale_events=[
+                            event
+                            for event in effective_events
+                            if isinstance(event, dict)
+                            and str(event.get("rule") or "")
+                            in {"confirmed_transfer", "likely_instant_sale", "likely_non_instant_online_sale"}
+                        ],
+                        watch_users=discord_watch_users or [],
+                    )
                     since = (datetime.now(timezone.utc) - timedelta(days=int(sales_window_days))).isoformat()
                     total_est = storage.sum_estimated_sales_since(variant_id=variant_id, since_utc_iso=since)
                     log_line(
@@ -2909,6 +2953,8 @@ def run_cycle(
                         likely_non_instant_online=int(effective_counts.get("likelyNonInstantOnline", 0)),
                         divines_per_mirror=divines_per_mirror,
                         inference_events=effective_events,
+                        content=sale_mentions_content,
+                        allowed_user_ids=sale_mention_ids,
                     )
                 except Exception as exc:  # noqa: BLE001
                     log_line("warn", f"Failed sales Discord webhook for {item.name}: {exc}")
