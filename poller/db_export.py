@@ -41,8 +41,8 @@ class DbExportConfig:
     retention_days: int = 45
 
 
-# Discord allows 25 MiB attachments per message; stay slightly under for multipart overhead.
-DISCORD_MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024  # 24 MiB
+# Keep parts safely below Discord webhook upload limits (avoids HTTP 413/500 on large uploads).
+DISCORD_SAFE_PART_SIZE_BYTES = 7 * 1024 * 1024  # 7 MiB
 
 
 def _cleanup_old_exports(*, exports_dir: Path, retention_days: int, log: callable) -> None:
@@ -287,7 +287,7 @@ def _upload_file_or_parts_to_discord(
     thread_id: str,
 ) -> None:
     file_size = int(file_path.stat().st_size)
-    if file_size <= DISCORD_MAX_ATTACHMENT_BYTES:
+    if file_size <= DISCORD_SAFE_PART_SIZE_BYTES:
         resp = _discord_webhook_post_file(
             webhook_url=webhook_url,
             content=content_prefix,
@@ -301,13 +301,13 @@ def _upload_file_or_parts_to_discord(
             _raise_http_error_with_body(resp=resp, exc=exc, body_limit=1200)
         return
 
-    parts = _split_file_into_parts(src_path=file_path, part_size_bytes=DISCORD_MAX_ATTACHMENT_BYTES)
+    parts = _split_file_into_parts(src_path=file_path, part_size_bytes=DISCORD_SAFE_PART_SIZE_BYTES)
     total_parts = len(parts)
     log(
         "warn",
         (
             f"DB export archive is {file_size / (1024 * 1024):.2f} MiB; "
-            f"uploading as {total_parts} parts (~{DISCORD_MAX_ATTACHMENT_BYTES / (1024 * 1024):.0f} MiB each)."
+            f"uploading as {total_parts} parts (~{DISCORD_SAFE_PART_SIZE_BYTES / (1024 * 1024):.2f} MiB each)."
         ),
     )
     try:
