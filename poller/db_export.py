@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from math import ceil
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 
@@ -39,8 +41,8 @@ class DbExportConfig:
     retention_days: int = 45
 
 
-# Keep parts safely below lower-tier Discord webhook limits to avoid HTTP 413.
-DISCORD_SAFE_PART_SIZE_BYTES = 7 * 1024 * 1024  # 7 MiB
+# Discord allows 25 MiB attachments per message; stay slightly under for multipart overhead.
+DISCORD_MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024  # 24 MiB
 
 
 def _cleanup_old_exports(*, exports_dir: Path, retention_days: int, log: callable) -> None:
@@ -131,12 +133,96 @@ def _zip_file(src_path: Path, zip_path: Path) -> None:
         zf.write(src_path, arcname=src_path.name)
 
 
+def _webhook_execute_url(
+    webhook_url: str,
+    *,
+    thread_id: str | None = None,
+    wait: bool = False,
+) -> str:
+    parsed = urlparse(webhook_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if thread_id:
+        query["thread_id"] = thread_id
+    if wait:
+        query["wait"] = "true"
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _thread_id_from_webhook_message_response(resp: requests.Response) -> str | None:
+    """Forum thread id is the ``channel_id`` on the starter message when ``wait=true``."""
+    if not resp.ok:
+        return None
+    try:
+        data = resp.json()
+    except (json.JSONDecodeError, ValueError):
+        return None
+    channel_id = data.get("channel_id")
+    if channel_id is None:
+        return None
+    return str(channel_id)
+
+
+def _forum_thread_name(*, local_date: date) -> str:
+    """Discord thread_name limit is 100 characters."""
+    return f"Daily backup · {local_date.isoformat()}"[:100]
+
+
+def _discord_webhook_post_message(
+    *,
+    webhook_url: str,
+    content: str = "",
+    thread_name: str | None = None,
+    thread_id: str | None = None,
+    wait: bool = False,
+    timeout: float,
+) -> requests.Response:
+    url = _webhook_execute_url(webhook_url, thread_id=thread_id, wait=wait)
+    payload: dict = {}
+    if content.strip():
+        payload["content"] = content
+    if thread_name:
+        payload["thread_name"] = thread_name[:100]
+    headers = {"Accept": "*/*"}
+    return requests.post(url, headers=headers, json=payload, timeout=timeout)
+
+
+def _ensure_backup_forum_thread(
+    *,
+    webhook_url: str,
+    local_date: date,
+    starter_content: str,
+    state: dict,
+) -> str:
+    today_key = local_date.isoformat()
+    stored_date = str(state.get("forum_thread_local_date", "")).strip()
+    thread_id = str(state.get("forum_thread_id", "")).strip()
+    if stored_date == today_key and thread_id:
+        return thread_id
+
+    starter = _discord_webhook_post_message(
+        webhook_url=webhook_url,
+        content=starter_content,
+        thread_name=_forum_thread_name(local_date=local_date),
+        wait=True,
+        timeout=30.0,
+    )
+    starter.raise_for_status()
+    new_id = _thread_id_from_webhook_message_response(starter)
+    if new_id is None:
+        raise RuntimeError(
+            "Daily backup starter posted but Discord did not return a forum thread id; "
+            "ensure the webhook targets a forum or media channel."
+        )
+    return new_id
+
+
 def _discord_webhook_post_file(
     *,
     webhook_url: str,
     content: str,
     file_path: Path,
     timeout: float,
+    thread_id: str | None = None,
 ) -> requests.Response:
     """
     Post a file attachment to a Discord webhook.
@@ -145,11 +231,12 @@ def _discord_webhook_post_file(
     sets a default `Content-Type: application/json` header for PoE API calls, which breaks
     Discord multipart uploads (Discord returns HTTP 400 code 50109).
     """
+    url = _webhook_execute_url(webhook_url, thread_id=thread_id)
     # Keep headers minimal so `requests` can set the correct multipart boundary.
     headers = {"Accept": "*/*"}
     with file_path.open("rb") as fh:
         return requests.post(
-            webhook_url,
+            url,
             headers=headers,
             data={"content": content},
             files={"file": (file_path.name, fh, "application/octet-stream")},
@@ -197,14 +284,16 @@ def _upload_file_or_parts_to_discord(
     file_path: Path,
     timeout: float,
     log: callable,
+    thread_id: str,
 ) -> None:
     file_size = int(file_path.stat().st_size)
-    if file_size <= DISCORD_SAFE_PART_SIZE_BYTES:
+    if file_size <= DISCORD_MAX_ATTACHMENT_BYTES:
         resp = _discord_webhook_post_file(
             webhook_url=webhook_url,
             content=content_prefix,
             file_path=file_path,
             timeout=timeout,
+            thread_id=thread_id,
         )
         try:
             resp.raise_for_status()
@@ -212,13 +301,13 @@ def _upload_file_or_parts_to_discord(
             _raise_http_error_with_body(resp=resp, exc=exc, body_limit=1200)
         return
 
-    parts = _split_file_into_parts(src_path=file_path, part_size_bytes=DISCORD_SAFE_PART_SIZE_BYTES)
+    parts = _split_file_into_parts(src_path=file_path, part_size_bytes=DISCORD_MAX_ATTACHMENT_BYTES)
     total_parts = len(parts)
     log(
         "warn",
         (
             f"DB export archive is {file_size / (1024 * 1024):.2f} MiB; "
-            f"uploading as {total_parts} parts (~{DISCORD_SAFE_PART_SIZE_BYTES / (1024 * 1024):.2f} MiB each)."
+            f"uploading as {total_parts} parts (~{DISCORD_MAX_ATTACHMENT_BYTES / (1024 * 1024):.0f} MiB each)."
         ),
     )
     try:
@@ -233,6 +322,7 @@ def _upload_file_or_parts_to_discord(
                 content=content,
                 file_path=part_path,
                 timeout=timeout,
+                thread_id=thread_id,
             )
             try:
                 resp.raise_for_status()
@@ -292,13 +382,20 @@ def maybe_export_db_to_discord(
         size_bytes = int(zip_path.stat().st_size)
         size_mb = size_bytes / (1024 * 1024)
         ts = int(now_utc.timestamp())
-        content = f"Daily DB export at <t:{ts}:F>, `{zip_path.name}` ({size_mb:.2f} MiB)."
+        thread_id = _ensure_backup_forum_thread(
+            webhook_url=webhook_url,
+            local_date=today_local,
+            starter_content=f"**Daily DB backup** — <t:{ts}:F>",
+            state=state,
+        )
+        content = f"`{zip_path.name}` ({size_mb:.2f} MiB)"
         _upload_file_or_parts_to_discord(
             webhook_url=webhook_url,
             content_prefix=content,
             file_path=zip_path,
             timeout=90.0,
             log=log,
+            thread_id=thread_id,
         )
 
         storage.set_config(
@@ -306,6 +403,8 @@ def maybe_export_db_to_discord(
             value={
                 "last_uploaded_at_utc": now_utc.isoformat(),
                 "last_uploaded_local_date": today_local.isoformat(),
+                "forum_thread_id": thread_id,
+                "forum_thread_local_date": today_local.isoformat(),
                 "tz_offset_minutes": int(cfg.tz_offset_minutes),
                 "schedule_hour": int(cfg.schedule_hour),
                 "schedule_minute": int(cfg.schedule_minute),
@@ -357,14 +456,23 @@ def export_db_to_discord_now(
     size_bytes = int(zip_path.stat().st_size)
     size_mb = size_bytes / (1024 * 1024)
     ts = int(now_utc.timestamp())
-    content = f"Manual DB export at <t:{ts}:F>, `{zip_path.name}` ({size_mb:.2f} MiB)."
+    today_local = now_local.date()
+    state = storage.get_config(key="db_export") or {}
     try:
+        thread_id = _ensure_backup_forum_thread(
+            webhook_url=webhook_url,
+            local_date=today_local,
+            starter_content=f"**Daily DB backup** — <t:{ts}:F>",
+            state=state,
+        )
+        content = f"Manual export — `{zip_path.name}` ({size_mb:.2f} MiB)"
         _upload_file_or_parts_to_discord(
             webhook_url=webhook_url,
             content_prefix=content,
             file_path=zip_path,
             timeout=90.0,
             log=log,
+            thread_id=thread_id,
         )
     except requests.HTTPError as exc:
         return {"ok": False, "error": f"Discord upload failed: {exc}"}
@@ -375,7 +483,9 @@ def export_db_to_discord_now(
         key="db_export",
         value={
             "last_uploaded_at_utc": now_utc.isoformat(),
-            "last_uploaded_local_date": now_local.date().isoformat(),
+            "last_uploaded_local_date": today_local.isoformat(),
+            "forum_thread_id": thread_id,
+            "forum_thread_local_date": today_local.isoformat(),
             "tz_offset_minutes": int(cfg.tz_offset_minutes),
             "schedule_hour": int(cfg.schedule_hour),
             "schedule_minute": int(cfg.schedule_minute),
