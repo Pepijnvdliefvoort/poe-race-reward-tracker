@@ -237,7 +237,7 @@ def load_daily_summary_config_from_env() -> DailySummaryConfig:
     load_local_env()
     enabled = _env_bool("POE_DAILY_SUMMARY_ENABLED", True)
     tz_offset_minutes = _env_int("POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES", 120, -720, 840)
-    schedule_hour = _env_int("POE_DAILY_SUMMARY_HOUR", 8, 0, 23)
+    schedule_hour = _env_int("POE_DAILY_SUMMARY_HOUR", 12, 0, 23)
     schedule_minute = _env_int("POE_DAILY_SUMMARY_MINUTE", 0, 0, 59)
     top_items_limit = _env_int("POE_DAILY_SUMMARY_TOP_ITEMS", 8, 3, 15)
     webhook_url, _dedicated = load_discord_daily_summary_webhook_url_from_env()
