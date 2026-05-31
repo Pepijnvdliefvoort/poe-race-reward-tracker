@@ -21,6 +21,7 @@ from .schema import (
     migration_010_listing_snapshots_corrupted,
     migration_011_listing_snapshots_count,
     migration_012_item_variants_image_filter,
+    migration_013_inference_pending_jitter_grace,
 )
 
 
@@ -123,6 +124,7 @@ class Database:
             (10, migration_010_listing_snapshots_corrupted()),
             (11, migration_011_listing_snapshots_count()),
             (12, migration_012_item_variants_image_filter()),
+            (13, migration_013_inference_pending_jitter_grace()),
         ]
 
         for version, sql in migrations:
@@ -142,6 +144,8 @@ class Database:
                 self._migration_011_listing_snapshots_count(con)
             elif version == 12:
                 self._migration_012_item_variants_image_filter(con)
+            elif version == 13:
+                self._migration_013_inference_pending_jitter_grace(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -387,6 +391,16 @@ class Database:
             )
         finally:
             con.execute("PRAGMA foreign_keys = ON;")
+
+    def _migration_013_inference_pending_jitter_grace(self, con: sqlite3.Connection) -> None:
+        pend_cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(inference_state_pending)").fetchall()
+        }
+        if "jitter_grace_polls" not in pend_cols:
+            con.execute(
+                "ALTER TABLE inference_state_pending ADD COLUMN jitter_grace_polls INTEGER NOT NULL DEFAULT 0"
+            )
 
 
 def execute_many(con: sqlite3.Connection, sql: str, rows: Iterable[tuple]) -> None:

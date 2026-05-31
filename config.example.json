@@ -11,6 +11,9 @@
 
   "inference_listings_fetch_cap": 100,
   "inference_truncation_safe_margin_pct": 6.0,
+  "inference_fetch_jitter_grace_polls": 2,
+  "inference_truncated_instant_vanish_max_above_floor_pct": 25.0,
+  "inference_truncated_instant_vanish_max_above_floor_mirrors": 0.08,
   "inference_sale_baseline_history_cycles": 10,
   "inference_sale_unlist_if_above_baseline_pct": 30.0,
   "inference_sale_floor_ignore_if_floor_below_mirrors": 10.0,

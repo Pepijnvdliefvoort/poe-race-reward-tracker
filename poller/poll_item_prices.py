@@ -638,6 +638,55 @@ def load_inference_truncation_safe_margin_pct(storage: StorageService) -> float:
     return max(0.0, min(50.0, float(raw)))
 
 
+def load_inference_fetch_jitter_grace_polls(storage: StorageService) -> int:
+    """
+    When total_results exceeds the inference fetch cap, defer instant-sale credit for this many
+    poll cycles so a quick reappearance is treated as fetch jitter (rule 2b), not a sale alert.
+
+    Config key: app_config.market.inference_fetch_jitter_grace_polls (default 2)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = int(float(data.get("inference_fetch_jitter_grace_polls", 2)))
+    except Exception:
+        raw = 2
+    return max(0, min(10, int(raw)))
+
+
+def load_inference_truncated_instant_vanish_max_above_floor_pct(storage: StorageService) -> float:
+    """
+    When the trade search returns more IDs than we fetch, only infer instant vanishes for listings
+    priced within this percent above the cheapest observed listing (mirror-equivalent).
+
+    Config key: app_config.market.inference_truncated_instant_vanish_max_above_floor_pct (default 25.0)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = float(data.get("inference_truncated_instant_vanish_max_above_floor_pct", 25.0))
+    except Exception:
+        raw = 25.0
+    if not math.isfinite(raw):
+        raw = 25.0
+    return max(0.0, min(500.0, float(raw)))
+
+
+def load_inference_truncated_instant_vanish_max_above_floor_mirrors(storage: StorageService) -> float:
+    """
+    Floor band for truncated instant vanishes (mirror-equivalent absolute width). The effective band
+    is max(% of floor, this value) so cheap markets still get a minimum tolerance.
+
+    Config key: app_config.market.inference_truncated_instant_vanish_max_above_floor_mirrors (default 0.08)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = float(data.get("inference_truncated_instant_vanish_max_above_floor_mirrors", 0.08))
+    except Exception:
+        raw = 0.08
+    if not math.isfinite(raw):
+        raw = 0.08
+    return max(0.0, min(50.0, float(raw)))
+
+
 def load_inference_sale_baseline_history_cycles(storage: StorageService) -> int:
     """
     How many past per-cycle median prices (mirror-equivalent) to use as the "baseline"
@@ -1118,6 +1167,7 @@ def load_inference_fetch_cap(cli_override: int | None) -> int:
         v = max(0, int(v))
         if v == 0:
             return 0
+        # PoE trade search returns at most TRADE_SEARCH_RESULT_MAX listing IDs per query.
         return min(TRADE_SEARCH_RESULT_MAX, v)
 
     if cli_override is not None:
@@ -2775,6 +2825,13 @@ def run_cycle(
             snapshot_truncated=snap_trunc,
             truncation_cutoff_mirror=trunc_cutoff,
             truncation_safe_margin_pct=float(truncation_margin_pct),
+            truncated_instant_vanish_max_above_floor_pct=load_inference_truncated_instant_vanish_max_above_floor_pct(
+                storage
+            ),
+            truncated_instant_vanish_max_above_floor_mirrors=load_inference_truncated_instant_vanish_max_above_floor_mirrors(
+                storage
+            ),
+            fetch_jitter_grace_polls=load_inference_fetch_jitter_grace_polls(storage),
         )
         (
             xfer,
