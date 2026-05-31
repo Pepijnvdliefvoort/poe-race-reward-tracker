@@ -5,6 +5,11 @@ Rules:
 1. Same item fingerprint under seller A, then same fingerprint under seller B -> transfer / sold
    (includes sold-then-relisted-by-another seller when both ladders show one seller each).
 2. Instant buyout listing gone on next fetch -> likely sold (unless rule 3).
+2a. When the trade search has more results than we fetch, instant vanishes only count if the
+    listing was near the floor band (buyers take cheap stock; mid-ladder rows often drop from
+    the fetched ID slice between polls). Deferred counting applies in that case (rule 2b).
+2b. Truncated-snapshot instant vanishes defer the sale signal for a grace window so a quick
+    reappearance is treated as fetch jitter, not a sale + relist alert pair.
 3. Same fingerprint + same seller vanishes then returns next poll -> relist, not a sale (undoes rule 2 or 4b).
 4. Non-instant listing gone -> inconclusive if seller appears offline; not counted as sale.
 4b. Non-instant listing gone while seller appears online -> likely sold (pending relist can undo).
@@ -415,6 +420,32 @@ def safe_to_infer_vanish(
     return m <= cutoff * (1.0 - margin)
 
 
+def near_floor_for_truncated_instant_vanish(
+    mirror_equiv: Any,
+    cheapest_mirror: float | None,
+    *,
+    max_above_floor_pct: float = 25.0,
+    max_above_floor_mirrors: float = 0.08,
+) -> bool:
+    """
+    When total_results exceeds the inference fetch cap, a row can vanish because its search ID
+    fell out of the fetched slice — not because it sold. Only treat instant vanishes as sale-like
+    when the listing was priced at/near the current floor (where buyers actually trade).
+    """
+    if cheapest_mirror is None:
+        return True
+    floor = float(cheapest_mirror)
+    if not math.isfinite(floor) or floor <= 0:
+        return True
+    m = _as_float(mirror_equiv)
+    if m is None or m <= 0:
+        return False
+    pct = max(0.0, float(max_above_floor_pct))
+    abs_band = max(0.0, float(max_above_floor_mirrors))
+    band = max(floor * (pct / 100.0), abs_band)
+    return m <= floor + band
+
+
 def non_instant_vanished_seller_accounts_for_online_probe(
     prev_signals: list[dict[str, Any]],
     curr_signals: list[dict[str, Any]],
@@ -508,6 +539,9 @@ def evaluate_listing_transition(
     snapshot_truncated: bool = False,
     truncation_cutoff_mirror: float | None = None,
     truncation_safe_margin_pct: float = 6.0,
+    truncated_instant_vanish_max_above_floor_pct: float = 25.0,
+    truncated_instant_vanish_max_above_floor_mirrors: float = 0.08,
+    fetch_jitter_grace_polls: int = 2,
 ) -> tuple[InferenceCycleResult, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Returns (result, new_pending_instant, new_pending_online_non_instant, curr_signals_for_storage).
@@ -528,6 +562,7 @@ def evaluate_listing_transition(
 
     pending_online = pending_online or []
     seller_online_probe = seller_online_probe or {}
+    jitter_grace = max(0, int(fetch_jitter_grace_polls))
 
     prev_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in prev_signals}
     curr_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in curr_signals}
@@ -584,11 +619,31 @@ def evaluate_listing_transition(
         if not fp or not seller:
             continue
         counted_imm = bool(pend.get("countedImmediate"))
+        pend_grace = int(pend.get("jitterGracePolls") or 0)
+        polls_absent = max(0, cycle - removed)
         if (fp, seller) in curr_keys:
+            new_meta = _meta_for(curr_signals, fp, seller)
+            if not counted_imm and pend_grace > 0 and polls_absent <= pend_grace:
+                events.append(
+                    {
+                        "rule": "fetch_jitter_relist",
+                        "itemKey": item_key,
+                        "fingerprint": fp,
+                        "seller": seller,
+                        "mirrorEquiv": mirror_eq,
+                        "priceAmount": price_amount,
+                        "priceCurrency": price_currency,
+                        "newPriceAmount": new_meta.get("priceAmount") if new_meta else None,
+                        "newPriceCurrency": new_meta.get("priceCurrency") if new_meta else None,
+                        "pollsAbsent": polls_absent,
+                        "jitterGracePolls": pend_grace,
+                        "cycle": cycle,
+                    }
+                )
+                continue
             result.relist_same_seller += 1
             if counted_imm:
                 result.likely_instant_sale -= 1
-            new_meta = _meta_for(curr_signals, fp, seller)
             events.append(
                 {
                     "rule": "relist_same_seller",
@@ -608,6 +663,9 @@ def evaluate_listing_transition(
         if removed < cycle:
             if counted_imm:
                 pass
+            elif pend_grace > 0 and polls_absent <= pend_grace:
+                new_pending_instant.append(pend)
+                continue
             else:
                 # Only resolve legacy pending-to-sale when it's safe (not a bump-out).
                 if safe_to_infer_vanish(
@@ -738,6 +796,14 @@ def evaluate_listing_transition(
 
         if transfer:
             # Listing left A and appeared on B; do not treat A's disappearance as ambiguous instant removal.
+            continue
+
+        if instant and snapshot_truncated and not near_floor_for_truncated_instant_vanish(
+            mirror_eq,
+            cheapest_prev_mirror,
+            max_above_floor_pct=truncated_instant_vanish_max_above_floor_pct,
+            max_above_floor_mirrors=truncated_instant_vanish_max_above_floor_mirrors,
+        ):
             continue
 
         if not instant:
@@ -877,25 +943,28 @@ def evaluate_listing_transition(
                 }
             )
         else:
-            result.likely_instant_sale += 1
-            events.append(
-                {
-                    "rule": "likely_instant_sale",
-                    "itemKey": item_key,
-                    "fingerprint": fp,
-                    "seller": seller,
-                    "mirrorEquiv": mirror_eq,
-                    "priceAmount": price_amount,
-                    "priceCurrency": price_currency,
-                    "cycle": cycle,
-                }
-            )
+            defer_for_jitter = bool(snapshot_truncated and jitter_grace > 0)
+            if not defer_for_jitter:
+                result.likely_instant_sale += 1
+                events.append(
+                    {
+                        "rule": "likely_instant_sale",
+                        "itemKey": item_key,
+                        "fingerprint": fp,
+                        "seller": seller,
+                        "mirrorEquiv": mirror_eq,
+                        "priceAmount": price_amount,
+                        "priceCurrency": price_currency,
+                        "cycle": cycle,
+                    }
+                )
             new_pending_instant.append(
                 {
                     "fingerprint": fp,
                     "seller": seller,
                     "removed_cycle": cycle,
-                    "countedImmediate": True,
+                    "countedImmediate": not defer_for_jitter,
+                    "jitterGracePolls": jitter_grace if defer_for_jitter else 0,
                     "mirrorEquiv": mirror_eq,
                     "priceAmount": price_amount,
                     "priceCurrency": price_currency,

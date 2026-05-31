@@ -451,7 +451,7 @@ class InferenceStateRepo:
         ).fetchall()
         pend_rows = self._con.execute(
             """
-            SELECT fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency, pending_kind
+            SELECT fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency, pending_kind, jitter_grace_polls
             FROM inference_state_pending
             WHERE item_variant_id = ?
             """,
@@ -478,6 +478,7 @@ class InferenceStateRepo:
                 "seller": str(r["seller"]),
                 "removed_cycle": int(r["removed_cycle"] or 0),
                 "countedImmediate": bool(int(r["counted_immediate"] or 0)),
+                "jitterGracePolls": int(r["jitter_grace_polls"] or 0),
                 "mirrorEquiv": (float(r["mirror_equiv"]) if r["mirror_equiv"] is not None else None),
                 "priceAmount": (float(r["price_amount"]) if r["price_amount"] is not None else None),
                 "priceCurrency": (str(r["price_currency"]) if r["price_currency"] is not None else None),
@@ -557,6 +558,7 @@ class InferenceStateRepo:
                     p.get("priceAmount"),
                     (str(p.get("priceCurrency") or "").strip().lower() or None),
                     kind,
+                    max(0, int(p.get("jitterGracePolls") or 0)),
                 )
             )
 
@@ -568,8 +570,8 @@ class InferenceStateRepo:
         self._con.executemany(
             """
             INSERT INTO inference_state_pending(
-              item_variant_id, fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency, pending_kind
-            ) VALUES (?,?,?,?,?,?,?,?,?)
+              item_variant_id, fingerprint, seller, removed_cycle, counted_immediate, mirror_equiv, price_amount, price_currency, pending_kind, jitter_grace_polls
+            ) VALUES (?,?,?,?,?,?,?,?,?,?)
             """,
             pend_payload,
         )

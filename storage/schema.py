@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 def migration_001_initial() -> str:
@@ -279,4 +279,9 @@ def migration_011_listing_snapshots_count() -> str:
 def migration_012_item_variants_image_filter() -> str:
   """Applied via a Python idempotent migration in `storage/db.py`."""
   return ""
+
+
+def migration_013_inference_pending_jitter_grace() -> str:
+    """Applied via a Python idempotent migration in `storage/db.py`."""
+    return ""
 
