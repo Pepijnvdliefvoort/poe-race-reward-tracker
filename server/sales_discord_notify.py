@@ -515,3 +515,103 @@ def send_new_item_notification(
     payload = _build_discord_payload(embed=embed, content=content, allowed_user_ids=allowed_user_ids)
     resp = session.post(webhook_url, json=payload, timeout=10.0)
     resp.raise_for_status()
+
+
+_NEW_ITEM_KIND_LABELS: dict[str, str] = {
+    "brand_new_roll": "Brand-new roll",
+    "new_seller_known_roll": "Known roll, new seller",
+    "new_listing_row": "New listing",
+    "transfer_listing": "Transfer listing",
+    "returning_after_absence": "Returning listing",
+}
+
+
+def _format_new_item_signal_line(
+    signal: dict[str, Any],
+    *,
+    divines_per_mirror: float | None,
+) -> str:
+    kind = str(signal.get("kind") or "new_listing_row")
+    label = _NEW_ITEM_KIND_LABELS.get(kind, kind.replace("_", " ").title())
+    seller = str(signal.get("seller") or "unknown")
+    price_txt = _fmt_mirror_equiv(signal.get("mirror_equiv"), divines_per_mirror=divines_per_mirror)
+    if not price_txt:
+        price_txt = "unknown price"
+    parts = [f"**{label}** — **{seller}** @ {price_txt}"]
+    from_seller = str(signal.get("from_seller") or "").strip()
+    if from_seller:
+        parts.append(f"(from **{from_seller}**)")
+    other = signal.get("other_sellers")
+    if isinstance(other, list) and other:
+        names = ", ".join(str(x) for x in other[:4] if str(x).strip())
+        if names:
+            suffix = f" (+{len(other) - 4} more)" if len(other) > 4 else ""
+            parts.append(f"(recently: {names}{suffix})")
+    fp_short = _fmt_short_fp(signal.get("fingerprint"))
+    if fp_short:
+        parts.append(f"`{fp_short}`")
+    return " ".join(parts)
+
+
+def build_new_items_channel_embed(
+    *,
+    item_name: str,
+    item_image_url: str | None,
+    signals: list[dict[str, Any]],
+    divines_per_mirror: float | None = None,
+    trade_url: str | None = None,
+) -> dict[str, Any]:
+    lines = [
+        f"**This poll:** +{len(signals)} new listing signal" + ("" if len(signals) == 1 else "s"),
+    ]
+    lines.append("")
+    lines.append("**New listings:**")
+    max_lines = 12
+    for sig in signals[:max_lines]:
+        if isinstance(sig, dict):
+            lines.append(f"- {_format_new_item_signal_line(sig, divines_per_mirror=divines_per_mirror)}")
+    if len(signals) > max_lines:
+        lines.append(f"- ...and {len(signals) - max_lines} more")
+
+    embed: dict[str, Any] = {
+        "title": f"New items: {item_name}",
+        "description": "\n".join(lines),
+        "color": 0x3498DB,
+    }
+    if item_image_url:
+        embed["thumbnail"] = {"url": item_image_url}
+    if trade_url:
+        embed["fields"] = [
+            {
+                "name": "Trade Link",
+                "value": f"[View listings]({trade_url})",
+                "inline": False,
+            }
+        ]
+    return embed
+
+
+def send_new_items_channel_notification(
+    session: requests.Session,
+    *,
+    webhook_url: str,
+    item_name: str,
+    item_image_url: str | None,
+    signals: list[dict[str, Any]],
+    divines_per_mirror: float | None = None,
+    trade_url: str | None = None,
+) -> None:
+    """Post to the dedicated new-items channel with no @mentions."""
+    embed = build_new_items_channel_embed(
+        item_name=item_name,
+        item_image_url=item_image_url,
+        signals=signals,
+        divines_per_mirror=divines_per_mirror,
+        trade_url=trade_url,
+    )
+    payload: dict[str, Any] = {
+        "embeds": [embed],
+        "allowed_mentions": {"parse": [], "users": [], "roles": []},
+    }
+    resp = session.post(webhook_url, json=payload, timeout=10.0)
+    resp.raise_for_status()

@@ -48,6 +48,7 @@ from .recommendation_service import RecommendationInputError, recommend_investme
 from .sales_discord_notify import (
     send_estimated_sales_change_notification,
     send_new_item_notification,
+    send_new_items_channel_notification,
     send_reprice_change_notification,
 )
 
@@ -119,6 +120,10 @@ def _load_discord_reprices_webhook_url_from_env() -> str:
     if sales:
         return sales
     return _load_discord_alert_webhook_url_from_env()
+
+
+def _load_discord_new_items_webhook_url_from_env() -> str:
+    return os.getenv("DISCORD_WEBHOOK_URL_NEW_ITEMS", "").strip()
 
 
 def _load_sales_discord_window_days() -> int:
@@ -1365,7 +1370,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if isinstance(raw_types, list):
                     for t in raw_types:
                         v = str(t or "").strip().lower()
-                        if v in {"sales", "snipe", "reprice"}:
+                        if v in {"sales", "snipe", "reprice", "new_items"}:
                             selected_types.add(v)
                 if not selected_types:
                     selected_types = {"sales", "snipe", "reprice"}
@@ -1694,6 +1699,48 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             inference_events=reprice_events,
                         )
                         sent.append("reprice")
+
+                if "new_items" in selected_types:
+                    new_items_webhook = _load_discord_new_items_webhook_url_from_env()
+                    if not new_items_webhook:
+                        skipped.append("new_items: webhook not configured")
+                    else:
+                        trade_url = (
+                            f"https://www.pathofexile.com/trade/search/Standard/{query_id}"
+                            if query_id
+                            else None
+                        )
+                        fallback_seller = (
+                            str(listing_rows[0]["seller_name"] or "SampleSeller")
+                            if listing_rows
+                            else "SampleSeller"
+                        )
+                        sample_signals: list[dict[str, Any]] = [
+                            {
+                                "kind": "brand_new_roll",
+                                "seller": fallback_seller,
+                                "mirror_equiv": current_low,
+                                "fingerprint": "test-brand-new-roll",
+                                "other_sellers": [],
+                            },
+                            {
+                                "kind": "new_seller_known_roll",
+                                "seller": f"{fallback_seller}Alt",
+                                "mirror_equiv": max(current_low * 1.05, current_low + 0.01),
+                                "fingerprint": "test-known-roll-new-seller",
+                                "other_sellers": [fallback_seller],
+                            },
+                        ]
+                        send_new_items_channel_notification(
+                            session,
+                            webhook_url=new_items_webhook,
+                            item_name=display_name or base_item_name,
+                            item_image_url=icon_abs,
+                            signals=sample_signals,
+                            divines_per_mirror=divines_per_mirror,
+                            trade_url=trade_url,
+                        )
+                        sent.append("new_items")
 
                 if "snipe" in selected_types:
                     alert_webhook = _load_discord_alert_webhook_url_from_env()
