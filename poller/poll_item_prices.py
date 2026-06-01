@@ -25,8 +25,11 @@ from .sale_inference_engine import (
 from server.sales_discord_notify import (
     send_estimated_sales_change_notification,
     send_new_item_notification,
+    send_new_items_channel_notification,
     send_reprice_change_notification,
 )
+
+from .new_item_classifier import NewItemSignal, NewItemsConfig, classify_new_items
 
 from storage.service import StorageService, VariantSpec
 from .daily_summary import DailySummaryConfig, maybe_send_daily_summary_to_discord
@@ -151,6 +154,15 @@ def load_discord_reprices_webhook_url_from_env() -> tuple[str, bool]:
     if reprices:
         return reprices, True
     return load_discord_sales_webhook_url_from_env()[0], False
+
+
+def load_discord_new_items_webhook_url_from_env() -> str:
+    """
+    Webhook URL for the dedicated new-items channel (all classified new listings, no pings).
+
+    No fallback to reprices/sales/main — set ``DISCORD_WEBHOOK_URL_NEW_ITEMS`` explicitly.
+    """
+    return os.getenv("DISCORD_WEBHOOK_URL_NEW_ITEMS", "").strip()
 
 
 def load_discord_db_export_webhook_url_from_env() -> str:
@@ -619,6 +631,68 @@ def load_sales_discord_window_days(storage: StorageService) -> int:
     except Exception:
         d = 90
     return max(1, min(3650, d))
+
+
+def _market_config_int(data: dict[str, Any], name: str, default: int, low: int, high: int) -> int:
+    try:
+        value = int(float(data.get(name, default)))
+    except Exception:
+        value = int(default)
+    return max(low, min(high, value))
+
+
+def _market_config_bool(data: dict[str, Any], name: str, default: bool) -> bool:
+    raw = data.get(name, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(default)
+
+
+def load_new_items_config(storage: StorageService, *, webhook_configured: bool) -> NewItemsConfig:
+    try:
+        data = storage.get_config(key="market") or {}
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    enabled_default = bool(webhook_configured)
+    if "new_items_enabled" in data:
+        enabled = _market_config_bool(data, "new_items_enabled", enabled_default)
+    else:
+        enabled = enabled_default
+    return NewItemsConfig(
+        enabled=enabled,
+        known_fp_cycles=_market_config_int(data, "new_items_known_fp_cycles", 5, 1, 100),
+        cooldown_cycles=_market_config_int(data, "new_items_cooldown_cycles", 5, 0, 500),
+        return_min_cycles=_market_config_int(data, "new_items_return_min_cycles", 3, 1, 500),
+        include_transfers=_market_config_bool(data, "new_items_include_transfers", True),
+        min_market_listings=_market_config_int(data, "new_items_min_market_listings", 1, 1, 50),
+        jitter_grace_polls=load_inference_fetch_jitter_grace_polls(storage),
+        truncated_instant_vanish_max_above_floor_pct=load_inference_truncated_instant_vanish_max_above_floor_pct(
+            storage
+        ),
+        truncated_instant_vanish_max_above_floor_mirrors=load_inference_truncated_instant_vanish_max_above_floor_mirrors(
+            storage
+        ),
+    )
+
+
+def _new_item_signal_to_dict(sig: NewItemSignal) -> dict[str, Any]:
+    return {
+        "kind": sig.kind,
+        "fingerprint": sig.fingerprint,
+        "seller": sig.seller,
+        "mirror_equiv": sig.mirror_equiv,
+        "price_amount": sig.price_amount,
+        "price_currency": sig.price_currency,
+        "is_instant": sig.is_instant,
+        "from_seller": sig.from_seller,
+        "other_sellers": list(sig.other_sellers),
+    }
 
 
 def load_inference_truncation_safe_margin_pct(storage: StorageService) -> float:
@@ -2687,6 +2761,8 @@ def run_cycle(
     inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
     sales_webhook_url: str = "",
     reprices_webhook_url: str = "",
+    new_items_webhook_url: str = "",
+    new_items_config: NewItemsConfig | None = None,
     sales_window_days: int = 90,
     icon_urls_by_key: dict[str, str | None] | None = None,
     discord_watch_users: list[DiscordWatchUser] | None = None,
@@ -3079,6 +3155,50 @@ def run_cycle(
                 except Exception as exc:  # noqa: BLE001
                     log_line("warn", f"Failed new-item Discord webhook for {item.name}: {exc}")
 
+            ni_cfg = new_items_config
+            if new_items_webhook_url and ni_cfg and ni_cfg.enabled:
+                try:
+                    classified = classify_new_items(
+                        variant_id=variant_id,
+                        cycle=cycle,
+                        prev_signals=prev_signals,
+                        curr_signals=curr_signals,
+                        inference_events=effective_events,
+                        pending_instant=pending_inst,
+                        pending_online=pending_on,
+                        snapshot_truncated=snap_trunc,
+                        storage=storage,
+                        config=ni_cfg,
+                    )
+                    if classified:
+                        trade_url = f"https://www.pathofexile.com/trade/search/{DEFAULT_LEAGUE}/{query_id}"
+                        signal_dicts = [_new_item_signal_to_dict(s) for s in classified]
+                        log_line(
+                            "alert",
+                            (
+                                f"New-items channel alert fired: {item.name} +{len(classified)} "
+                                "classified new listing(s); sending Discord webhook"
+                            ),
+                        )
+                        send_new_items_channel_notification(
+                            session,
+                            webhook_url=new_items_webhook_url,
+                            item_name=item.name,
+                            item_image_url=cheapest_icon_url,
+                            signals=signal_dicts,
+                            divines_per_mirror=divines_per_mirror,
+                            trade_url=trade_url,
+                        )
+                        for sig in classified:
+                            storage.upsert_new_item_alert_cooldown(
+                                variant_id=variant_id,
+                                fingerprint=sig.fingerprint,
+                                seller=sig.seller,
+                                last_cycle=cycle,
+                            )
+                except Exception as exc:  # noqa: BLE001
+                    log_line("warn", f"Failed new-items channel Discord webhook for {item.name}: {exc}")
+
         cheapest_text = "n/a" if low_mirror is None else f"{format_amount(low_mirror)} mirrors"
 
         # --- Alert check ---
@@ -3283,6 +3403,7 @@ def main() -> None:
     log_line("cycle", f"Loaded {len(alert_state)} persisted price-alert cooldown entries.")
     logged_sales_webhook_cfg = False
     logged_reprices_webhook_cfg = False
+    logged_new_items_webhook_cfg = False
     logged_db_export_webhook_cfg = False
     logged_ops_webhook_cfg = False
     logged_ml_retrain_cfg = False
@@ -3336,6 +3457,13 @@ def main() -> None:
             "Set DISCORD_WEBHOOK_URL_REPRICES for a separate channel.",
         )
 
+    if not load_discord_new_items_webhook_url_from_env():
+        log_line(
+            "warn",
+            "New-items channel notifications are disabled (no webhook secret set). "
+            "Set DISCORD_WEBHOOK_URL_NEW_ITEMS for the dedicated new-listings channel.",
+        )
+
     if not load_discord_db_export_webhook_url_from_env():
         log_line(
             "warn",
@@ -3379,6 +3507,10 @@ def main() -> None:
         alert_config = load_alert_config()
         sales_webhook_url, sales_webhook_dedicated = load_discord_sales_webhook_url_from_env()
         reprices_webhook_url, reprices_webhook_dedicated = load_discord_reprices_webhook_url_from_env()
+        new_items_webhook_url = load_discord_new_items_webhook_url_from_env()
+        new_items_config = load_new_items_config(
+            storage, webhook_configured=bool(new_items_webhook_url)
+        )
         sales_window_days = load_sales_discord_window_days(storage)
         db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
         ops_health_cfg = load_ops_health_config(storage, cfg.poll_interval)
@@ -3403,6 +3535,15 @@ def main() -> None:
                 msg += f"; watch-users={len(discord_watch_users)}"
             log_line("cycle", msg)
             logged_reprices_webhook_cfg = True
+        if new_items_webhook_url and not logged_new_items_webhook_cfg:
+            log_line(
+                "cycle",
+                (
+                    "New-items Discord webhook active; posts classified new listings "
+                    f"(cooldown={new_items_config.cooldown_cycles} cycles, no pings)"
+                ),
+            )
+            logged_new_items_webhook_cfg = True
         if db_export_webhook_url and not logged_db_export_webhook_cfg:
             log_line("cycle", "DB export webhook active; will upload a DB snapshot once every 24h.")
             logged_db_export_webhook_cfg = True
@@ -3483,6 +3624,8 @@ def main() -> None:
                 inference_fetch_cap=cfg.inference_fetch_cap,
                 sales_webhook_url=sales_webhook_url,
                 reprices_webhook_url=reprices_webhook_url,
+                new_items_webhook_url=new_items_webhook_url,
+                new_items_config=new_items_config,
                 sales_window_days=sales_window_days,
                 icon_urls_by_key=icon_urls_by_key,
                 discord_watch_users=discord_watch_users,

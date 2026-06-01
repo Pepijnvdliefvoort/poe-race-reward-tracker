@@ -28,6 +28,13 @@
   "notify_always_if_buy_currency_exalted": true,
 
   "sales_discord_window_days": 90,
+
+  "new_items_enabled": true,
+  "new_items_known_fp_cycles": 5,
+  "new_items_cooldown_cycles": 5,
+  "new_items_return_min_cycles": 3,
+  "new_items_include_transfers": true,
+  "new_items_min_market_listings": 1,
   "ml_shadow_enabled": true,
   "ml_hybrid_enabled": true,
   "ml_hybrid_alpha_heuristic": 0.5,

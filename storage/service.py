@@ -6,7 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from .db import Database
-from .repos import ConfigRepo, InferenceStateRepo, ItemsRepo, PollsRepo, PriceAlertCooldownRepo, SalesRepo
+from .repos import (
+    ConfigRepo,
+    InferenceStateRepo,
+    ItemsRepo,
+    ListingHistoryRepo,
+    NewItemAlertCooldownRepo,
+    PollsRepo,
+    PriceAlertCooldownRepo,
+    SalesRepo,
+)
 
 
 def _utc_now_iso() -> str:
@@ -261,6 +270,104 @@ class StorageService:
                 item_variant_id=int(variant_id),
                 last_alert_cycle=int(last_cycle),
                 last_alert_low_mirror=float(last_low_mirror),
+                updated_at_utc=_utc_now_iso(),
+            )
+            con.commit()
+        finally:
+            con.close()
+
+    def fingerprints_seen_for_variant(
+        self,
+        *,
+        variant_id: int,
+        since_cycle: int | None = None,
+        before_cycle: int | None = None,
+    ) -> set[str]:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            return ListingHistoryRepo(con).fingerprints_seen_for_variant(
+                item_variant_id=int(variant_id),
+                since_cycle=since_cycle,
+                before_cycle=before_cycle,
+            )
+        finally:
+            con.close()
+
+    def sellers_for_fingerprint_recent(
+        self,
+        *,
+        variant_id: int,
+        fingerprint: str,
+        since_cycle: int,
+        before_cycle: int | None = None,
+    ) -> set[str]:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            return ListingHistoryRepo(con).sellers_for_fingerprint_recent(
+                item_variant_id=int(variant_id),
+                fingerprint=str(fingerprint),
+                since_cycle=int(since_cycle),
+                before_cycle=before_cycle,
+            )
+        finally:
+            con.close()
+
+    def last_seen_cycle_for_listing_pair(
+        self,
+        *,
+        variant_id: int,
+        fingerprint: str,
+        seller: str,
+        before_cycle: int,
+    ) -> int | None:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            return ListingHistoryRepo(con).last_seen_cycle_for_pair(
+                item_variant_id=int(variant_id),
+                fingerprint=str(fingerprint),
+                seller=str(seller),
+                before_cycle=int(before_cycle),
+            )
+        finally:
+            con.close()
+
+    def get_new_item_alert_last_cycle(
+        self,
+        *,
+        variant_id: int,
+        fingerprint: str,
+        seller: str,
+    ) -> int | None:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            return NewItemAlertCooldownRepo(con).get_last_alert_cycle(
+                item_variant_id=int(variant_id),
+                fingerprint=str(fingerprint),
+                seller=str(seller),
+            )
+        finally:
+            con.close()
+
+    def upsert_new_item_alert_cooldown(
+        self,
+        *,
+        variant_id: int,
+        fingerprint: str,
+        seller: str,
+        last_cycle: int,
+    ) -> None:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            NewItemAlertCooldownRepo(con).upsert(
+                item_variant_id=int(variant_id),
+                fingerprint=str(fingerprint),
+                seller=str(seller),
+                last_alert_cycle=int(last_cycle),
                 updated_at_utc=_utc_now_iso(),
             )
             con.commit()

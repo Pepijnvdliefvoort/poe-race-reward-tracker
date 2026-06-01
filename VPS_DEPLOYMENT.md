@@ -55,6 +55,7 @@ sudo sh -c 'cat > /etc/poe-market-flips/secrets.env << EOF
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REPLACE_ME
 DISCORD_WEBHOOK_URL_SALES=https://discord.com/api/webhooks/REPLACE_ME_SALES
 DISCORD_WEBHOOK_URL_REPRICES=https://discord.com/api/webhooks/REPLACE_ME_REPRICES
+DISCORD_WEBHOOK_URL_NEW_ITEMS=https://discord.com/api/webhooks/REPLACE_ME_NEW_ITEMS
 DISCORD_WEBHOOK_URL_OPS=https://discord.com/api/webhooks/REPLACE_ME_OPS
 DISCORD_WEBHOOK_URL_DAILY_SUMMARY=https://discord.com/api/webhooks/REPLACE_ME_DAILY_SUMMARY
 EOF'
@@ -149,6 +150,7 @@ This repo includes:
 	- `DISCORD_WEBHOOK_URL` = your Discord webhook URL for price alerts
 	- `DISCORD_WEBHOOK_URL_SALES` (optional) = separate webhook for estimated-sale signal updates
 	- `DISCORD_WEBHOOK_URL_REPRICES` (optional) = separate webhook for repricing signal updates
+	- `DISCORD_WEBHOOK_URL_NEW_ITEMS` (optional) = separate webhook for all classified new listings (no pings)
 
 	- `DISCORD_WEBHOOK_URL_DB_EXPORT` (optional) = webhook used by the admin “Export DB” action
 	- `DISCORD_WEBHOOK_URL_OPS` (optional) = webhook for ops health alerts (API failures, stale polling, DB integrity)
@@ -173,7 +175,7 @@ Paste the contents of `vps_deploy_key` (private key) into `VPS_SSH_KEY` in GitHu
 ### How it works
 
 - On every push to `main` or `master`, GitHub Actions connects to your VPS over SSH.
-	- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL_SALES` / `DISCORD_WEBHOOK_URL_REPRICES` / `DISCORD_WEBHOOK_URL_DB_EXPORT` / `DISCORD_WEBHOOK_URL_OPS` / `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (if provided), restarts services, and reloads Caddy.
+	- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL_SALES` / `DISCORD_WEBHOOK_URL_REPRICES` / `DISCORD_WEBHOOK_URL_NEW_ITEMS` / `DISCORD_WEBHOOK_URL_DB_EXPORT` / `DISCORD_WEBHOOK_URL_OPS` / `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (if provided), restarts services, and reloads Caddy.
 
 `config.json` is intentionally untracked. Keep a server-local copy at `/opt/poe-market-flips/config.json` (for example by copying `config.example.json` once and editing values).
 
@@ -189,7 +191,7 @@ cp /tmp/poe-config.json.backup config.json
 
 Webhook secret notes:
 
-- If `DISCORD_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL_SALES`, `DISCORD_WEBHOOK_URL_REPRICES`, `DISCORD_WEBHOOK_URL_DB_EXPORT`, `DISCORD_WEBHOOK_URL_OPS`, or `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` is present in GitHub Secrets, it is synced on each deploy.
+- If `DISCORD_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL_SALES`, `DISCORD_WEBHOOK_URL_REPRICES`, `DISCORD_WEBHOOK_URL_NEW_ITEMS`, `DISCORD_WEBHOOK_URL_DB_EXPORT`, `DISCORD_WEBHOOK_URL_OPS`, or `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` is present in GitHub Secrets, it is synced on each deploy.
 - If a value is missing, deploy keeps any existing matching line in `/etc/poe-market-flips/secrets.env` unchanged.
 
 ### First test

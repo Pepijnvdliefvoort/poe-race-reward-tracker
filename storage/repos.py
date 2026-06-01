@@ -736,6 +736,158 @@ class SalesRepo:
         return row is not None
 
 
+class ListingHistoryRepo:
+    """Fingerprint / seller history from persisted listing snapshots."""
+
+    def __init__(self, con: sqlite3.Connection) -> None:
+        self._con = con
+
+    def fingerprints_seen_for_variant(
+        self,
+        *,
+        item_variant_id: int,
+        since_cycle: int | None = None,
+        before_cycle: int | None = None,
+    ) -> set[str]:
+        clauses = [
+            "ip.item_variant_id = ?",
+            "ls.fingerprint IS NOT NULL",
+            "TRIM(ls.fingerprint) != ''",
+        ]
+        params: list[Any] = [int(item_variant_id)]
+        join_poll_runs = since_cycle is not None or before_cycle is not None
+        if since_cycle is not None:
+            clauses.append("pr.cycle_number >= ?")
+            params.append(int(since_cycle))
+        if before_cycle is not None:
+            clauses.append("pr.cycle_number < ?")
+            params.append(int(before_cycle))
+        sql = """
+            SELECT DISTINCT ls.fingerprint
+            FROM listing_snapshots ls
+            JOIN item_polls ip ON ip.id = ls.item_poll_id
+        """
+        if join_poll_runs:
+            sql += " JOIN poll_runs pr ON pr.id = ip.poll_run_id"
+        sql += " WHERE " + " AND ".join(clauses)
+        rows = self._con.execute(sql, tuple(params)).fetchall()
+        return {str(r["fingerprint"]).strip() for r in rows if str(r["fingerprint"] or "").strip()}
+
+    def sellers_for_fingerprint_recent(
+        self,
+        *,
+        item_variant_id: int,
+        fingerprint: str,
+        since_cycle: int,
+        before_cycle: int | None = None,
+    ) -> set[str]:
+        fp = str(fingerprint or "").strip()
+        if not fp:
+            return set()
+        clauses = [
+            "ip.item_variant_id = ?",
+            "ls.fingerprint = ?",
+            "pr.cycle_number >= ?",
+            "TRIM(ls.seller_name) != ''",
+        ]
+        params: list[Any] = [int(item_variant_id), fp, int(since_cycle)]
+        if before_cycle is not None:
+            clauses.append("pr.cycle_number < ?")
+            params.append(int(before_cycle))
+        rows = self._con.execute(
+            f"""
+            SELECT DISTINCT ls.seller_name
+            FROM listing_snapshots ls
+            JOIN item_polls ip ON ip.id = ls.item_poll_id
+            JOIN poll_runs pr ON pr.id = ip.poll_run_id
+            WHERE {" AND ".join(clauses)}
+            """,
+            tuple(params),
+        ).fetchall()
+        return {str(r["seller_name"]).strip() for r in rows if str(r["seller_name"] or "").strip()}
+
+    def last_seen_cycle_for_pair(
+        self,
+        *,
+        item_variant_id: int,
+        fingerprint: str,
+        seller: str,
+        before_cycle: int,
+    ) -> int | None:
+        """Latest poll cycle where (fingerprint, seller) appeared in snapshots, before ``before_cycle``."""
+        fp = str(fingerprint or "").strip()
+        seller_name = str(seller or "").strip()
+        if not fp or not seller_name:
+            return None
+        row = self._con.execute(
+            """
+            SELECT MAX(pr.cycle_number) AS last_cycle
+            FROM listing_snapshots ls
+            JOIN item_polls ip ON ip.id = ls.item_poll_id
+            JOIN poll_runs pr ON pr.id = ip.poll_run_id
+            WHERE ip.item_variant_id = ?
+              AND ls.fingerprint = ?
+              AND ls.seller_name = ?
+              AND pr.cycle_number < ?
+            """,
+            (int(item_variant_id), fp, seller_name, int(before_cycle)),
+        ).fetchone()
+        if not row or row["last_cycle"] is None:
+            return None
+        return int(row["last_cycle"])
+
+
+class NewItemAlertCooldownRepo:
+    def __init__(self, con: sqlite3.Connection) -> None:
+        self._con = con
+
+    def get_last_alert_cycle(
+        self,
+        *,
+        item_variant_id: int,
+        fingerprint: str,
+        seller: str,
+    ) -> int | None:
+        row = self._con.execute(
+            """
+            SELECT last_alert_cycle
+            FROM new_item_alert_cooldown
+            WHERE item_variant_id = ? AND fingerprint = ? AND seller = ?
+            """,
+            (int(item_variant_id), str(fingerprint), str(seller)),
+        ).fetchone()
+        if not row:
+            return None
+        return int(row["last_alert_cycle"])
+
+    def upsert(
+        self,
+        *,
+        item_variant_id: int,
+        fingerprint: str,
+        seller: str,
+        last_alert_cycle: int,
+        updated_at_utc: str,
+    ) -> None:
+        self._con.execute(
+            """
+            INSERT INTO new_item_alert_cooldown(
+                item_variant_id, fingerprint, seller, last_alert_cycle, updated_at_utc
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(item_variant_id, fingerprint, seller) DO UPDATE SET
+                last_alert_cycle = excluded.last_alert_cycle,
+                updated_at_utc = excluded.updated_at_utc
+            """,
+            (
+                int(item_variant_id),
+                str(fingerprint),
+                str(seller),
+                int(last_alert_cycle),
+                str(updated_at_utc),
+            ),
+        )
+
+
 class PriceAlertCooldownRepo:
     def __init__(self, con: sqlite3.Connection) -> None:
         self._con = con

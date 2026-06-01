@@ -1930,10 +1930,11 @@ function setupAlertTestTool() {
   const salesCb = document.getElementById("adminAlertTypeSales");
   const snipeCb = document.getElementById("adminAlertTypeSnipe");
   const repriceCb = document.getElementById("adminAlertTypeReprice");
+  const newItemsCb = document.getElementById("adminAlertTypeNewItems");
   const preview = document.getElementById("adminAlertTestPreview");
   const sendBtn = document.getElementById("adminAlertTestSendBtn");
   const hint = document.getElementById("adminAlertTestHint");
-  if (!itemSelect || !variantSelect || !salesCb || !snipeCb || !repriceCb || !preview || !sendBtn || !hint) return;
+  if (!itemSelect || !variantSelect || !salesCb || !snipeCb || !repriceCb || !newItemsCb || !preview || !sendBtn || !hint) return;
 
   const setHint = (text, isWarn = false) => {
     hint.textContent = text || "";
@@ -1954,6 +1955,7 @@ function setupAlertTestTool() {
     if (salesCb.checked) out.push("sales");
     if (snipeCb.checked) out.push("snipe");
     if (repriceCb.checked) out.push("reprice");
+    if (newItemsCb.checked) out.push("new_items");
     return out;
   };
 
@@ -2001,6 +2003,7 @@ function setupAlertTestTool() {
   salesCb.addEventListener("change", renderPreview);
   snipeCb.addEventListener("change", renderPreview);
   repriceCb.addEventListener("change", renderPreview);
+  newItemsCb.addEventListener("change", renderPreview);
 
   sendBtn.addEventListener("click", async () => {
     const v = selectedVariant();

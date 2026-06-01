@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 def migration_001_initial() -> str:
@@ -284,4 +284,23 @@ def migration_012_item_variants_image_filter() -> str:
 def migration_013_inference_pending_jitter_grace() -> str:
     """Applied via a Python idempotent migration in `storage/db.py`."""
     return ""
+
+
+def migration_014_new_item_alert_cooldown() -> str:
+    """Per (variant, fingerprint, seller) cooldown for new-items Discord channel."""
+    return """
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS new_item_alert_cooldown (
+  item_variant_id INTEGER NOT NULL REFERENCES item_variants(id) ON DELETE CASCADE,
+  fingerprint TEXT NOT NULL,
+  seller TEXT NOT NULL,
+  last_alert_cycle INTEGER NOT NULL,
+  updated_at_utc TEXT NOT NULL,
+  PRIMARY KEY (item_variant_id, fingerprint, seller)
+);
+
+CREATE INDEX IF NOT EXISTS idx_new_item_alert_cooldown_variant
+  ON new_item_alert_cooldown(item_variant_id);
+"""
 

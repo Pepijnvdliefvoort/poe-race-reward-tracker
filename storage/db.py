@@ -22,6 +22,7 @@ from .schema import (
     migration_011_listing_snapshots_count,
     migration_012_item_variants_image_filter,
     migration_013_inference_pending_jitter_grace,
+    migration_014_new_item_alert_cooldown,
 )
 
 
@@ -125,6 +126,7 @@ class Database:
             (11, migration_011_listing_snapshots_count()),
             (12, migration_012_item_variants_image_filter()),
             (13, migration_013_inference_pending_jitter_grace()),
+            (14, migration_014_new_item_alert_cooldown()),
         ]
 
         for version, sql in migrations:
