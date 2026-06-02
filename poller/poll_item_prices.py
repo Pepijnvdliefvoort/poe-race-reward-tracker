@@ -681,7 +681,13 @@ def load_new_items_config(storage: StorageService, *, webhook_configured: bool) 
     )
 
 
-def _new_item_signal_to_dict(sig: NewItemSignal) -> dict[str, Any]:
+def _new_item_signal_to_dict(sig: NewItemSignal, *, cycle: int) -> dict[str, Any]:
+    cycles_absent: int | None = None
+    if sig.last_seen_cycle is not None:
+        try:
+            cycles_absent = max(0, int(cycle) - int(sig.last_seen_cycle))
+        except Exception:
+            cycles_absent = None
     return {
         "kind": sig.kind,
         "fingerprint": sig.fingerprint,
@@ -691,6 +697,8 @@ def _new_item_signal_to_dict(sig: NewItemSignal) -> dict[str, Any]:
         "price_currency": sig.price_currency,
         "is_instant": sig.is_instant,
         "from_seller": sig.from_seller,
+        "last_seen_cycle": sig.last_seen_cycle,
+        "cycles_absent": cycles_absent,
         "other_sellers": list(sig.other_sellers),
     }
 
@@ -3172,7 +3180,7 @@ def run_cycle(
                     )
                     if classified:
                         trade_url = f"https://www.pathofexile.com/trade/search/{DEFAULT_LEAGUE}/{query_id}"
-                        signal_dicts = [_new_item_signal_to_dict(s) for s in classified]
+                        signal_dicts = [_new_item_signal_to_dict(s, cycle=cycle) for s in classified]
                         log_line(
                             "alert",
                             (

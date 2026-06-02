@@ -541,6 +541,13 @@ def _format_new_item_signal_line(
     from_seller = str(signal.get("from_seller") or "").strip()
     if from_seller:
         parts.append(f"(from **{from_seller}**)")
+    if kind == "returning_after_absence":
+        try:
+            cycles_ago = int(signal.get("cycles_absent") or 0)
+        except Exception:
+            cycles_ago = 0
+        if cycles_ago > 0:
+            parts.append(f"(last seen {cycles_ago} cycles ago)")
     other = signal.get("other_sellers")
     if isinstance(other, list) and other:
         names = ", ".join(str(x) for x in other[:4] if str(x).strip())
