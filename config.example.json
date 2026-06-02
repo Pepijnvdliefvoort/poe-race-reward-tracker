@@ -35,6 +35,7 @@
   "new_items_return_min_cycles": 3,
   "new_items_include_transfers": true,
   "new_items_min_market_listings": 1,
+  
   "ml_shadow_enabled": true,
   "ml_hybrid_enabled": true,
   "ml_hybrid_alpha_heuristic": 0.5,

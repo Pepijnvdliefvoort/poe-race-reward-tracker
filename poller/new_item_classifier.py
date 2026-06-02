@@ -50,6 +50,7 @@ class NewItemSignal:
     price_currency: str | None
     is_instant: bool
     from_seller: str | None = None
+    last_seen_cycle: int | None = None
     other_sellers: list[str] = field(default_factory=list)
 
 
@@ -214,6 +215,12 @@ def classify_new_items(
         if not meta:
             continue
 
+        # New-items channel is intended for actionable purchases; ignore non-instant listings
+        # (seller can be offline / require manual trade, and these frequently vanish).
+        is_instant = bool(meta.get("isInstant"))
+        if not is_instant:
+            continue
+
         price = _signal_price(meta)
         if price is None:
             continue
@@ -235,6 +242,7 @@ def classify_new_items(
         from_seller = transfer_map.get((fp, seller))
         if from_seller and config.include_transfers:
             kind = "transfer_listing"
+            last_seen = None
             other_sellers: list[str] = []
         else:
             if from_seller and not config.include_transfers:
@@ -276,8 +284,9 @@ def classify_new_items(
                 mirror_equiv=price,
                 price_amount=meta.get("priceAmount") if isinstance(meta.get("priceAmount"), (int, float)) else None,
                 price_currency=str(meta.get("priceCurrency") or "") or None,
-                is_instant=bool(meta.get("isInstant")),
+                is_instant=is_instant,
                 from_seller=from_seller,
+                last_seen_cycle=last_seen,
                 other_sellers=other_sellers,
             )
         )
