@@ -517,47 +517,16 @@ def send_new_item_notification(
     resp.raise_for_status()
 
 
-_NEW_ITEM_KIND_LABELS: dict[str, str] = {
-    "brand_new_roll": "Brand-new roll",
-    "new_seller_known_roll": "Known roll, new seller",
-    "new_listing_row": "New listing",
-    "transfer_listing": "Transfer listing",
-    "returning_after_absence": "Returning listing",
-}
-
-
 def _format_new_item_signal_line(
     signal: dict[str, Any],
     *,
     divines_per_mirror: float | None,
 ) -> str:
-    kind = str(signal.get("kind") or "new_listing_row")
-    label = _NEW_ITEM_KIND_LABELS.get(kind, kind.replace("_", " ").title())
-    seller = str(signal.get("seller") or "unknown")
+    seller = str(signal.get("seller") or "unknown").strip() or "unknown"
     price_txt = _fmt_mirror_equiv(signal.get("mirror_equiv"), divines_per_mirror=divines_per_mirror)
     if not price_txt:
         price_txt = "unknown price"
-    parts = [f"**{label}** — **{seller}** @ {price_txt}"]
-    from_seller = str(signal.get("from_seller") or "").strip()
-    if from_seller:
-        parts.append(f"(from **{from_seller}**)")
-    if kind == "returning_after_absence":
-        try:
-            cycles_ago = int(signal.get("cycles_absent") or 0)
-        except Exception:
-            cycles_ago = 0
-        if cycles_ago > 0:
-            parts.append(f"(last seen {cycles_ago} cycles ago)")
-    other = signal.get("other_sellers")
-    if isinstance(other, list) and other:
-        names = ", ".join(str(x) for x in other[:4] if str(x).strip())
-        if names:
-            suffix = f" (+{len(other) - 4} more)" if len(other) > 4 else ""
-            parts.append(f"(recently: {names}{suffix})")
-    fp_short = _fmt_short_fp(signal.get("fingerprint"))
-    if fp_short:
-        parts.append(f"`{fp_short}`")
-    return " ".join(parts)
+    return f"New item - **{seller}** - {price_txt}"
 
 
 def build_new_items_channel_embed(
@@ -572,7 +541,6 @@ def build_new_items_channel_embed(
         f"**This poll:** +{len(signals)} new listing signal" + ("" if len(signals) == 1 else "s"),
     ]
     lines.append("")
-    lines.append("**New listings:**")
     max_lines = 12
     for sig in signals[:max_lines]:
         if isinstance(sig, dict):
