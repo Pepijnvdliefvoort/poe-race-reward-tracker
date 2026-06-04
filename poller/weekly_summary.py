@@ -1,4 +1,4 @@
-"""Daily recap: aggregate SQLite stats, render charts, post to Discord."""
+"""Weekly recap: aggregate SQLite stats, render charts, post to Discord."""
 
 from __future__ import annotations
 
@@ -16,7 +16,9 @@ import requests
 from env_loader import load_local_env
 from storage.service import StorageService
 
-_DAILY_SUMMARY_WEBHOOK_ENV_KEYS = (
+_WEEKLY_SUMMARY_WEBHOOK_ENV_KEYS = (
+    "DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY",
+    "POE_DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY",
     "DISCORD_WEBHOOK_URL_DAILY_SUMMARY",
     "POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY",
     "DISCORD_WEBHOOK_URL",
@@ -24,15 +26,15 @@ _DAILY_SUMMARY_WEBHOOK_ENV_KEYS = (
 )
 
 
-def resolve_daily_summary_webhook_url(*, cfg_url: str = "") -> str:
+def resolve_weekly_summary_webhook_url(*, cfg_url: str = "") -> str:
     """
-    Resolve the daily-recap webhook from config, then repo ``.env`` files, then os.environ.
+    Resolve the weekly-recap webhook from config, then repo ``.env`` files, then os.environ.
     """
     url = (cfg_url or "").strip()
     if url:
         return url
     load_local_env()
-    for key in _DAILY_SUMMARY_WEBHOOK_ENV_KEYS:
+    for key in _WEEKLY_SUMMARY_WEBHOOK_ENV_KEYS:
         value = os.getenv(key, "").strip()
         if value:
             return value
@@ -78,11 +80,12 @@ def _fmt_time_ampm(dt: datetime) -> str:
 
 
 @dataclass(frozen=True)
-class DailySummaryConfig:
+class WeeklySummaryConfig:
     enabled: bool = True
     webhook_url: str = ""
     tz_offset_minutes: int = 120  # GMT+2 default
-    schedule_hour: int = 8
+    schedule_weekday: int = 6  # 0=Mon ... 6=Sun
+    schedule_hour: int = 12
     schedule_minute: int = 0
     top_items_limit: int = 8
 
@@ -94,12 +97,12 @@ class SummaryPeriod:
     end_utc: datetime
 
 
-def _period_last_24_hours(*, end_utc: datetime | None = None) -> SummaryPeriod:
-    """Rolling window: the 24 hours ending at ``end_utc`` (default: now)."""
+def _period_last_7_days(*, end_utc: datetime | None = None) -> SummaryPeriod:
+    """Rolling window: the 7 days ending at ``end_utc`` (default: now)."""
     end = end_utc or _utc_now()
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
-    start = end - timedelta(hours=24)
+    start = end - timedelta(days=7)
     label = (
         f"{start.strftime('%b %d')} {_fmt_time_ampm(start)} – "
         f"{end.strftime('%b %d')} {_fmt_time_ampm(end)} UTC"
@@ -437,14 +440,6 @@ def _mirrors_cumulative_from_zero(
     return plot_times, plot_cum
 
 
-def _rule_label(rule: str) -> str:
-    if rule == "confirmed_transfer":
-        return "Confirmed transfer"
-    if rule == "likely_instant_sale":
-        return "Likely instant sale"
-    return rule.replace("_", " ").title()
-
-
 # Dashboard theme (web/css/variables.css)
 _DASH = {
     "bg": "#090c12",
@@ -515,7 +510,7 @@ def _window_time_ticks(start_utc: datetime, end_utc: datetime) -> list[datetime]
     if span_hours <= 0:
         return [start_utc]
 
-    for step in (2, 3, 4, 6, 8, 12):
+    for step in (2, 3, 4, 6, 8, 12, 24, 48):
         n = int(span_hours // step) + 1
         if 4 <= n <= 8:
             step_hours = step
@@ -615,7 +610,7 @@ def _chart_top_items(*, data: dict[str, Any], path: Path, plt: Any, top_n: int) 
         ax.set_xlim(0, ymax * 1.18 if ymax else 1)
         _style_amount_axis(ax, axis="x")
     else:
-        _empty_ax(ax, "No sales in the last 24 hours")
+        _empty_ax(ax, "No sales in the last 7 days")
     fig.subplots_adjust(left=0.28, right=0.97, top=0.84, bottom=0.10)
     _save_figure(fig, path, plt)
 
@@ -678,7 +673,7 @@ def _chart_reprice_trend(*, data: dict[str, Any], path: Path, plt: Any) -> None:
         )
         _style_integer_axis(ax, axis="y")
     else:
-        _empty_ax(ax, "No reprices in the last 24 hours")
+        _empty_ax(ax, "No reprices in the last 7 days")
     fig.subplots_adjust(left=0.08, right=0.97, top=0.84, bottom=0.18)
     _save_figure(fig, path, plt)
 
@@ -706,7 +701,7 @@ def _chart_mirrors_moved(*, data: dict[str, Any], path: Path, plt: Any) -> None:
         _style_amount_axis(ax, axis="y")
         ax.margins(x=0)
     else:
-        _empty_ax(ax, "No sales in the last 24 hours")
+        _empty_ax(ax, "No sales in the last 7 days")
     fig.subplots_adjust(left=0.08, right=0.97, top=0.84, bottom=0.14)
     _save_figure(fig, path, plt)
 
@@ -749,7 +744,7 @@ def _build_embed(*, data: dict[str, Any]) -> dict[str, Any]:
     reprice: dict[str, Any] = data.get("reprice") or {}
 
     lines = [
-        f"**Window:** last 24 hours ({period.label})",
+        f"**Window:** last 7 days ({period.label})",
         f"**Est. sales:** {_fmt_mirrors(total_volume)} ({total_sales} sale{'s' if total_sales != 1 else ''})",
         f"**Mirrors moved (sales):** {_fmt_mirrors(float(mirrors.get('sales_mirrors') or 0))}",
     ]
@@ -783,7 +778,7 @@ def _build_embed(*, data: dict[str, Any]) -> dict[str, Any]:
                 )
 
     return {
-        "title": "Daily recap (24h)",
+        "title": "Weekly recap (7d)",
         "description": "\n".join(lines)[:4096],
         "color": 0xFF7A2F,
         "footer": {"text": "poe-market-flips"},
@@ -806,12 +801,9 @@ def _chart_message_content(path: Path) -> str:
     return ""
 
 
-def _forum_thread_name(*, period: SummaryPeriod) -> str:
+def _forum_thread_name(*, week_key: str) -> str:
     """Discord thread_name limit is 100 characters."""
-    end = period.end_utc
-    if end.tzinfo is None:
-        end = end.replace(tzinfo=timezone.utc)
-    return f"Daily recap · {end.strftime('%Y-%m-%d')}"[:100]
+    return f"Weekly recap · {week_key}"[:100]
 
 
 def _webhook_execute_url(
@@ -881,11 +873,12 @@ def _discord_webhook_post_message(
 def _send_summary_for_period(
     *,
     storage: StorageService,
-    cfg: DailySummaryConfig,
+    cfg: WeeklySummaryConfig,
     period: SummaryPeriod,
+    week_key: str,
     log: callable,
 ) -> None:
-    webhook_url = resolve_daily_summary_webhook_url(cfg_url=cfg.webhook_url)
+    webhook_url = resolve_weekly_summary_webhook_url(cfg_url=cfg.webhook_url)
     if not webhook_url:
         return
 
@@ -901,12 +894,12 @@ def _send_summary_for_period(
 
     embed = _build_embed(data=data)
     ts = int(_utc_now().timestamp())
-    content = f"**24h recap** — <t:{ts}:F>"
+    content = f"**7d recap** — <t:{ts}:F>"
 
     starter = _discord_webhook_post_message(
         webhook_url=webhook_url,
         content=content,
-        thread_name=_forum_thread_name(period=period),
+        thread_name=_forum_thread_name(week_key=week_key),
         wait=True,
         timeout=30.0,
     )
@@ -914,7 +907,7 @@ def _send_summary_for_period(
     thread_id = _thread_id_from_webhook_message_response(starter)
     if thread_id is None:
         raise RuntimeError(
-            "Daily recap starter posted but Discord did not return a forum thread id; "
+            "Weekly recap starter posted but Discord did not return a forum thread id; "
             "ensure the webhook targets a forum or media channel."
         )
 
@@ -944,104 +937,132 @@ def _send_summary_for_period(
     log(
         "cycle",
         (
-            f"Posted daily recap to Discord for {period.label} "
-            f"(sales={data['total_sales']}, volume={_fmt_mirrors(data['total_volume'])}, "
+            f"Posted weekly recap to Discord for {period.label} "
+            f"(week={week_key}, sales={data['total_sales']}, volume={_fmt_mirrors(data['total_volume'])}, "
             f"charts={len(chart_paths)}, forum_thread={bool(thread_id)})."
         ),
     )
 
 
-def maybe_send_daily_summary_to_discord(
+def _week_key_for_local_now(*, cfg: WeeklySummaryConfig, now_utc: datetime | None = None) -> tuple[str, datetime]:
+    """ISO week key for the scheduled week containing ``now`` in local TZ."""
+    tz = _tz_from_offset_minutes(cfg.tz_offset_minutes)
+    now_utc = now_utc or _utc_now()
+    now_local = now_utc.astimezone(tz)
+    schedule_weekday = max(0, min(6, int(cfg.schedule_weekday)))
+    days_since_schedule = (now_local.weekday() - schedule_weekday) % 7
+    scheduled_date = now_local.date() - timedelta(days=days_since_schedule)
+    iso_year, iso_week, _iso_weekday = scheduled_date.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}", now_utc
+
+
+def maybe_send_weekly_summary_to_discord(
     *,
     storage: StorageService,
-    cfg: DailySummaryConfig,
+    cfg: WeeklySummaryConfig,
     log: callable,
 ) -> None:
     """
-    Post a daily recap once per local calendar day after the configured schedule.
+    Post a weekly recap once per ISO week after the configured schedule.
 
-    Covers the **last 24 hours** ending at send time. State is stored in SQLite `daily_summary`.
+    Covers the **last 7 days** ending at send time. State is stored in SQLite `weekly_summary`.
     """
     if not cfg.enabled:
         return
-    if not resolve_daily_summary_webhook_url(cfg_url=cfg.webhook_url):
+    if not resolve_weekly_summary_webhook_url(cfg_url=cfg.webhook_url):
         return
 
     tz = _tz_from_offset_minutes(cfg.tz_offset_minutes)
     now_utc = _utc_now()
     now_local = now_utc.astimezone(tz)
-    today_local = now_local.date()
-    after_schedule = (now_local.hour, now_local.minute) >= (
+
+    schedule_weekday = max(0, min(6, int(cfg.schedule_weekday)))
+    days_since_schedule = (now_local.weekday() - schedule_weekday) % 7
+    scheduled_date = now_local.date() - timedelta(days=days_since_schedule)
+    after_schedule = days_since_schedule > 0 or (now_local.hour, now_local.minute) >= (
         int(cfg.schedule_hour),
         int(cfg.schedule_minute),
     )
     if not after_schedule:
         return
 
-    state = storage.get_config(key="daily_summary") or {}
-    last_sent_local_date = str(state.get("last_sent_local_date", "")).strip()
-    if last_sent_local_date == today_local.isoformat():
+    iso_year, iso_week, _iso_weekday = scheduled_date.isocalendar()
+    week_key = f"{iso_year}-W{iso_week:02d}"
+
+    state = storage.get_config(key="weekly_summary") or {}
+    last_sent_week_key = str(state.get("last_sent_week_key", "")).strip()
+    if last_sent_week_key == week_key:
         return
 
-    period = _period_last_24_hours(end_utc=now_utc)
+    period = _period_last_7_days(end_utc=now_utc)
     try:
-        _send_summary_for_period(storage=storage, cfg=cfg, period=period, log=log)
+        _send_summary_for_period(
+            storage=storage,
+            cfg=cfg,
+            period=period,
+            week_key=week_key,
+            log=log,
+        )
     except Exception as exc:  # noqa: BLE001
-        log("warn", f"Daily recap Discord post failed: {exc}")
+        log("warn", f"Weekly recap Discord post failed: {exc}")
         return
 
     storage.set_config(
-        key="daily_summary",
+        key="weekly_summary",
         value={
             "last_sent_at_utc": now_utc.isoformat(),
-            "last_sent_local_date": today_local.isoformat(),
+            "last_sent_week_key": week_key,
             "last_summary_period": period.label,
             "tz_offset_minutes": int(cfg.tz_offset_minutes),
+            "schedule_weekday": schedule_weekday,
             "schedule_hour": int(cfg.schedule_hour),
             "schedule_minute": int(cfg.schedule_minute),
         },
     )
 
 
-def send_daily_summary_to_discord_now(
+def send_weekly_summary_to_discord_now(
     *,
     storage: StorageService,
-    cfg: DailySummaryConfig,
+    cfg: WeeklySummaryConfig,
     period: SummaryPeriod | None = None,
 ) -> dict[str, Any]:
-    """Manual send (e.g. admin); defaults to the last 24 hours ending now."""
-    webhook_url = resolve_daily_summary_webhook_url(cfg_url=cfg.webhook_url)
+    """Manual send (e.g. admin); defaults to the last 7 days ending now."""
+    webhook_url = resolve_weekly_summary_webhook_url(cfg_url=cfg.webhook_url)
     if not webhook_url:
         return {
             "ok": False,
             "error": (
-                "Daily recap webhook is not configured. "
-                "Set DISCORD_WEBHOOK_URL_DAILY_SUMMARY or DISCORD_WEBHOOK_URL in .env "
-                "(or export it in the shell before running)."
+                "Weekly recap webhook is not configured. "
+                "Set DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY, DISCORD_WEBHOOK_URL_DAILY_SUMMARY, "
+                "or DISCORD_WEBHOOK_URL in .env (or export it in the shell before running)."
             ),
         }
 
     if period is None:
-        period = _period_last_24_hours()
+        period = _period_last_7_days()
+
+    now_utc = _utc_now()
+    week_key, _ = _week_key_for_local_now(cfg=cfg, now_utc=now_utc)
 
     try:
         _send_summary_for_period(
             storage=storage,
             cfg=cfg,
             period=period,
+            week_key=week_key,
             log=lambda _level, _msg: None,
         )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
 
-    now_utc = _utc_now()
     storage.set_config(
-        key="daily_summary",
+        key="weekly_summary",
         value={
             "last_sent_at_utc": now_utc.isoformat(),
-            "last_sent_local_date": now_utc.astimezone(_tz_from_offset_minutes(cfg.tz_offset_minutes)).date().isoformat(),
+            "last_sent_week_key": week_key,
             "last_summary_period": period.label,
             "manual": True,
         },
     )
-    return {"ok": True, "period": period.label}
+    return {"ok": True, "period": period.label, "week_key": week_key}
