@@ -348,7 +348,7 @@ The project can bootstrap this from `config.json` once if no DB config exists.
 
 Public GET routes:
 
-- `/api/prices` — optional `?sinceMs=<epoch_ms>` (windowed history + latest poll per item) or `?full=1` (all history; used when chart preset is “all time”). Responses are cached in-process for 30s per window bucket.
+- `/api/prices` — optional `?sinceMs=<epoch_ms>` (windowed history + latest poll per item) or `?full=1` (all history; used when chart preset is “all time”). Poll history in each item is LTTB-downsampled (default 250 points/variant; `POE_PRICES_CHART_MAX_POINTS`) with `inferenceWindow` pre-aggregates for the chart span. Responses are cached in-process per window bucket (`server/price_cache.py`).
 - `/api/config` (GET)
 - `/api/listings?queryId=...` (or `variantId`)
 - `/api/account-compare`

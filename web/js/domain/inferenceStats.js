@@ -14,7 +14,20 @@ function inTimeWindow(point, cutoffMs) {
 }
 
 /**
- * @param {object[]} points - item.points from API (full series)
+ * Prefer server-precomputed totals when present (accurate after poll downsampling).
+ * @param {object} item - API item row
+ * @param {number} spanMs - getChartTimespanMs(); Infinity means entire history
+ */
+export function aggregateInferenceSignalsForItem(item, spanMs) {
+  const precomputed = item?.inferenceWindow;
+  if (precomputed && typeof precomputed === "object") {
+    return precomputed;
+  }
+  return aggregateInferenceSignalsOverWindow(item?.points, spanMs);
+}
+
+/**
+ * @param {object[]} points - item.points from API
  * @param {number} spanMs - getChartTimespanMs(); Infinity means entire history
  */
 export function aggregateInferenceSignalsOverWindow(points, spanMs) {
@@ -85,7 +98,7 @@ export function estimatedSoldForItemWindow(item, spanMs) {
   if (Array.isArray(salesRows)) {
     return countSalesRowsOverWindow(salesRows, spanMs);
   }
-  const agg = aggregateInferenceSignalsOverWindow(item?.points, spanMs);
+  const agg = aggregateInferenceSignalsForItem(item, spanMs);
   return estimatedSoldCount(agg);
 }
 

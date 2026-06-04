@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from server.prices_series import apply_chart_series_limits
 from storage.db import Database
 from storage.repos import ConfigRepo, ItemsRepo, PollsRepo, VisitorsRepo
 
@@ -514,6 +515,11 @@ class ServerStorage:
 
             item_list = list(items.values())
             for it in item_list:
+                apply_chart_series_limits(
+                    it,
+                    since_ms=since_ms,
+                    full_history=full_history,
+                )
                 _attach_last_known_mirror_prices(it)
             item_list.sort(
                 key=lambda it: (
