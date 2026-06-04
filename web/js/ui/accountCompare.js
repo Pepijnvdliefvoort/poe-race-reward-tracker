@@ -125,6 +125,16 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function setCompareStatus(text, ok = true) {
+  const dot = document.getElementById("statusDot");
+  const label = document.getElementById("statusText");
+  if (label) label.textContent = text;
+  if (dot) {
+    dot.classList.remove("ok", "warn", "err");
+    dot.classList.add(ok ? "ok" : "warn");
+  }
+}
+
 async function fetchCompare({ accounts, mode, topN }) {
   const params = new URLSearchParams();
   params.set("accounts", accounts.join(","));
@@ -827,6 +837,7 @@ export function initAccountCompare() {
       redrawCompareTable();
       saveComparePage();
       renderSummary(summaryEl, hintEl, payload);
+      setCompareStatus("Market data updated", true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       summaryEl.textContent = "Account compare unavailable.";
@@ -834,6 +845,7 @@ export function initAccountCompare() {
       lastPayload = null;
       thead.innerHTML = "";
       tbody.innerHTML = "";
+      setCompareStatus("Market data unavailable", false);
     } finally {
       setBusy(false);
     }

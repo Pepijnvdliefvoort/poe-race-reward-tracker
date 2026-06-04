@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alt art holdings — PoE Race Rewards</title>
+    <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
+    <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./css/variables.css" />
+    <link rel="stylesheet" href="./css/layout.css" />
+    <link rel="stylesheet" href="./css/filters.css" />
+    <link rel="stylesheet" href="./css/footer.css" />
+    <link rel="stylesheet" href="./css/mobile.css" />
+    <link rel="stylesheet" href="./css/compare.css" />
+    <link rel="stylesheet" href="./css/alt-arts.css" />
+    <script type="module" src="./js/altArtsPage.js" defer></script>
+  </head>
+  <body class="page-alt-arts">
+    <div class="bg-orb bg-orb-a" aria-hidden="true"></div>
+    <div class="bg-orb bg-orb-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Tools</p>
+        <h1>Alt art holdings</h1>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-actions">
+          <nav class="topbar-nav" aria-label="Tools">
+            <a href="/" class="topbar-nav-link">Dashboard</a>
+            <a href="/compare" class="topbar-nav-link">Compare</a>
+            <a href="/alt-arts" class="topbar-nav-link" aria-current="page">Alt arts</a>
+          </nav>
+          <span class="topbar-actions-filters-gap" aria-hidden="true"></span>
+          <button id="themeToggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+            <span class="theme-icon">🌙</span>
+          </button>
+        </div>
+        <div class="meta" id="meta">
+          <span id="altArtsStatusDot" class="status-dot ok"></span>
+          <span id="altArtsStatusText">Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="compare-panel alt-arts-panel" id="altArtsPanel" aria-label="Alt art holdings">
+        <div class="compare-head">
+          <div>
+            <p class="eyebrow">Portfolio</p>
+            <h2 class="compare-title">Purchase &amp; profit tracker</h2>
+            <p class="compare-subtitle">
+              Track what you paid per lot (mirrors). Pick the item, then click the art image for your variant. Market floor comes from live poll data.
+            </p>
+          </div>
+        </div>
+
+        <div id="altArtsSummary" class="alt-arts-summary" aria-live="polite"></div>
+
+        <form id="altArtsAddForm" class="alt-arts-add-form" autocomplete="off">
+          <div class="alt-arts-item-picker">
+            <label class="compare-control alt-arts-field alt-arts-field--item">
+              <span class="compare-label">Item</span>
+              <input
+                id="altArtsItemInput"
+                class="compare-input"
+                type="text"
+                list="altArtsItemDatalist"
+                spellcheck="false"
+                required
+                placeholder="e.g. Demigod's Dominance"
+              />
+              <datalist id="altArtsItemDatalist"></datalist>
+            </label>
+            <label class="compare-control alt-arts-field alt-arts-field--purchase">
+              <span class="compare-label">Purchase (mirrors)</span>
+              <input
+                id="altArtsPurchaseInput"
+                class="compare-input"
+                type="number"
+                min="0"
+                step="any"
+                required
+                placeholder="6"
+              />
+            </label>
+          </div>
+          <p id="altArtsFormHint" class="alt-arts-form-hint" aria-live="polite"></p>
+          <div id="altArtsVariantWrap" class="alt-arts-variant-wrap" hidden>
+            <span id="altArtsVariantLabel" class="compare-label">Art</span>
+            <div
+              id="altArtsVariantPicker"
+              class="alt-arts-variant-picker"
+              role="listbox"
+              aria-label="Item variant"
+            ></div>
+          </div>
+          <section class="alt-arts-optional-section" aria-label="Optional details">
+            <p class="alt-arts-optional-heading">Optional</p>
+            <div class="alt-arts-optional-fields">
+              <label class="compare-control alt-arts-field alt-arts-field--narrow">
+                <span class="compare-label">Purchased</span>
+                <input id="altArtsDateInput" class="compare-input" type="date" />
+              </label>
+              <label class="compare-control alt-arts-field alt-arts-field--grow">
+                <span class="compare-label">Notes</span>
+                <input id="altArtsNotesInput" class="compare-input" type="text" spellcheck="false" placeholder="Snipe, trade partner…" />
+              </label>
+            </div>
+          </section>
+          <div class="alt-arts-form-actions">
+            <button id="altArtsAddBtn" class="alt-arts-btn-primary" type="submit">Add lot</button>
+          </div>
+        </form>
+
+        <div class="compare-table-wrap">
+          <table class="compare-table alt-arts-table" id="altArtsActiveTable" aria-label="Active holdings">
+            <thead>
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col">Purchase</th>
+                <th scope="col">Market floor</th>
+                <th scope="col">vs floor</th>
+                <th scope="col">Purchased</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="altArtsActiveTbody"></tbody>
+          </table>
+        </div>
+            <p id="altArtsActiveEmpty" class="alt-arts-empty" hidden>
+              No active lots yet — pick a tracked alt-art item above and add a lot.
+            </p>
+
+        <details class="alt-arts-sold-details" id="altArtsSoldDetails">
+          <summary class="alt-arts-sold-summary">
+            <span class="alt-arts-sold-chevron" aria-hidden="true"></span>
+            <span class="alt-arts-sold-summary-text">
+              Sold history
+              <span id="altArtsSoldCount" class="alt-arts-sold-count"></span>
+            </span>
+          </summary>
+          <div class="compare-table-wrap">
+            <table class="compare-table alt-arts-table" id="altArtsSoldTable" aria-label="Sold history">
+              <thead>
+                <tr>
+                  <th scope="col">Item</th>
+                  <th scope="col">Purchase</th>
+                  <th scope="col">Sale</th>
+                  <th scope="col">Profit</th>
+                  <th scope="col">Sold</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="altArtsSoldTbody"></tbody>
+            </table>
+          </div>
+          <p id="altArtsSoldEmpty" class="alt-arts-empty" hidden>No sales recorded yet.</p>
+        </details>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        &copy; 2026. Made by
+        <a href="https://www.pathofexile.com/account/view-profile/iNeoxiz-3422" target="_blank" rel="noopener noreferrer">iNeoxiz</a>.
+      </p>
+      <p class="site-footer-note">
+        This product isn't affiliated with or endorsed by Grinding Gear Games in any way.
+      </p>
+    </footer>
+  </body>
+</html>
