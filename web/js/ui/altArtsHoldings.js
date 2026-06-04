@@ -1,7 +1,15 @@
-import { buildPricesApiUrl } from "../core/state.js";
+import { fetchPricesPayload } from "../core/pricesFetch.js";
+import { PRICES_HISTORY_BUFFER_MS, THREE_MONTHS_MS } from "../core/state.js";
+
+/** Holdings only need recent floors + latest poll, not dashboard chart history. */
+function buildAltArtsPricesUrl() {
+  const sinceMs = Math.max(0, Math.floor(Date.now() - THREE_MONTHS_MS - PRICES_HISTORY_BUFFER_MS));
+  return `/api/prices?sinceMs=${sinceMs}`;
+}
 import { formatMirror } from "../core/utils.js";
 
 const STORAGE_KEY = "pmf.altArtsHoldings.v1";
+const SOLD_DETAILS_OPEN_KEY = "pmf.altArts.soldDetailsOpen.v1";
 const PRICES_REFRESH_MS = 30_000;
 
 /** @type {Map<string, { variantKey: string, itemName: string, baseItemName: string, mode: string, imageNameFilter: string | null, imagePath: string | null, lowestMirror: number | null }>} */
@@ -19,6 +27,7 @@ const els = {
   addForm: () => document.getElementById("altArtsAddForm"),
   itemInput: () => document.getElementById("altArtsItemInput"),
   purchaseInput: () => document.getElementById("altArtsPurchaseInput"),
+  qtyInput: () => document.getElementById("altArtsQtyInput"),
   dateInput: () => document.getElementById("altArtsDateInput"),
   notesInput: () => document.getElementById("altArtsNotesInput"),
   formHint: () => document.getElementById("altArtsFormHint"),
@@ -30,10 +39,10 @@ const els = {
   soldCount: () => document.getElementById("altArtsSoldCount"),
   statusDot: () => document.getElementById("altArtsStatusDot"),
   statusText: () => document.getElementById("altArtsStatusText"),
-  variantLabel: () => document.getElementById("altArtsVariantLabel"),
   addBtn: () => document.getElementById("altArtsAddBtn"),
   variantWrap: () => document.getElementById("altArtsVariantWrap"),
   variantPicker: () => document.getElementById("altArtsVariantPicker"),
+  soldDetails: () => document.getElementById("altArtsSoldDetails"),
 };
 
 function newId() {
@@ -71,6 +80,62 @@ function variantKeyFromParts(itemName, imageNameFilter) {
   return filter ? `${name}::${filter}` : name;
 }
 
+const QTY_MIN = 1;
+const QTY_DECIMALS = 1;
+const MIRROR_DECIMALS = 1;
+
+function roundQuantity(n) {
+  const factor = 10 ** QTY_DECIMALS;
+  return Math.round(Number(n) * factor) / factor;
+}
+
+function parseQuantity(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return QTY_MIN;
+  return Math.max(QTY_MIN, roundQuantity(n));
+}
+
+function formatQuantityDisplay(q) {
+  const n = roundQuantity(q);
+  return Number.isInteger(n) ? String(n) : n.toFixed(QTY_DECIMALS);
+}
+
+function roundMirrorAmount(n) {
+  const factor = 10 ** MIRROR_DECIMALS;
+  return Math.round(Number(n) * factor) / factor;
+}
+
+function formatProfitMirror(v) {
+  const n = roundMirrorAmount(v);
+  if (!Number.isFinite(n)) return "";
+  return Number.isInteger(n) ? String(n) : n.toFixed(MIRROR_DECIMALS);
+}
+
+function formatProfitDelta(delta) {
+  const d = roundMirrorAmount(delta);
+  if (!Number.isFinite(d)) return "—";
+  if (Math.abs(d) < 1e-9) return formatProfitMirror(0);
+  const sign = d > 0 ? "+" : "-";
+  return `${sign}${formatProfitMirror(Math.abs(d))}`;
+}
+
+function lotQuantity(lot) {
+  return parseQuantity(lot?.quantity ?? 1);
+}
+
+function lotCostBasis(lot) {
+  return lot.purchaseMirror * lotQuantity(lot);
+}
+
+function needsSellQuantityInput(qty) {
+  return Math.abs(roundQuantity(qty) - QTY_MIN) > 1e-9;
+}
+
+function clampSellQuantity(raw, maxQty) {
+  const max = parseQuantity(maxQty);
+  return Math.min(max, Math.max(QTY_MIN, roundQuantity(raw)));
+}
+
 function variantLabel(variant) {
   if (!variant) return "";
   const mode = String(variant.mode || "").trim().toLowerCase();
@@ -98,6 +163,7 @@ function normalizeActiveLot(row) {
     variantKey,
     baseItemName: catalog?.baseItemName || String(row.baseItemName || itemName).trim(),
     purchaseMirror,
+    quantity: parseQuantity(row.quantity ?? 1),
     purchasedAt: row.purchasedAt ? String(row.purchasedAt) : new Date().toISOString(),
     notes: row.notes != null ? String(row.notes) : "",
   };
@@ -122,9 +188,12 @@ function normalizeSoldLot(row) {
     baseItemName: catalog?.baseItemName || String(row.baseItemName || itemName).trim(),
     purchaseMirror,
     saleMirror,
-    profitMirror: Number.isFinite(profitMirror)
-      ? profitMirror
-      : saleMirror - purchaseMirror,
+    quantity: parseQuantity(row.quantity ?? 1),
+    profitMirror: roundMirrorAmount(
+      Number.isFinite(profitMirror)
+        ? profitMirror
+        : (saleMirror - purchaseMirror) * parseQuantity(row.quantity ?? 1),
+    ),
     purchasedAt: row.purchasedAt ? String(row.purchasedAt) : "",
     soldAt: row.soldAt ? String(row.soldAt) : new Date().toISOString(),
     notes: row.notes != null ? String(row.notes) : "",
@@ -344,7 +413,6 @@ function buildVariantTile(variant, { selectable, selected }) {
 function refreshVariantPicker() {
   const wrap = els.variantWrap();
   const picker = els.variantPicker();
-  const heading = els.variantLabel();
   if (!wrap || !picker) return;
 
   const raw = String(els.itemInput()?.value || "").trim();
@@ -361,9 +429,6 @@ function refreshVariantPicker() {
   }
 
   wrap.hidden = false;
-  if (heading) {
-    heading.textContent = selectable ? "Choose art" : "Art";
-  }
   picker.setAttribute("role", selectable ? "listbox" : "group");
 
   if (variants.length === 1) {
@@ -431,9 +496,7 @@ function refreshDatalist() {
 
 async function fetchPrices() {
   try {
-    const response = await fetch(buildPricesApiUrl(), { cache: "no-store" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
+    const payload = await fetchPricesPayload({ url: buildAltArtsPricesUrl() });
     updateMarketFromPayload(payload);
     setStatus("Market data updated", true);
     return true;
@@ -448,15 +511,17 @@ function renderSummary(state) {
   if (!root) return;
 
   const activeCount = state.active.length;
-  const costBasis = state.active.reduce((s, l) => s + l.purchaseMirror, 0);
+  const costBasis = state.active.reduce((s, l) => s + lotCostBasis(l), 0);
+  const itemCount = roundQuantity(state.active.reduce((s, l) => s + lotQuantity(l), 0));
   const realized = state.sold.reduce((s, l) => s + l.profitMirror, 0);
   const soldCount = state.sold.length;
 
   root.innerHTML = "";
   const stats = [
     { label: "Active lots", value: String(activeCount) },
+    { label: "Items held", value: formatQuantityDisplay(itemCount) },
     { label: "Cost basis", value: `${formatMirrorDisplay(costBasis)} mirrors` },
-    { label: "Realized profit", value: `${formatMirrorDisplay(realized)} mirrors` },
+    { label: "Realized profit", value: `${formatProfitMirror(realized)} mirrors` },
     { label: "Sold", value: String(soldCount) },
   ];
 
@@ -514,6 +579,13 @@ function buildItemCell(lot) {
     cell.appendChild(warn);
   }
   return cell;
+}
+
+function buildQtyCell(lot) {
+  const td = document.createElement("td");
+  td.className = "alt-arts-qty";
+  td.textContent = formatQuantityDisplay(lotQuantity(lot));
+  return td;
 }
 
 function onItemFieldChange() {
@@ -604,6 +676,8 @@ function renderActiveTable(state) {
       tdItem.appendChild(notes);
     }
 
+    const tdQty = buildQtyCell(lot);
+
     const tdPurchase = document.createElement("td");
     tdPurchase.appendChild(buildMirrorPriceNode(lot.purchaseMirror));
 
@@ -650,7 +724,10 @@ function renderActiveTable(state) {
     delBtn.className = "compare-btn compare-btn--ghost";
     delBtn.textContent = "Delete";
     delBtn.addEventListener("click", () => {
-      if (!window.confirm(`Remove lot "${lot.itemName}" (${formatMirrorDisplay(lot.purchaseMirror)} mirrors)?`)) {
+      const qtyLabel = needsSellQuantityInput(lotQuantity(lot))
+        ? ` (×${formatQuantityDisplay(lotQuantity(lot))})`
+        : "";
+      if (!window.confirm(`Remove lot "${lot.itemName}"${qtyLabel}?`)) {
         return;
       }
       const next = readState();
@@ -663,32 +740,59 @@ function renderActiveTable(state) {
     actions.append(sellBtn, delBtn);
     tdActions.appendChild(actions);
 
-    tr.append(tdItem, tdPurchase, tdFloor, tdVs, tdDate, tdActions);
+    tr.append(tdItem, tdQty, tdPurchase, tdFloor, tdVs, tdDate, tdActions);
     tbody.appendChild(tr);
 
     if (sellExpandedId === lot.id) {
       const sellTr = document.createElement("tr");
       sellTr.className = "alt-arts-sell-row";
       const sellTd = document.createElement("td");
-      sellTd.colSpan = 6;
+      sellTd.colSpan = 7;
 
       const panel = document.createElement("div");
       panel.className = "alt-arts-sell-panel";
 
+      const holdingQty = lotQuantity(lot);
+      let sellQtyInput = null;
+
+      if (needsSellQuantityInput(holdingQty)) {
+        const qtyLabel = document.createElement("span");
+        qtyLabel.className = "compare-label";
+        qtyLabel.textContent = "Sell quantity";
+
+        sellQtyInput = document.createElement("input");
+        sellQtyInput.type = "number";
+        sellQtyInput.min = String(QTY_MIN);
+        sellQtyInput.max = String(holdingQty);
+        sellQtyInput.step = "0.1";
+        sellQtyInput.className = "compare-input alt-arts-sell-qty-input";
+        sellQtyInput.value = formatQuantityDisplay(holdingQty);
+        sellQtyInput.inputMode = "decimal";
+
+        const qtyMax = document.createElement("span");
+        qtyMax.className = "compare-label alt-arts-sell-qty-max";
+        qtyMax.textContent = `/ ${formatQuantityDisplay(holdingQty)}`;
+
+        panel.append(qtyLabel, sellQtyInput, qtyMax);
+      }
+
       const label = document.createElement("span");
       label.className = "compare-label";
-      label.textContent = "Sale price (mirrors)";
+      label.textContent = "Sale price (mirrors, per item)";
 
       const saleInput = document.createElement("input");
       saleInput.type = "number";
       saleInput.min = "0";
-      saleInput.step = "any";
+      saleInput.step = "0.1";
       saleInput.className = "compare-input";
       saleInput.placeholder = String(lot.purchaseMirror + 1);
 
       const hint = document.createElement("span");
       hint.className = "compare-label";
-      hint.textContent = `Bought at ${formatMirrorDisplay(lot.purchaseMirror)}`;
+      hint.textContent =
+        needsSellQuantityInput(holdingQty)
+          ? `Holding ${formatQuantityDisplay(holdingQty)}× · bought at ${formatMirrorDisplay(lot.purchaseMirror)} each`
+          : `Bought at ${formatMirrorDisplay(lot.purchaseMirror)}`;
 
       const confirmBtn = document.createElement("button");
       confirmBtn.type = "button";
@@ -697,33 +801,55 @@ function renderActiveTable(state) {
 
       const updateConfirm = () => {
         const sale = Number(saleInput.value);
-        confirmBtn.disabled = !Number.isFinite(sale) || sale < 0;
+        const maxQty = holdingQty;
+        const sellQty = sellQtyInput ? clampSellQuantity(sellQtyInput.value, maxQty) : 1;
+        if (sellQtyInput && sellQtyInput.value !== formatQuantityDisplay(sellQty)) {
+          sellQtyInput.value = formatQuantityDisplay(sellQty);
+        }
+        confirmBtn.disabled =
+          !Number.isFinite(sale) || sale < 0 || sellQty < QTY_MIN || sellQty > maxQty + 1e-9;
       };
       saleInput.addEventListener("input", updateConfirm);
+      if (sellQtyInput) {
+        sellQtyInput.addEventListener("input", updateConfirm);
+      }
       updateConfirm();
 
       confirmBtn.addEventListener("click", () => {
         const saleMirror = Number(saleInput.value);
-        if (!Number.isFinite(saleMirror) || saleMirror < 0) {
+        const soldQty = sellQtyInput ? clampSellQuantity(sellQtyInput.value, holdingQty) : 1;
+        if (
+          !Number.isFinite(saleMirror) ||
+          saleMirror < 0 ||
+          soldQty < QTY_MIN ||
+          soldQty > holdingQty + 1e-9
+        ) {
           return;
         }
         const next = readState();
         const idx = next.active.findIndex((l) => l.id === lot.id);
         if (idx < 0) return;
-        const removed = next.active.splice(idx, 1)[0];
-        const profitMirror = saleMirror - removed.purchaseMirror;
+        const activeLot = next.active[idx];
+        const profitMirror = roundMirrorAmount((saleMirror - activeLot.purchaseMirror) * soldQty);
         next.sold.push({
-          id: removed.id,
-          itemName: removed.itemName,
-          variantKey: removed.variantKey,
-          baseItemName: removed.baseItemName,
-          purchaseMirror: removed.purchaseMirror,
+          id: newId(),
+          itemName: activeLot.itemName,
+          variantKey: activeLot.variantKey,
+          baseItemName: activeLot.baseItemName,
+          purchaseMirror: activeLot.purchaseMirror,
+          quantity: soldQty,
           saleMirror,
           profitMirror,
-          purchasedAt: removed.purchasedAt,
+          purchasedAt: activeLot.purchasedAt,
           soldAt: new Date().toISOString(),
-          notes: removed.notes,
+          notes: activeLot.notes,
         });
+        const remaining = roundQuantity(holdingQty - soldQty);
+        if (remaining >= QTY_MIN) {
+          next.active[idx] = { ...activeLot, quantity: remaining };
+        } else {
+          next.active.splice(idx, 1);
+        }
         sellExpandedId = null;
         saveState(next);
         renderAll();
@@ -765,6 +891,8 @@ function renderSoldTable(state) {
     const tdItem = document.createElement("td");
     tdItem.appendChild(buildItemCell(lot));
 
+    const tdQty = buildQtyCell(lot);
+
     const tdPurchase = document.createElement("td");
     tdPurchase.appendChild(buildMirrorPriceNode(lot.purchaseMirror));
 
@@ -774,7 +902,7 @@ function renderSoldTable(state) {
     const tdProfit = document.createElement("td");
     const pill = document.createElement("span");
     pill.className = `cmp-pill ${deltaPillClass(lot.profitMirror)}`;
-    pill.textContent = formatDeltaMirror(lot.profitMirror);
+    pill.textContent = formatProfitDelta(lot.profitMirror);
     tdProfit.appendChild(pill);
 
     const tdSold = document.createElement("td");
@@ -790,10 +918,13 @@ function renderSoldTable(state) {
     delBtn.className = "compare-btn compare-btn--ghost";
     delBtn.textContent = "Delete";
     delBtn.addEventListener("click", () => {
-      const profitLabel = formatDeltaMirror(lot.profitMirror);
+      const qtyLabel = needsSellQuantityInput(lotQuantity(lot))
+        ? ` ×${formatQuantityDisplay(lotQuantity(lot))}`
+        : "";
+      const profitLabel = formatProfitDelta(lot.profitMirror);
       if (
         !window.confirm(
-          `Remove sold record for "${lot.itemName}" (${formatMirrorDisplay(lot.purchaseMirror)} → ${formatMirrorDisplay(lot.saleMirror)}, profit ${profitLabel})?`,
+          `Remove sold record for "${lot.itemName}"${qtyLabel} (${formatMirrorDisplay(lot.purchaseMirror)} → ${formatMirrorDisplay(lot.saleMirror)}, profit ${profitLabel})?`,
         )
       ) {
         return;
@@ -807,7 +938,7 @@ function renderSoldTable(state) {
     actions.appendChild(delBtn);
     tdActions.appendChild(actions);
 
-    tr.append(tdItem, tdPurchase, tdSale, tdProfit, tdSold, tdActions);
+    tr.append(tdItem, tdQty, tdPurchase, tdSale, tdProfit, tdSold, tdActions);
     tbody.appendChild(tr);
   }
 }
@@ -824,6 +955,7 @@ function handleAddSubmit(event) {
   const rawName = String(els.itemInput()?.value || "").trim();
   const variant = getSelectedVariant();
   const purchaseMirror = Number(els.purchaseInput()?.value);
+  const quantity = parseQuantity(els.qtyInput()?.value);
   const purchasedAt = parsePurchaseDateInput(els.dateInput()?.value);
   const notes = String(els.notesInput()?.value || "").trim();
 
@@ -857,6 +989,7 @@ function handleAddSubmit(event) {
     variantKey: variant.variantKey,
     baseItemName: variant.baseItemName,
     purchaseMirror,
+    quantity,
     purchasedAt,
     notes,
   });
@@ -866,12 +999,36 @@ function handleAddSubmit(event) {
 
   const form = els.addForm();
   if (form) form.reset();
+  const qtyInput = els.qtyInput();
+  if (qtyInput) qtyInput.value = "1";
   refreshVariantPicker();
   updateItemInputUi();
   renderAll();
 }
 
+function initSoldDetailsPersistence() {
+  const details = els.soldDetails();
+  if (!details) return;
+
+  try {
+    const raw = window.localStorage.getItem(SOLD_DETAILS_OPEN_KEY);
+    if (raw === "1") details.open = true;
+    else if (raw === "0") details.open = false;
+  } catch {
+    // ignore
+  }
+
+  details.addEventListener("toggle", () => {
+    try {
+      window.localStorage.setItem(SOLD_DETAILS_OPEN_KEY, details.open ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  });
+}
+
 export function initAltArtsHoldings() {
+  initSoldDetailsPersistence();
   const form = els.addForm();
   if (form) {
     form.addEventListener("submit", handleAddSubmit);

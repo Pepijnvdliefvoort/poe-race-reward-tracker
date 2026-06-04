@@ -18,6 +18,61 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _fetch_poll_rows_grouped(
+    con: sqlite3.Connection,
+    *,
+    variant_ids: list[int],
+    since_utc: str | None,
+) -> dict[int, list[sqlite3.Row]]:
+    """Load poll rows for many variants in one or two queries instead of per-variant loops."""
+    if not variant_ids:
+        return {}
+    placeholders = ",".join("?" * len(variant_ids))
+    if since_utc is None:
+        sql = f"""
+            SELECT ip.*, pr.cycle_number AS cycle
+            FROM item_polls ip
+            JOIN poll_runs pr ON pr.id = ip.poll_run_id
+            WHERE ip.item_variant_id IN ({placeholders})
+            ORDER BY ip.item_variant_id ASC, ip.requested_at_utc ASC
+        """
+        rows = con.execute(sql, variant_ids).fetchall()
+    else:
+        sql = f"""
+            SELECT ip.*, pr.cycle_number AS cycle
+            FROM item_polls ip
+            JOIN poll_runs pr ON pr.id = ip.poll_run_id
+            WHERE ip.item_variant_id IN ({placeholders})
+              AND (
+                ip.requested_at_utc >= ?
+                OR ip.id IN (
+                  SELECT ip2.id
+                  FROM item_polls ip2
+                  INNER JOIN (
+                    SELECT item_variant_id, MAX(requested_at_utc) AS max_t
+                    FROM item_polls
+                    WHERE item_variant_id IN ({placeholders})
+                    GROUP BY item_variant_id
+                  ) latest
+                    ON ip2.item_variant_id = latest.item_variant_id
+                   AND ip2.requested_at_utc = latest.max_t
+                )
+              )
+            ORDER BY ip.item_variant_id ASC, ip.requested_at_utc ASC
+        """
+        params: list[Any] = [*variant_ids, since_utc, *variant_ids]
+        rows = con.execute(sql, params).fetchall()
+
+    grouped: dict[int, list[sqlite3.Row]] = {}
+    for row in rows:
+        try:
+            vid = int(row["item_variant_id"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        grouped.setdefault(vid, []).append(row)
+    return grouped
+
+
 def _valid_positive_mirror(v: Any) -> bool:
     if v is None:
         return False
@@ -398,42 +453,24 @@ class ServerStorage:
                             }
                         )
 
+            poll_vids: list[int] = []
+            for _k, vid in variant_ids_by_key.items():
+                if isinstance(vid, int) and vid > 0:
+                    poll_vids.append(vid)
+            poll_rows_by_vid = _fetch_poll_rows_grouped(
+                con, variant_ids=poll_vids, since_utc=since_utc
+            )
+
             for variant_key, variant_id in variant_ids_by_key.items():
                 if variant_key not in items:
                     continue
                 series = items[variant_key]
-                if since_utc is not None:
-                    rows = con.execute(
-                        """
-                        SELECT ip.*, pr.cycle_number AS cycle
-                        FROM item_polls ip
-                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
-                        WHERE ip.item_variant_id = ?
-                          AND (
-                            ip.requested_at_utc >= ?
-                            OR ip.id = (
-                              SELECT ip2.id
-                              FROM item_polls ip2
-                              WHERE ip2.item_variant_id = ?
-                              ORDER BY ip2.requested_at_utc DESC
-                              LIMIT 1
-                            )
-                          )
-                        ORDER BY ip.requested_at_utc ASC
-                        """,
-                        (variant_id, since_utc, variant_id),
-                    ).fetchall()
+                try:
+                    vid = int(variant_id)
+                except (TypeError, ValueError):
+                    rows = []
                 else:
-                    rows = con.execute(
-                        """
-                        SELECT ip.*, pr.cycle_number AS cycle
-                        FROM item_polls ip
-                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
-                        WHERE ip.item_variant_id = ?
-                        ORDER BY ip.requested_at_utc ASC
-                        """,
-                        (variant_id,),
-                    ).fetchall()
+                    rows = poll_rows_by_vid.get(vid, [])
 
                 since_boundary_ms = epoch_ms(since_utc) if since_utc else None
                 latest_point: dict[str, Any] | None = None
