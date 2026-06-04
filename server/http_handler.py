@@ -1041,6 +1041,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 req_path,
             )
 
+        if req_path in {"/alt-arts", "/alt-arts/"}:
+            record_site_visit(
+                get_client_ip(self.headers.get("X-Forwarded-For"), self.client_address[0]),
+                req_path,
+            )
+
         if parsed.path == "/api/prices":
             payload = load_price_data()
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
@@ -1215,6 +1221,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
 
+        if parsed.path == "/alt-arts.html":
+            loc = "/alt-arts"
+            if parsed.query:
+                loc += f"?{parsed.query}"
+            self.send_response(302)
+            self.send_header("Location", loc)
+            self.end_headers()
+            return
+
         if parsed.path in {"/admin", "/admin/"}:
             self._note_admin_auth_success()
             q = parsed.query
@@ -1223,6 +1238,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/compare", "/compare/"}:
             q = parsed.query
             self.path = "/compare.html" + (f"?{q}" if q else "")
+
+        if parsed.path in {"/alt-arts", "/alt-arts/"}:
+            q = parsed.query
+            self.path = "/alt-arts.html" + (f"?{q}" if q else "")
 
         if parsed.path in {"/admin/db", "/admin/db/"}:
             self._note_admin_auth_success()

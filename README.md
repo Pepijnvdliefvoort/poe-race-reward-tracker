@@ -19,7 +19,7 @@ This README reflects the current implementation in this repository.
   - inference events (sale/relist/reprice/new-row signals)
   - inferred sales rows (with late-relist reversal)
 - Detects potential flip opportunities and can send Discord alerts.
-- Serves a browser UI with charts, filters, compare pages, admin panel, DB explorer, and account compare.
+- Serves a browser UI with charts, filters, compare pages, alt-art holdings tracker (localStorage), admin panel, DB explorer, and account compare.
 - Provides a companion recommendations endpoint (`/api/companion/recommend`) with heuristic ranking plus optional ML shadow/hybrid scoring.
 
 ## Current Architecture
@@ -38,7 +38,7 @@ This README reflects the current implementation in this repository.
   - DB init/migrations: `storage/db.py`, `storage/schema.py`
   - repos and service methods: `storage/repos.py`, `storage/service.py`
 - Frontend:
-  - pages in `web/` (`index.html`, `admin.html`, `compare.html`, `db.html`)
+  - pages in `web/` (`index.html`, `admin.html`, `compare.html`, `alt-arts.html`, `db.html`)
   - JS modules in `web/js/`
   - CSS modules in `web/css/`
   - icon assets in `web/assets/icons/`
