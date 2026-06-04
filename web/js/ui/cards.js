@@ -9,7 +9,7 @@ import {
     state,
 } from "../core/state.js";
 import {
-  aggregateInferenceSignalsOverWindow,
+  aggregateInferenceSignalsForItem,
   estimatedSoldForItemWindow,
   formatEstimatedSoldLine,
 } from "../domain/inferenceStats.js";
@@ -633,7 +633,7 @@ export function updateCard(item, onFavoriteToggle) {
   priceBox.textContent = priceText;
 
   const spanMs = getChartTimespanMs();
-  const agg = aggregateInferenceSignalsOverWindow(item.points, spanMs);
+  const agg = aggregateInferenceSignalsForItem(item, spanMs);
   const chartWindowSalesCount = Array.isArray(entry.pendingSalesView?.points)
     ? entry.pendingSalesView.points.length
     : null;
