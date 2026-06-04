@@ -6,7 +6,7 @@ import {
     syncPriceRangeFromState,
 } from "./priceRange.js";
 import { dom, saveFilters, state } from "../core/state.js";
-import { applyFiltersAndRender } from "./renderer.js";
+import { applyFiltersAndRender, refresh } from "./renderer.js";
 
 const CUSTOM_AMOUNT_MAX = { day: 730, week: 104, month: 24 };
 
@@ -180,6 +180,7 @@ export function registerFilterEventListeners() {
             saveFilters();
             syncChartTimespanCustomVisibility();
             applyFiltersAndRender();
+            void refresh();
         });
     }
 
@@ -188,6 +189,7 @@ export function registerFilterEventListeners() {
         saveFilters();
         if (state.filters.chartTimespanPreset === "custom") {
             applyFiltersAndRender();
+            void refresh();
         }
     };
 
@@ -208,6 +210,7 @@ export function registerFilterEventListeners() {
             saveFilters();
             if (state.filters.chartTimespanPreset === "custom") {
                 applyFiltersAndRender();
+                void refresh();
             }
         });
     }
@@ -229,6 +232,7 @@ export function registerFilterEventListeners() {
         syncSearchClearButton();
         saveFilters();
         applyFiltersAndRender();
+        void refresh();
     });
 
     syncSearchClearButton();

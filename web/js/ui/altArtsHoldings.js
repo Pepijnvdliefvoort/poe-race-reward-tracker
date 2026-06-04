@@ -1,3 +1,4 @@
+import { buildPricesApiUrl } from "../core/state.js";
 import { formatMirror } from "../core/utils.js";
 
 const STORAGE_KEY = "pmf.altArtsHoldings.v1";
@@ -430,7 +431,7 @@ function refreshDatalist() {
 
 async function fetchPrices() {
   try {
-    const response = await fetch("/api/prices", { cache: "no-store" });
+    const response = await fetch(buildPricesApiUrl(), { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     updateMarketFromPayload(payload);

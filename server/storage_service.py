@@ -77,6 +77,71 @@ def _mirror_stats_from_listing_snapshots(con: sqlite3.Connection, *, item_poll_i
     }
 
 
+def _ms_to_utc_iso(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat()
+
+
+def _compact_poll_point(point: dict[str, Any]) -> dict[str, Any]:
+    """Drop null/zero fields so large histories serialize smaller."""
+    out: dict[str, Any] = {"time": point["time"], "cycle": point["cycle"]}
+    for key in (
+        "lowestMirror",
+        "medianMirror",
+        "highestMirror",
+        "lowestDivine",
+        "medianDivine",
+        "highestDivine",
+    ):
+        val = point.get(key)
+        if val is not None:
+            out[key] = val
+    for key in ("totalResults", "usedResults", "fetchedForInference"):
+        val = int(point.get(key) or 0)
+        if val:
+            out[key] = val
+    for key in (
+        "inferenceConfirmedTransfer",
+        "inferenceLikelyInstantSale",
+        "inferenceLikelyNonInstantOnline",
+        "inferenceRelistSameSeller",
+        "inferenceNonInstantRemoved",
+        "inferenceRepriceSameSeller",
+        "inferenceMultiSellerSameFingerprint",
+        "inferenceNewListingRows",
+    ):
+        val = int(point.get(key) or 0)
+        if val:
+            out[key] = val
+    return out
+
+
+def _build_poll_point_from_row(r: Any, *, epoch_ms: Any) -> dict[str, Any] | None:
+    t_ms = epoch_ms(str(r["requested_at_utc"] or ""))
+    if t_ms is None:
+        return None
+    return {
+        "time": t_ms,
+        "cycle": int(r["cycle"] or 0),
+        "lowestMirror": r["lowest_mirror"],
+        "medianMirror": r["median_mirror"],
+        "highestMirror": r["highest_mirror"],
+        "lowestDivine": r["lowest_divine"],
+        "medianDivine": r["median_divine"],
+        "highestDivine": r["highest_divine"],
+        "totalResults": int(r["total_results"] or 0),
+        "usedResults": int(r["used_results"] or 0),
+        "fetchedForInference": int(r["fetched_for_inference"] or 0),
+        "inferenceConfirmedTransfer": int(r["inf_confirmed_transfer"] or 0),
+        "inferenceLikelyInstantSale": int(r["inf_likely_instant_sale"] or 0),
+        "inferenceLikelyNonInstantOnline": int(r["inf_likely_non_instant_online"] or 0),
+        "inferenceRelistSameSeller": int(r["inf_relist_same_seller"] or 0),
+        "inferenceNonInstantRemoved": int(r["inf_non_instant_removed"] or 0),
+        "inferenceRepriceSameSeller": int(r["inf_reprice_same_seller"] or 0),
+        "inferenceMultiSellerSameFingerprint": int(r["inf_multi_seller_same_fingerprint"] or 0),
+        "inferenceNewListingRows": int(r["inf_new_listing_rows"] or 0),
+    }
+
+
 def _attach_last_known_mirror_prices(item: dict[str, Any]) -> None:
     """
     When the latest poll has no usable mirror prices (e.g. 0 listings), expose the most recent
@@ -229,10 +294,17 @@ class ServerStorage:
         order_by_key: dict[str, int],
         get_image_path: Any,
         epoch_ms: Any,
+        since_ms: int | None = None,
+        full_history: bool = False,
     ) -> dict[str, Any]:
         """
         Build the same payload shape as `data_service.load_price_data()`, but from SQLite.
+        When ``full_history`` is false and ``since_ms`` is set, only poll/sale rows in that
+        window are returned (plus each variant's latest poll for cards/status).
         """
+        since_utc: str | None = None
+        if not full_history and since_ms is not None and since_ms > 0:
+            since_utc = _ms_to_utc_iso(int(since_ms))
         con = self.connect()
         try:
             # points per variant id
@@ -265,8 +337,7 @@ class ServerStorage:
                         vids.append(vid)
                 if vids:
                     placeholders = ",".join("?" * len(vids))
-                    sale_rows = con.execute(
-                        f"""
+                    sale_sql = f"""
                         SELECT
                           s.item_variant_id,
                           s.occurred_at_utc,
@@ -280,10 +351,13 @@ class ServerStorage:
                         WHERE s.item_variant_id IN ({placeholders})
                           AND reverted_at_utc IS NULL
                           AND mirror_equiv IS NOT NULL
-                        ORDER BY s.item_variant_id ASC, s.occurred_at_utc ASC
-                        """,
-                        vids,
-                    ).fetchall()
+                    """
+                    sale_params: list[Any] = list(vids)
+                    if since_utc is not None:
+                        sale_sql += " AND s.occurred_at_utc >= ?"
+                        sale_params.append(since_utc)
+                    sale_sql += " ORDER BY s.item_variant_id ASC, s.occurred_at_utc ASC"
+                    sale_rows = con.execute(sale_sql, sale_params).fetchall()
                     for sr in sale_rows:
                         try:
                             vid = int(sr["item_variant_id"])
@@ -327,54 +401,59 @@ class ServerStorage:
             for variant_key, variant_id in variant_ids_by_key.items():
                 if variant_key not in items:
                     continue
-                rows = con.execute(
-                    """
-                    SELECT ip.*, pr.cycle_number AS cycle
-                    FROM item_polls ip
-                    JOIN poll_runs pr ON pr.id = ip.poll_run_id
-                    WHERE ip.item_variant_id = ?
-                    ORDER BY ip.requested_at_utc ASC
-                    """,
-                    (variant_id,),
-                ).fetchall()
-
                 series = items[variant_key]
+                if since_utc is not None:
+                    rows = con.execute(
+                        """
+                        SELECT ip.*, pr.cycle_number AS cycle
+                        FROM item_polls ip
+                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                        WHERE ip.item_variant_id = ?
+                          AND (
+                            ip.requested_at_utc >= ?
+                            OR ip.id = (
+                              SELECT ip2.id
+                              FROM item_polls ip2
+                              WHERE ip2.item_variant_id = ?
+                              ORDER BY ip2.requested_at_utc DESC
+                              LIMIT 1
+                            )
+                          )
+                        ORDER BY ip.requested_at_utc ASC
+                        """,
+                        (variant_id, since_utc, variant_id),
+                    ).fetchall()
+                else:
+                    rows = con.execute(
+                        """
+                        SELECT ip.*, pr.cycle_number AS cycle
+                        FROM item_polls ip
+                        JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                        WHERE ip.item_variant_id = ?
+                        ORDER BY ip.requested_at_utc ASC
+                        """,
+                        (variant_id,),
+                    ).fetchall()
+
+                since_boundary_ms = epoch_ms(since_utc) if since_utc else None
+                latest_point: dict[str, Any] | None = None
+                latest_row = None
                 for r in rows:
-                    t_ms = epoch_ms(str(r["requested_at_utc"] or ""))
-                    if t_ms is None:
+                    point = _build_poll_point_from_row(r, epoch_ms=epoch_ms)
+                    if point is None:
                         continue
-                    point = {
-                        "time": t_ms,
-                        "cycle": int(r["cycle"] or 0),
-                        "lowestMirror": r["lowest_mirror"],
-                        "medianMirror": r["median_mirror"],
-                        "highestMirror": r["highest_mirror"],
-                        "lowestDivine": r["lowest_divine"],
-                        "medianDivine": r["median_divine"],
-                        "highestDivine": r["highest_divine"],
-                        "totalResults": int(r["total_results"] or 0),
-                        "usedResults": int(r["used_results"] or 0),
-                        "fetchedForInference": int(r["fetched_for_inference"] or 0),
-                        "inferenceConfirmedTransfer": int(r["inf_confirmed_transfer"] or 0),
-                        "inferenceLikelyInstantSale": int(r["inf_likely_instant_sale"] or 0),
-                        "inferenceLikelyNonInstantOnline": int(r["inf_likely_non_instant_online"] or 0),
-                        "inferenceRelistSameSeller": int(r["inf_relist_same_seller"] or 0),
-                        "inferenceNonInstantRemoved": int(r["inf_non_instant_removed"] or 0),
-                        "inferenceRepriceSameSeller": int(r["inf_reprice_same_seller"] or 0),
-                        "inferenceMultiSellerSameFingerprint": int(r["inf_multi_seller_same_fingerprint"] or 0),
-                        "inferenceNewListingRows": int(r["inf_new_listing_rows"] or 0),
-                    }
-                    series["points"].append(point)
-                    # Always advance `latest` to the most recent poll point, even when no price
-                    # was available (e.g. 0 results). The UI uses `latest.time`/`latest.cycle`
-                    # to compute the poll cycle highlight ("next in line"). Price availability
-                    # is handled separately by `getAvailableLowestPrice()`.
-                    series["latest"] = point
+                    t_ms = int(point["time"])
+                    if latest_point is None or t_ms >= int(latest_point["time"]):
+                        latest_point = point
+                        latest_row = r
+                    if since_boundary_ms is None or t_ms >= since_boundary_ms:
+                        series["points"].append(_compact_poll_point(point))
                     qid = str(r["query_id"] or "").strip()
                     if qid:
                         series["queryId"] = qid
 
-                latest_row = rows[-1] if rows else None
+                if latest_point is not None:
+                    series["latest"] = _compact_poll_point(latest_point)
                 if latest_row is not None and series.get("latest"):
                     latest_point = series["latest"]
                     if not _valid_positive_mirror(latest_point.get("lowestMirror")):
@@ -413,6 +492,8 @@ class ServerStorage:
             return {
                 "generatedAt": _utc_now_iso(),
                 "dbPath": str(self.db_path),
+                "historyScope": "full" if full_history or since_utc is None else "since",
+                "sinceMs": None if full_history or since_ms is None else int(since_ms),
                 "rowCount": sum(len(it.get("points") or []) for it in item_list),
                 "items": item_list,
             }

@@ -123,10 +123,13 @@ git pull
 sudo cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 sudo cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl restart poe-market-server
-sudo systemctl restart poe-market-poller
+sudo systemctl stop poe-market-server poe-market-poller || true
+sleep 2
+sudo systemctl start poe-market-server poe-market-poller
 sudo systemctl reload caddy
 ```
+
+`deploy/deploy_on_vps.sh` uses the same stop → wait → start pattern so deploys do not hang on wedged Python workers.
 
 The `cp` lines keep `/etc/systemd/system` in sync when `ExecStart` or other unit fields change (for example after moving the dashboard from `web/server.py` to `python -m server.server`, or after changing the poller entry from `poll_item_prices.py` to `python -m poller`).
 

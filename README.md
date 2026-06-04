@@ -348,7 +348,7 @@ The project can bootstrap this from `config.json` once if no DB config exists.
 
 Public GET routes:
 
-- `/api/prices`
+- `/api/prices` — optional `?sinceMs=<epoch_ms>` (windowed history + latest poll per item) or `?full=1` (all history; used when chart preset is “all time”)
 - `/api/config` (GET)
 - `/api/listings?queryId=...` (or `variantId`)
 - `/api/account-compare`
