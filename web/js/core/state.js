@@ -1,4 +1,6 @@
-export const REFRESH_MS = 4000;
+export const REFRESH_MS = 30_000;
+/** Extra history before chart window for carry-forward / inference aggregates. */
+export const PRICES_HISTORY_BUFFER_MS = 2 * 24 * 60 * 60 * 1000;
 // Charts render 10 historical points + 1 forecast point.
 export const MAX_POINTS = 11;
 export const MAX_ACTUAL_POINTS = 10;
@@ -98,6 +100,18 @@ export function getChartTimespanMs() {
     return Math.min(CUSTOM_SPAN_CAP_MS, spanMs);
   }
   return CHART_TIMESPAN_PRESET_MS[f.chartTimespanPreset] ?? CHART_TIMESPAN_PRESET_MS["3m"];
+}
+
+/**
+ * URL for /api/prices: full history when chart preset is "all", else sinceMs from chart window.
+ */
+export function buildPricesApiUrl() {
+  const spanMs = getChartTimespanMs();
+  if (!Number.isFinite(spanMs)) {
+    return "/api/prices?full=1";
+  }
+  const sinceMs = Math.max(0, Math.floor(Date.now() - spanMs - PRICES_HISTORY_BUFFER_MS));
+  return `/api/prices?sinceMs=${sinceMs}`;
 }
 
 function parseNumber(value, fallback) {

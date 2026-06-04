@@ -32,7 +32,7 @@ from server.sales_discord_notify import (
 from .new_item_classifier import NewItemSignal, NewItemsConfig, classify_new_items
 
 from storage.service import StorageService, VariantSpec
-from .daily_summary import DailySummaryConfig, maybe_send_daily_summary_to_discord
+from .weekly_summary import WeeklySummaryConfig, maybe_send_weekly_summary_to_discord
 from .db_export import DbExportConfig, maybe_export_db_to_discord
 from .ml_retrain import MlRetrainConfig, maybe_run_weekly_ml_retrain
 
@@ -189,18 +189,35 @@ def load_discord_ops_webhook_url_from_env() -> str:
     return ""
 
 
-def load_discord_daily_summary_webhook_url_from_env() -> tuple[str, bool]:
+def load_discord_weekly_summary_webhook_url_from_env() -> tuple[str, bool]:
     """
-    Webhook URL for the daily recap (charts + stats).
+    Webhook URL for the weekly recap (charts + stats).
 
     Falls back to ``DISCORD_WEBHOOK_URL`` / ``POE_DISCORD_WEBHOOK_URL`` when unset.
     Returns ``(url, dedicated)`` where ``dedicated`` is True when a summary-specific env var was set.
     """
-    for env_name in ("DISCORD_WEBHOOK_URL_DAILY_SUMMARY", "POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY"):
+    for env_name in (
+        "DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY",
+        "POE_DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY",
+        "DISCORD_WEBHOOK_URL_DAILY_SUMMARY",
+        "POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY",
+    ):
         value = os.getenv(env_name, "").strip()
         if value:
             return value, True
     return load_discord_webhook_url_from_env(), False
+
+
+def _env_bool_primary_or_fallback(primary: str, fallback: str, default: bool) -> bool:
+    if str(os.getenv(primary, "")).strip():
+        return _env_bool(primary, default)
+    return _env_bool(fallback, default)
+
+
+def _env_int_primary_or_fallback(primary: str, fallback: str, default: int, low: int, high: int) -> int:
+    if str(os.getenv(primary, "")).strip():
+        return _env_int(primary, default, low, high)
+    return _env_int(fallback, default, low, high)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -243,22 +260,42 @@ def load_ml_retrain_config_from_env() -> MlRetrainConfig:
     )
 
 
-def load_daily_summary_config_from_env() -> DailySummaryConfig:
+def load_weekly_summary_config_from_env() -> WeeklySummaryConfig:
     from env_loader import load_local_env
 
     load_local_env()
-    enabled = _env_bool("POE_DAILY_SUMMARY_ENABLED", True)
-    tz_offset_minutes = _env_int("POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES", 120, -720, 840)
-    schedule_hour = _env_int("POE_DAILY_SUMMARY_HOUR", 12, 0, 23)
-    schedule_minute = _env_int("POE_DAILY_SUMMARY_MINUTE", 0, 0, 59)
-    top_items_limit = _env_int("POE_DAILY_SUMMARY_TOP_ITEMS", 8, 3, 15)
-    webhook_url, _dedicated = load_discord_daily_summary_webhook_url_from_env()
+    enabled = _env_bool_primary_or_fallback("POE_WEEKLY_SUMMARY_ENABLED", "POE_DAILY_SUMMARY_ENABLED", True)
+    tz_offset_minutes = _env_int_primary_or_fallback(
+        "POE_WEEKLY_SUMMARY_TZ_OFFSET_MINUTES",
+        "POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES",
+        120,
+        -720,
+        840,
+    )
+    schedule_weekday = _env_int("POE_WEEKLY_SUMMARY_WEEKDAY", 6, 0, 6)
+    schedule_hour = _env_int_primary_or_fallback("POE_WEEKLY_SUMMARY_HOUR", "POE_DAILY_SUMMARY_HOUR", 12, 0, 23)
+    schedule_minute = _env_int_primary_or_fallback(
+        "POE_WEEKLY_SUMMARY_MINUTE",
+        "POE_DAILY_SUMMARY_MINUTE",
+        0,
+        0,
+        59,
+    )
+    top_items_limit = _env_int_primary_or_fallback(
+        "POE_WEEKLY_SUMMARY_TOP_ITEMS",
+        "POE_DAILY_SUMMARY_TOP_ITEMS",
+        8,
+        3,
+        15,
+    )
+    webhook_url, _dedicated = load_discord_weekly_summary_webhook_url_from_env()
     if not webhook_url:
         enabled = False
-    return DailySummaryConfig(
+    return WeeklySummaryConfig(
         enabled=enabled,
         webhook_url=webhook_url,
         tz_offset_minutes=tz_offset_minutes,
+        schedule_weekday=schedule_weekday,
         schedule_hour=schedule_hour,
         schedule_minute=schedule_minute,
         top_items_limit=top_items_limit,
@@ -3415,7 +3452,7 @@ def main() -> None:
     logged_db_export_webhook_cfg = False
     logged_ops_webhook_cfg = False
     logged_ml_retrain_cfg = False
-    logged_daily_summary_cfg = False
+    logged_weekly_summary_cfg = False
     ops_alert_last_sent: dict[str, float] = {}
     log_line(
         "cycle",
@@ -3493,12 +3530,12 @@ def main() -> None:
             "Weekly ML retrain trigger is disabled (POE_ML_RETRAIN_WEEKLY_ENABLED=0).",
         )
 
-    daily_summary_cfg = load_daily_summary_config_from_env()
-    if not daily_summary_cfg.enabled:
+    weekly_summary_cfg = load_weekly_summary_config_from_env()
+    if not weekly_summary_cfg.enabled:
         log_line(
             "warn",
-            "Daily Discord recap is disabled (no webhook or POE_DAILY_SUMMARY_ENABLED=0). "
-            "Set DISCORD_WEBHOOK_URL_DAILY_SUMMARY (preferred) or DISCORD_WEBHOOK_URL.",
+            "Weekly Discord recap is disabled (no webhook or POE_WEEKLY_SUMMARY_ENABLED=0). "
+            "Set DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY, DISCORD_WEBHOOK_URL_DAILY_SUMMARY, or DISCORD_WEBHOOK_URL.",
         )
 
     while cfg.max_cycles is None or cycles_done < cfg.max_cycles:
@@ -3523,7 +3560,7 @@ def main() -> None:
         db_export_webhook_url = load_discord_db_export_webhook_url_from_env()
         ops_health_cfg = load_ops_health_config(storage, cfg.poll_interval)
         ml_retrain_cfg = load_ml_retrain_config_from_env()
-        daily_summary_cfg = load_daily_summary_config_from_env()
+        weekly_summary_cfg = load_weekly_summary_config_from_env()
         discord_watch_users = load_discord_market_watch_users(storage)
         if sales_webhook_url and not logged_sales_webhook_cfg:
             msg = f"Sales Discord webhook active; est.-sold window={sales_window_days}d"
@@ -3577,17 +3614,21 @@ def main() -> None:
             )
             logged_ml_retrain_cfg = True
 
-        if daily_summary_cfg.enabled and not logged_daily_summary_cfg:
-            _daily_url, daily_dedicated = load_discord_daily_summary_webhook_url_from_env()
+        if weekly_summary_cfg.enabled and not logged_weekly_summary_cfg:
+            _weekly_url, weekly_dedicated = load_discord_weekly_summary_webhook_url_from_env()
             msg = (
-                "Daily recap Discord webhook active; "
-                f"schedule={daily_summary_cfg.schedule_hour:02d}:{daily_summary_cfg.schedule_minute:02d} "
-                f"tz_offset={daily_summary_cfg.tz_offset_minutes}m"
+                "Weekly recap Discord webhook active; "
+                f"weekday={weekly_summary_cfg.schedule_weekday} "
+                f"schedule={weekly_summary_cfg.schedule_hour:02d}:{weekly_summary_cfg.schedule_minute:02d} "
+                f"tz_offset={weekly_summary_cfg.tz_offset_minutes}m"
             )
-            if not daily_dedicated:
-                msg += " (using main alert webhook; set DISCORD_WEBHOOK_URL_DAILY_SUMMARY for a separate channel)"
+            if not weekly_dedicated:
+                msg += (
+                    " (using main alert webhook; set DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY "
+                    "or DISCORD_WEBHOOK_URL_DAILY_SUMMARY for a separate channel)"
+                )
             log_line("cycle", msg)
-            logged_daily_summary_cfg = True
+            logged_weekly_summary_cfg = True
 
         maybe_run_ops_health_checks(
             session,
@@ -3617,10 +3658,10 @@ def main() -> None:
                 log=log_line,
             )
 
-        if daily_summary_cfg.enabled:
-            maybe_send_daily_summary_to_discord(
+        if weekly_summary_cfg.enabled:
+            maybe_send_weekly_summary_to_discord(
                 storage=storage,
-                cfg=daily_summary_cfg,
+                cfg=weekly_summary_cfg,
                 log=log_line,
             )
 

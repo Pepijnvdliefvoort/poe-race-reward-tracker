@@ -10,6 +10,10 @@ WorkingDirectory=/opt/poe-market-flips
 ExecStart=/opt/poe-market-flips/.venv/bin/python -m poller --poll-interval 0
 Restart=always
 RestartSec=10
+TimeoutStopSec=30
+KillMode=mixed
+MemoryMax=1536M
+CPUQuota=80%
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/poe-market-flips/secrets.env
 

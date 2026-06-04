@@ -393,7 +393,11 @@ def fetch_account_compare(*, accounts: list[str], mode: str = "all", top_n: int 
     return ServerStorage(ROOT_DIR).fetch_account_compare(accounts=accounts, mode=mode, top_n=top_n)
 
 
-def load_price_data() -> dict[str, Any]:
+def load_price_data(
+    *,
+    since_ms: int | None = None,
+    full_history: bool = False,
+) -> dict[str, Any]:
     """
     Load price data from CSV and return as JSON payload.
     All timestamps in returned data are in epoch milliseconds (UTC-based).
@@ -432,6 +436,8 @@ def load_price_data() -> dict[str, Any]:
         order_by_key=order_by_key,
         get_image_path=_get_image_path,
         epoch_ms=_to_epoch_ms,
+        since_ms=since_ms,
+        full_history=full_history,
     )
     payload["nextPollTime"] = _calculate_next_poll_time()
     return payload

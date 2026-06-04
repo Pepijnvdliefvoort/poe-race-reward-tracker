@@ -1,7 +1,7 @@
 import { updateAllCards } from "./cards.js";
 import { getFilteredAndSortedItems, hasActiveFilters } from "./filters.js";
 import { initPriceRangeSlider } from "./priceRange.js";
-import { dom, state } from "../core/state.js";
+import { buildPricesApiUrl, dom, state } from "../core/state.js";
 import { formatTime } from "../core/utils.js";
 
 /**
@@ -135,7 +135,7 @@ export function applyFiltersAndRender() {
  */
 export async function refresh() {
     try {
-        const response = await fetch("/api/prices", { cache: "no-store" });
+        const response = await fetch(buildPricesApiUrl(), { cache: "no-store" });
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }

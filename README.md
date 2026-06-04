@@ -119,7 +119,8 @@ Aliases also supported by code for some webhooks:
 - `POE_DISCORD_WEBHOOK_URL`
 - `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`
 - `POE_DISCORD_WEBHOOK_URL_OPS`
-- `POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY`
+- `POE_DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY`
+- `POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (legacy weekly-recap alias)
 
 ## Quick Start (Windows PowerShell)
 
@@ -200,31 +201,35 @@ python scripts/retrain_ml_pipeline.py
 State is persisted in SQLite config key `ml_retrain`, so it runs at most once per scheduled week.
 The retrain process is launched in the background with a lock file (`logs/ml_retrain.lock`) so poll cycles continue while training runs.
 
-### Poller Daily Discord Recap
+### Poller Weekly Discord Recap
 
-The poller can post a once-per-day daily recap (charts + stats) to Discord after a configured local time.
-Each run covers the **last 24 hours** ending at send time. Point the daily-recap webhook at a **forum** (or media) channel so each run opens a new post and replies inside that thread.
+The poller can post a once-per-week weekly recap (charts + stats) to Discord after a configured local time on a chosen weekday (default **Sunday**).
+Each run covers the **last 7 days** ending at send time. Point the recap webhook at a **forum** (or media) channel so each run opens a new post and replies inside that thread.
 
-When enabled, each poll cycle checks whether the scheduled daily slot has passed and posts at most once per day.
-State is persisted in SQLite config key `daily_summary`.
+When enabled, each poll cycle checks whether the scheduled weekly slot has passed and posts at most once per ISO week.
+State is persisted in SQLite config key `weekly_summary`.
 
 Environment variables:
 
-- `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (optional; falls back to `DISCORD_WEBHOOK_URL`)
-- `POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (alias)
-- `POE_DAILY_SUMMARY_ENABLED` (`1`/`0`, default `1`)
-- `POE_DAILY_SUMMARY_HOUR` (`0..23`, default `8`)
-- `POE_DAILY_SUMMARY_MINUTE` (`0..59`, default `0`)
-- `POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES` (default `120`, GMT+2)
-- `POE_DAILY_SUMMARY_TOP_ITEMS` (default `8`, bar chart limit)
+- `DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY` (optional; preferred)
+- `POE_DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY` (alias)
+- `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (legacy alias; same webhook)
+- `POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (legacy alias)
+- Falls back to `DISCORD_WEBHOOK_URL` when unset
+- `POE_WEEKLY_SUMMARY_ENABLED` (`1`/`0`, default `1`; legacy `POE_DAILY_SUMMARY_ENABLED`)
+- `POE_WEEKLY_SUMMARY_WEEKDAY` (`0..6`, `0`=Mon … `6`=Sun, default `6`)
+- `POE_WEEKLY_SUMMARY_HOUR` (`0..23`, default `12`; legacy `POE_DAILY_SUMMARY_HOUR`)
+- `POE_WEEKLY_SUMMARY_MINUTE` (`0..59`, default `0`; legacy `POE_DAILY_SUMMARY_MINUTE`)
+- `POE_WEEKLY_SUMMARY_TZ_OFFSET_MINUTES` (default `120`, GMT+2; legacy `POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES`)
+- `POE_WEEKLY_SUMMARY_TOP_ITEMS` (default `8`, bar chart limit; legacy `POE_DAILY_SUMMARY_TOP_ITEMS`)
 
 Example (`.env.local`):
 
 ```text
 DISCORD_WEBHOOK_URL_DAILY_SUMMARY=https://discord.com/api/webhooks/...
-POE_DAILY_SUMMARY_HOUR=8
-POE_DAILY_SUMMARY_MINUTE=15
-POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES=120
+POE_WEEKLY_SUMMARY_HOUR=12
+POE_WEEKLY_SUMMARY_MINUTE=15
+POE_WEEKLY_SUMMARY_TZ_OFFSET_MINUTES=120
 ```
 
 Admin status endpoint:
@@ -343,7 +348,7 @@ The project can bootstrap this from `config.json` once if no DB config exists.
 
 Public GET routes:
 
-- `/api/prices`
+- `/api/prices` — optional `?sinceMs=<epoch_ms>` (windowed history + latest poll per item) or `?full=1` (all history; used when chart preset is “all time”)
 - `/api/config` (GET)
 - `/api/listings?queryId=...` (or `variantId`)
 - `/api/account-compare`
@@ -408,12 +413,12 @@ Webhook routing:
 - all new listings (classified, no pings): `DISCORD_WEBHOOK_URL_NEW_ITEMS` (dedicated channel only; no fallback)
 - DB export uploads: `DISCORD_WEBHOOK_URL_DB_EXPORT` (or `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`)
 - ops health alerts: `DISCORD_WEBHOOK_URL_OPS` (or `POE_DISCORD_WEBHOOK_URL_OPS`)
-- daily recap (charts + stats): `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (fallback to main)
+- weekly recap (charts + stats): `DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY` or `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (fallback to main)
 
 `discord_market_watch_users` in market config supports mention tagging by seller prefix match.
 
-The daily recap embed includes est. sales, mirrors moved (sales), reprices, top items, and biggest risers/fallers for the rolling 24h window.
-For forum (or media) channels, each run creates a new forum post (`thread_name` = `Daily recap · YYYY-MM-DD`); chart PNGs and the stats embed are posted inside that thread. Dashboard-themed charts: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
+The weekly recap embed includes est. sales, mirrors moved (sales), reprices, top items, and biggest risers/fallers for the rolling 7-day window.
+For forum (or media) channels, each run creates a new forum post (`thread_name` = `Weekly recap · YYYY-Www`); chart PNGs and the stats embed are posted inside that thread. Dashboard-themed charts: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
 
 ## Logging and Runtime Files
 

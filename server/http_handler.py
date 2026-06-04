@@ -1048,7 +1048,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             )
 
         if parsed.path == "/api/prices":
-            payload = load_price_data()
+            qs = parse_qs(parsed.query or "")
+            full_history = (qs.get("full") or [""])[0].strip().lower() in ("1", "true", "yes")
+            since_ms: int | None = None
+            if not full_history:
+                raw_since = (qs.get("sinceMs") or [None])[0]
+                if raw_since is not None:
+                    try:
+                        since_ms = int(raw_since)
+                    except (TypeError, ValueError):
+                        since_ms = None
+                if since_ms is None:
+                    # Clients without query params: default to ~3 months (dashboard preset).
+                    since_ms = int((datetime.now(timezone.utc).timestamp() - 90 * 86400) * 1000)
+            payload = load_price_data(since_ms=since_ms, full_history=full_history)
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")

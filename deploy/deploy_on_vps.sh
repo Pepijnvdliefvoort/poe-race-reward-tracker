@@ -68,9 +68,12 @@ cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 systemctl daemon-reload
 grep '^ExecStart=' /etc/systemd/system/poe-market-server.service | head -n1 || true
 
-echo "[5/6] Restart app services"
-systemctl restart poe-market-server
-systemctl restart poe-market-poller
+echo "[5/6] Restart app services (stop, brief wait, start — avoids stuck workers)"
+systemctl stop poe-market-server || true
+systemctl stop poe-market-poller || true
+sleep 2
+systemctl start poe-market-server
+systemctl start poe-market-poller
 
 echo "[6/6] Apply Caddy config"
 if grep -q "PUBLIC_HOSTNAME_HERE" deploy/caddy/Caddyfile; then
