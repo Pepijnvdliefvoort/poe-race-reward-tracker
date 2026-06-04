@@ -30,7 +30,6 @@ const els = {
   soldCount: () => document.getElementById("altArtsSoldCount"),
   statusDot: () => document.getElementById("altArtsStatusDot"),
   statusText: () => document.getElementById("altArtsStatusText"),
-  variantLabel: () => document.getElementById("altArtsVariantLabel"),
   addBtn: () => document.getElementById("altArtsAddBtn"),
   variantWrap: () => document.getElementById("altArtsVariantWrap"),
   variantPicker: () => document.getElementById("altArtsVariantPicker"),
@@ -344,7 +343,6 @@ function buildVariantTile(variant, { selectable, selected }) {
 function refreshVariantPicker() {
   const wrap = els.variantWrap();
   const picker = els.variantPicker();
-  const heading = els.variantLabel();
   if (!wrap || !picker) return;
 
   const raw = String(els.itemInput()?.value || "").trim();
@@ -361,9 +359,6 @@ function refreshVariantPicker() {
   }
 
   wrap.hidden = false;
-  if (heading) {
-    heading.textContent = selectable ? "Choose art" : "Art";
-  }
   picker.setAttribute("role", selectable ? "listbox" : "group");
 
   if (variants.length === 1) {
