@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import sqlite3
@@ -1077,6 +1078,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 since_ms=since_ms,
                 build=_build_prices_body,
             )
+            encoding = (self.headers.get("Accept-Encoding") or "").lower()
+            if "gzip" in encoding:
+                compressed = gzip.compress(body, compresslevel=5)
+                if len(compressed) < len(body):
+                    body = compressed
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Encoding", "gzip")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")

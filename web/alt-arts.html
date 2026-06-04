@@ -56,7 +56,7 @@
             <p class="eyebrow">Portfolio</p>
             <h2 class="compare-title">Purchase &amp; profit tracker</h2>
             <p class="compare-subtitle">
-              Track what you paid per lot (mirrors). Pick the item, then click the art image for your variant. Market floor comes from live poll data.
+              Track what you paid per item (mirrors). Set quantity for batch deals. Pick the item, then click the art image for your variant. Market floor comes from live poll data.
             </p>
           </div>
         </div>
@@ -79,7 +79,7 @@
               <datalist id="altArtsItemDatalist"></datalist>
             </label>
             <label class="compare-control alt-arts-field alt-arts-field--purchase">
-              <span class="compare-label">Purchase (mirrors)</span>
+              <span class="compare-label">Purchase (mirrors, per item)</span>
               <input
                 id="altArtsPurchaseInput"
                 class="compare-input"
@@ -104,6 +104,19 @@
             <p class="alt-arts-optional-heading">Optional</p>
             <div class="alt-arts-optional-fields">
               <label class="compare-control alt-arts-field alt-arts-field--narrow">
+                <span class="compare-label">Quantity</span>
+                <input
+                  id="altArtsQtyInput"
+                  class="compare-input"
+                  type="number"
+                  min="1"
+                  step="0.1"
+                  value="1"
+                  inputmode="numeric"
+                  aria-label="Quantity"
+                />
+              </label>
+              <label class="compare-control alt-arts-field alt-arts-field--narrow">
                 <span class="compare-label">Purchased</span>
                 <input id="altArtsDateInput" class="compare-input" type="date" />
               </label>
@@ -123,9 +136,10 @@
             <thead>
               <tr>
                 <th scope="col">Item</th>
-                <th scope="col">Purchase</th>
-                <th scope="col">Market floor</th>
-                <th scope="col">vs floor</th>
+                <th scope="col">Qty</th>
+                <th scope="col">Purchase <span class="alt-arts-th-note">(per item)</span></th>
+                <th scope="col">Market floor <span class="alt-arts-th-note">(per item)</span></th>
+                <th scope="col">vs floor <span class="alt-arts-th-note">(per item)</span></th>
                 <th scope="col">Purchased</th>
                 <th scope="col">Actions</th>
               </tr>
@@ -150,8 +164,9 @@
               <thead>
                 <tr>
                   <th scope="col">Item</th>
-                  <th scope="col">Purchase</th>
-                  <th scope="col">Sale</th>
+                  <th scope="col">Qty</th>
+                  <th scope="col">Purchase <span class="alt-arts-th-note">(per item)</span></th>
+                  <th scope="col">Sale <span class="alt-arts-th-note">(per item)</span></th>
                   <th scope="col">Profit</th>
                   <th scope="col">Sold</th>
                   <th scope="col">Actions</th>
