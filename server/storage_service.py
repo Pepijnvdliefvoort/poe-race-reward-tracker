@@ -136,7 +136,7 @@ def _ms_to_utc_iso(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat()
 
 
-def _compact_poll_point(point: dict[str, Any]) -> dict[str, Any]:
+def _compact_poll_point(point: dict[str, Any], *, include_listing_meta: bool = False) -> dict[str, Any]:
     """Drop null/zero fields so large histories serialize smaller."""
     out: dict[str, Any] = {"time": point["time"], "cycle": point["cycle"]}
     for key in (
@@ -150,10 +150,11 @@ def _compact_poll_point(point: dict[str, Any]) -> dict[str, Any]:
         val = point.get(key)
         if val is not None:
             out[key] = val
-    for key in ("totalResults", "usedResults", "fetchedForInference"):
-        val = int(point.get(key) or 0)
-        if val:
-            out[key] = val
+    if include_listing_meta:
+        for key in ("totalResults", "usedResults", "fetchedForInference"):
+            val = int(point.get(key) or 0)
+            if val:
+                out[key] = val
     for key in (
         "inferenceConfirmedTransfer",
         "inferenceLikelyInstantSale",
@@ -490,7 +491,7 @@ class ServerStorage:
                         series["queryId"] = qid
 
                 if latest_point is not None:
-                    series["latest"] = _compact_poll_point(latest_point)
+                    series["latest"] = _compact_poll_point(latest_point, include_listing_meta=True)
                 if latest_row is not None and series.get("latest"):
                     latest_point = series["latest"]
                     if not _valid_positive_mirror(latest_point.get("lowestMirror")):
