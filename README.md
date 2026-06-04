@@ -348,7 +348,7 @@ The project can bootstrap this from `config.json` once if no DB config exists.
 
 Public GET routes:
 
-- `/api/prices` — optional `?sinceMs=<epoch_ms>` (windowed history + latest poll per item) or `?full=1` (all history; used when chart preset is “all time”)
+- `/api/prices` — optional `?sinceMs=<epoch_ms>` (windowed history + latest poll per item) or `?full=1` (all history; used when chart preset is “all time”). Responses are cached in-process for 30s per window bucket.
 - `/api/config` (GET)
 - `/api/listings?queryId=...` (or `variantId`)
 - `/api/account-compare`
@@ -412,7 +412,7 @@ Webhook routing:
 - reprices/new-item watch: `DISCORD_WEBHOOK_URL_REPRICES` (fallback to sales/main)
 - all new listings (classified, no pings): `DISCORD_WEBHOOK_URL_NEW_ITEMS` (dedicated channel only; no fallback)
 - DB export uploads: `DISCORD_WEBHOOK_URL_DB_EXPORT` (or `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`)
-- ops health alerts: `DISCORD_WEBHOOK_URL_OPS` (or `POE_DISCORD_WEBHOOK_URL_OPS`)
+- ops health alerts: `DISCORD_WEBHOOK_URL_OPS` (or `POE_DISCORD_WEBHOOK_URL_OPS`) — poller stale/DB/API checks plus VPS cron probe (`python -m server.ops_health_probe`) for slow or oversized `/api/prices`
 - weekly recap (charts + stats): `DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY` or `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (fallback to main)
 
 `discord_market_watch_users` in market config supports mention tagging by seller prefix match.

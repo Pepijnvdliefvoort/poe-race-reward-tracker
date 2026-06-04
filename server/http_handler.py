@@ -43,6 +43,7 @@ from .data_service import (
     load_price_data,
     save_config,
 )
+from .price_cache import get_cached_prices_body, since_ms_for_load
 from .db_admin_service import db_overview, er_schema, list_tables, preview_table, run_query, table_details
 from .recommendation_service import RecommendationInputError, recommend_investments
 from .sales_discord_notify import (
@@ -1061,8 +1062,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if since_ms is None:
                     # Clients without query params: default to ~3 months (dashboard preset).
                     since_ms = int((datetime.now(timezone.utc).timestamp() - 90 * 86400) * 1000)
-            payload = load_price_data(since_ms=since_ms, full_history=full_history)
-            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            load_since = (
+                since_ms_for_load(full_history=full_history, since_ms=since_ms)
+                if not full_history
+                else None
+            )
+
+            def _build_prices_body() -> bytes:
+                payload = load_price_data(since_ms=load_since, full_history=full_history)
+                return json.dumps(payload, allow_nan=False).encode("utf-8")
+
+            body = get_cached_prices_body(
+                full_history=full_history,
+                since_ms=since_ms,
+                build=_build_prices_body,
+            )
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")

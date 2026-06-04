@@ -1,0 +1,4 @@
+# PoE Market Flips — local dashboard health probe (Discord ops webhook).
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+*/5 * * * * root cd /opt/poe-market-flips && /opt/poe-market-flips/.venv/bin/python -m server.ops_health_probe >> /var/log/poe-market-ops-probe.log 2>&1
