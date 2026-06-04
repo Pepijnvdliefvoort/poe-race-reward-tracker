@@ -101,6 +101,27 @@ Open in browser:
 
 - `https://YOUR_HOSTNAME`
 
+### Ops health probe (cron)
+
+If `DISCORD_WEBHOOK_URL_OPS` is set in `/etc/poe-market-flips/secrets.env`, deploy installs
+`/etc/cron.d/poe-market-ops-probe` (every 5 minutes). It checks local `http://127.0.0.1:8080/api/config`
+and a windowed `/api/prices?sinceMs=…`, then posts to Discord when responses fail, are slow, or
+the prices payload is too large. Logs: `/var/log/poe-market-ops-probe.log`.
+
+Manual test:
+
+```bash
+cd /opt/poe-market-flips
+sudo mkdir -p /var/lib/poe-market-flips
+.venv/bin/python -m server.ops_health_probe
+```
+
+Optional env overrides (cron inherits `secrets.env` only; set in that file or export before test):
+
+- `POE_OPS_PROBE_PRICES_MAX_SEC` (default `30`)
+- `POE_OPS_PROBE_PRICES_MAX_BYTES` (default `26214400` = 25 MiB)
+- `POE_OPS_PROBE_COOLDOWN_SEC` (default `1800`)
+
 ## 8. Firewall Checklist
 
 If UFW is enabled:
@@ -127,6 +148,7 @@ sudo systemctl stop poe-market-server poe-market-poller || true
 sleep 2
 sudo systemctl start poe-market-server poe-market-poller
 sudo systemctl reload caddy
+sudo cp deploy/cron/poe-market-ops-probe /etc/cron.d/poe-market-ops-probe
 ```
 
 `deploy/deploy_on_vps.sh` uses the same stop → wait → start pattern so deploys do not hang on wedged Python workers.

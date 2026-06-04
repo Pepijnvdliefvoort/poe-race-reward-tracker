@@ -16,13 +16,13 @@ fi
 
 cd "$APP_DIR"
 
-echo "[1/6] Pull latest code"
+echo "[1/7] Pull latest code"
 git pull --ff-only
 
-echo "[2/6] Install/update Python dependencies"
+echo "[2/7] Install/update Python dependencies"
 .venv/bin/pip install -r requirements.txt
 
-echo "[3/6] Sync runtime secrets"
+echo "[3/7] Sync runtime secrets"
 mkdir -p "$SECRETS_DIR"
 FINAL_DISCORD="${DISCORD_WEBHOOK_URL:-}"
 FINAL_DISCORD_SALES="${DISCORD_WEBHOOK_URL_SALES:-}"
@@ -62,20 +62,27 @@ else
   echo "No secrets in workflow or on disk; skipping $SECRETS_FILE"
 fi
 
-echo "[4/6] Sync systemd unit files (dashboard: python -m server.server)"
+echo "[4/7] Sync systemd unit files (dashboard: python -m server.server)"
 cp deploy/systemd/poe-market-server.service /etc/systemd/system/
 cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 systemctl daemon-reload
 grep '^ExecStart=' /etc/systemd/system/poe-market-server.service | head -n1 || true
 
-echo "[5/6] Restart app services (stop, brief wait, start — avoids stuck workers)"
+echo "[5/7] Restart app services (stop, brief wait, start — avoids stuck workers)"
 systemctl stop poe-market-server || true
 systemctl stop poe-market-poller || true
 sleep 2
 systemctl start poe-market-server
 systemctl start poe-market-poller
 
-echo "[6/6] Apply Caddy config"
+echo "[6/7] Install ops health probe cron"
+mkdir -p /var/lib/poe-market-flips
+touch /var/log/poe-market-ops-probe.log
+chmod 644 /var/log/poe-market-ops-probe.log
+cp deploy/cron/poe-market-ops-probe /etc/cron.d/poe-market-ops-probe
+chmod 644 /etc/cron.d/poe-market-ops-probe
+
+echo "[7/7] Apply Caddy config"
 if grep -q "PUBLIC_HOSTNAME_HERE" deploy/caddy/Caddyfile; then
   echo "Refusing deploy: deploy/caddy/Caddyfile still contains PUBLIC_HOSTNAME_HERE"
   exit 1
