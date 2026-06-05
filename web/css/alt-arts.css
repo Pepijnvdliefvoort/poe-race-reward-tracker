@@ -329,16 +329,135 @@
   border: 1px solid rgba(251, 191, 36, 0.35);
 }
 
+.alt-arts-table thead th {
+  min-width: 0;
+  resize: none;
+}
+
+.alt-arts-table th:nth-child(1) {
+  width: 24%;
+}
+
+.alt-arts-table th:nth-child(2) {
+  width: 12%;
+}
+
+.alt-arts-table th:nth-child(3),
+.alt-arts-table th:nth-child(4) {
+  width: 11%;
+}
+
+.alt-arts-table th:nth-child(5) {
+  width: 10%;
+}
+
+.alt-arts-table th:nth-child(6) {
+  width: 9%;
+}
+
+.alt-arts-table th:nth-child(7) {
+  width: 23%;
+}
+
+.alt-arts-table tbody td.alt-arts-qty {
+  overflow: visible;
+  text-align: center;
+}
+
+.alt-arts-table tbody tr.alt-arts-row--editing {
+  position: relative;
+  z-index: 2;
+}
+
+.alt-arts-table tbody tr.alt-arts-row--editing td {
+  overflow: visible;
+}
+
+.alt-arts-table tbody tr.alt-arts-row--editing td.alt-arts-qty--editing {
+  position: relative;
+  z-index: 3;
+  background: var(--surface-strong);
+  box-shadow: 8px 0 12px rgba(3, 6, 14, 0.35);
+}
+
+:root.light-theme .alt-arts-table tbody tr.alt-arts-row--editing td.alt-arts-qty--editing {
+  box-shadow: 8px 0 12px rgba(15, 23, 42, 0.08);
+}
+
+.alt-arts-table tbody tr.alt-arts-row--editing td:last-child {
+  position: relative;
+  z-index: 3;
+  background: var(--surface-strong);
+  box-shadow: -8px 0 12px rgba(3, 6, 14, 0.35);
+}
+
+:root.light-theme .alt-arts-table tbody tr.alt-arts-row--editing td:last-child {
+  box-shadow: -8px 0 12px rgba(15, 23, 42, 0.08);
+}
+
 .alt-arts-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
 }
 
 .alt-arts-actions .compare-btn {
-  padding: 0 10px;
-  height: 32px;
-  font-size: 12px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 6px;
+  height: 28px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.alt-arts-table td:last-child {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.alt-arts-qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  max-width: 100%;
+}
+
+.alt-arts-qty-stepper-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 90%, var(--ink) 10%);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.alt-arts-qty-stepper-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.alt-arts-qty-stepper-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.alt-arts-qty-stepper-input {
+  flex: 0 0 42px;
+  width: 42px;
+  min-width: 42px;
+  height: 24px;
+  padding: 0 4px;
+  text-align: center;
 }
 
 .alt-arts-sell-row td {
@@ -348,15 +467,32 @@
 .alt-arts-sell-panel {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 12px;
   align-items: center;
-  padding: 4px 0;
+  padding: 10px 12px;
 }
 
 .alt-arts-sell-panel .compare-input {
   min-width: 100px;
   width: 120px;
   height: 32px;
+}
+
+.alt-arts-totals-row td {
+  border-top: 2px solid color-mix(in srgb, var(--line) 80%, var(--ink) 20%);
+  background: color-mix(in srgb, var(--panel) 94%, var(--accent) 6%);
+  font-weight: 600;
+}
+
+.alt-arts-totals-label {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.alt-arts-totals-value {
+  font-variant-numeric: tabular-nums;
 }
 
 .alt-arts-sold-details {

@@ -19,6 +19,7 @@ let baseNameLookup = new Map();
 /** @type {string[]} */
 let baseItemNames = [];
 let sellExpandedId = null;
+let editExpandedId = null;
 let catalogLoaded = false;
 let selectedVariantKey = null;
 
@@ -125,6 +126,76 @@ function lotQuantity(lot) {
 
 function lotCostBasis(lot) {
   return lot.purchaseMirror * lotQuantity(lot);
+}
+
+function lotSaleProceeds(lot) {
+  return lot.saleMirror * lotQuantity(lot);
+}
+
+function lotFloorValue(lot) {
+  const floor = getVariantForLot(lot)?.lowestMirror;
+  if (floor == null) return null;
+  return floor * lotQuantity(lot);
+}
+
+function persistLotQuantity(lotId, rawQty) {
+  const qty = parseQuantity(rawQty);
+  const next = readState();
+  const idx = next.active.findIndex((l) => l.id === lotId);
+  if (idx < 0) return false;
+  if (roundQuantity(lotQuantity(next.active[idx])) === qty) return false;
+  next.active[idx] = { ...next.active[idx], quantity: qty };
+  saveState(next);
+  return true;
+}
+
+function computeActiveTotals(state) {
+  let totalQty = 0;
+  let costBasis = 0;
+  let floorValue = 0;
+  let costBasisWithFloor = 0;
+  let hasFloor = false;
+
+  for (const lot of state.active) {
+    const qty = lotQuantity(lot);
+    totalQty += qty;
+    costBasis += lotCostBasis(lot);
+    const floorTotal = lotFloorValue(lot);
+    if (floorTotal != null) {
+      hasFloor = true;
+      floorValue += floorTotal;
+      costBasisWithFloor += lotCostBasis(lot);
+    }
+  }
+
+  return {
+    totalQty: roundQuantity(totalQty),
+    costBasis,
+    floorValue: hasFloor ? floorValue : null,
+    unrealized: hasFloor ? roundMirrorAmount(floorValue - costBasisWithFloor) : null,
+  };
+}
+
+function computeSoldTotals(state) {
+  let totalQty = 0;
+  let costBasis = 0;
+  let saleProceeds = 0;
+  let profit = 0;
+
+  for (const lot of state.sold) {
+    const qty = lotQuantity(lot);
+    totalQty += qty;
+    costBasis += lotCostBasis(lot);
+    saleProceeds += lotSaleProceeds(lot);
+    profit += lot.profitMirror;
+  }
+
+  return {
+    totalQty: roundQuantity(totalQty),
+    costBasis,
+    saleProceeds,
+    profit: roundMirrorAmount(profit),
+  };
 }
 
 function needsSellQuantityInput(qty) {
@@ -511,16 +582,27 @@ function renderSummary(state) {
   if (!root) return;
 
   const activeCount = state.active.length;
-  const costBasis = state.active.reduce((s, l) => s + lotCostBasis(l), 0);
-  const itemCount = roundQuantity(state.active.reduce((s, l) => s + lotQuantity(l), 0));
+  const totals = computeActiveTotals(state);
   const realized = state.sold.reduce((s, l) => s + l.profitMirror, 0);
   const soldCount = state.sold.length;
 
   root.innerHTML = "";
   const stats = [
     { label: "Active lots", value: String(activeCount) },
-    { label: "Items held", value: formatQuantityDisplay(itemCount) },
-    { label: "Cost basis", value: `${formatMirrorDisplay(costBasis)} mirrors` },
+    { label: "Items held", value: formatQuantityDisplay(totals.totalQty) },
+    { label: "Cost basis", value: `${formatMirrorDisplay(totals.costBasis)} mirrors` },
+    {
+      label: "Floor value",
+      value:
+        totals.floorValue != null
+          ? `${formatMirrorDisplay(totals.floorValue)} mirrors`
+          : "—",
+    },
+    {
+      label: "Unrealized vs floor",
+      value:
+        totals.unrealized != null ? `${formatProfitDelta(totals.unrealized)} mirrors` : "—",
+    },
     { label: "Realized profit", value: `${formatProfitMirror(realized)} mirrors` },
     { label: "Sold", value: String(soldCount) },
   ];
@@ -581,10 +663,70 @@ function buildItemCell(lot) {
   return cell;
 }
 
-function buildQtyCell(lot) {
+function buildQtyCell(lot, { editing = false } = {}) {
   const td = document.createElement("td");
   td.className = "alt-arts-qty";
-  td.textContent = formatQuantityDisplay(lotQuantity(lot));
+  if (editing) {
+    td.classList.add("alt-arts-qty--editing");
+  }
+  if (!editing) {
+    td.textContent = formatQuantityDisplay(lotQuantity(lot));
+    return td;
+  }
+
+  const stepper = document.createElement("div");
+  stepper.className = "alt-arts-qty-stepper";
+
+  const minusBtn = document.createElement("button");
+  minusBtn.type = "button";
+  minusBtn.className = "alt-arts-qty-stepper-btn";
+  minusBtn.textContent = "−";
+  minusBtn.setAttribute("aria-label", "Decrease quantity");
+
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = String(QTY_MIN);
+  input.step = "0.1";
+  input.className = "compare-input alt-arts-qty-stepper-input";
+  input.value = formatQuantityDisplay(lotQuantity(lot));
+  input.inputMode = "decimal";
+  input.setAttribute("aria-label", "Quantity");
+
+  const plusBtn = document.createElement("button");
+  plusBtn.type = "button";
+  plusBtn.className = "alt-arts-qty-stepper-btn";
+  plusBtn.textContent = "+";
+  plusBtn.setAttribute("aria-label", "Increase quantity");
+
+  const syncMinusDisabled = () => {
+    const current = parseQuantity(input.value);
+    minusBtn.disabled = current <= QTY_MIN + 1e-9;
+  };
+
+  const applyQty = (rawQty) => {
+    const qty = parseQuantity(rawQty);
+    input.value = formatQuantityDisplay(qty);
+    syncMinusDisabled();
+    if (persistLotQuantity(lot.id, qty)) {
+      renderAll();
+    }
+  };
+
+  minusBtn.addEventListener("click", () => {
+    applyQty(roundQuantity(parseQuantity(input.value) - 1));
+  });
+
+  plusBtn.addEventListener("click", () => {
+    applyQty(roundQuantity(parseQuantity(input.value) + 1));
+  });
+
+  input.addEventListener("change", () => {
+    applyQty(input.value);
+  });
+
+  syncMinusDisabled();
+  stepper.append(minusBtn, input, plusBtn);
+  td.appendChild(stepper);
   return td;
 }
 
@@ -666,6 +808,11 @@ function renderActiveTable(state) {
     const tr = document.createElement("tr");
     tr.dataset.lotId = lot.id;
 
+    const isEditing = editExpandedId === lot.id;
+    if (isEditing) {
+      tr.classList.add("alt-arts-row--editing");
+    }
+
     const tdItem = document.createElement("td");
     tdItem.appendChild(buildItemCell(lot));
     if (lot.notes) {
@@ -676,7 +823,7 @@ function renderActiveTable(state) {
       tdItem.appendChild(notes);
     }
 
-    const tdQty = buildQtyCell(lot);
+    const tdQty = buildQtyCell(lot, { editing: isEditing });
 
     const tdPurchase = document.createElement("td");
     tdPurchase.appendChild(buildMirrorPriceNode(lot.purchaseMirror));
@@ -716,6 +863,17 @@ function renderActiveTable(state) {
     sellBtn.textContent = sellExpandedId === lot.id ? "Cancel" : "Sell";
     sellBtn.addEventListener("click", () => {
       sellExpandedId = sellExpandedId === lot.id ? null : lot.id;
+      if (sellExpandedId === lot.id) editExpandedId = null;
+      renderAll();
+    });
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "compare-btn compare-btn--ghost";
+    editBtn.textContent = editExpandedId === lot.id ? "Done" : "Edit";
+    editBtn.addEventListener("click", () => {
+      editExpandedId = editExpandedId === lot.id ? null : lot.id;
+      if (editExpandedId === lot.id) sellExpandedId = null;
       renderAll();
     });
 
@@ -733,11 +891,12 @@ function renderActiveTable(state) {
       const next = readState();
       next.active = next.active.filter((l) => l.id !== lot.id);
       if (sellExpandedId === lot.id) sellExpandedId = null;
+      if (editExpandedId === lot.id) editExpandedId = null;
       saveState(next);
       renderAll();
     });
 
-    actions.append(sellBtn, delBtn);
+    actions.append(editBtn, sellBtn, delBtn);
     tdActions.appendChild(actions);
 
     tr.append(tdItem, tdQty, tdPurchase, tdFloor, tdVs, tdDate, tdActions);
@@ -861,6 +1020,101 @@ function renderActiveTable(state) {
       tbody.appendChild(sellTr);
     }
   }
+
+  appendActiveTotalsRow(tbody, state);
+}
+
+function appendActiveTotalsRow(tbody, state) {
+  if (!state.active.length) return;
+
+  const totals = computeActiveTotals(state);
+  const tr = document.createElement("tr");
+  tr.className = "alt-arts-totals-row";
+
+  const tdLabel = document.createElement("td");
+  tdLabel.textContent = "Total";
+  tdLabel.className = "alt-arts-totals-label";
+
+  const tdQty = document.createElement("td");
+  tdQty.className = "alt-arts-qty alt-arts-totals-value";
+  tdQty.textContent = formatQuantityDisplay(totals.totalQty);
+
+  const tdCost = document.createElement("td");
+  tdCost.className = "alt-arts-totals-value";
+  tdCost.title = "Total cost basis (all items)";
+  tdCost.appendChild(buildMirrorPriceNode(totals.costBasis));
+
+  const tdFloor = document.createElement("td");
+  tdFloor.className = "alt-arts-totals-value";
+  tdFloor.title = "Total market floor value (all items)";
+  if (totals.floorValue != null) {
+    tdFloor.appendChild(buildMirrorPriceNode(totals.floorValue));
+  } else {
+    tdFloor.textContent = "—";
+  }
+
+  const tdVs = document.createElement("td");
+  tdVs.className = "alt-arts-totals-value";
+  if (totals.unrealized != null) {
+    const pill = document.createElement("span");
+    pill.className = `cmp-pill ${deltaPillClass(totals.unrealized)}`;
+    pill.textContent = formatProfitDelta(totals.unrealized);
+    tdVs.appendChild(pill);
+  } else {
+    tdVs.textContent = "—";
+  }
+
+  const tdDate = document.createElement("td");
+  tdDate.textContent = "";
+
+  const tdActions = document.createElement("td");
+  tdActions.textContent = "";
+
+  tr.append(tdLabel, tdQty, tdCost, tdFloor, tdVs, tdDate, tdActions);
+  tbody.appendChild(tr);
+}
+
+function appendSoldTotalsRow(tbody, state) {
+  if (!state.sold.length) return;
+
+  const totals = computeSoldTotals(state);
+  const tr = document.createElement("tr");
+  tr.className = "alt-arts-totals-row";
+
+  const tdLabel = document.createElement("td");
+  tdLabel.textContent = "Total";
+  tdLabel.className = "alt-arts-totals-label";
+
+  const tdQty = document.createElement("td");
+  tdQty.className = "alt-arts-qty alt-arts-totals-value";
+  tdQty.textContent = formatQuantityDisplay(totals.totalQty);
+
+  const tdCost = document.createElement("td");
+  tdCost.className = "alt-arts-totals-value";
+  tdCost.title = "Total purchase cost (all sold items)";
+  tdCost.appendChild(buildMirrorPriceNode(totals.costBasis));
+
+  const tdSale = document.createElement("td");
+  tdSale.className = "alt-arts-totals-value";
+  tdSale.title = "Total sale proceeds (all sold items)";
+  tdSale.appendChild(buildMirrorPriceNode(totals.saleProceeds));
+
+  const tdProfit = document.createElement("td");
+  tdProfit.className = "alt-arts-totals-value";
+  tdProfit.title = "Total realized profit";
+  const pill = document.createElement("span");
+  pill.className = `cmp-pill ${deltaPillClass(totals.profit)}`;
+  pill.textContent = formatProfitDelta(totals.profit);
+  tdProfit.appendChild(pill);
+
+  const tdSold = document.createElement("td");
+  tdSold.textContent = "";
+
+  const tdActions = document.createElement("td");
+  tdActions.textContent = "";
+
+  tr.append(tdLabel, tdQty, tdCost, tdSale, tdProfit, tdSold, tdActions);
+  tbody.appendChild(tr);
 }
 
 function renderSoldTable(state) {
@@ -941,6 +1195,8 @@ function renderSoldTable(state) {
     tr.append(tdItem, tdQty, tdPurchase, tdSale, tdProfit, tdSold, tdActions);
     tbody.appendChild(tr);
   }
+
+  appendSoldTotalsRow(tbody, state);
 }
 
 function renderAll() {
