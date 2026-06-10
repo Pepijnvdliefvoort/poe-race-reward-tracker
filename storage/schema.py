@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 def migration_001_initial() -> str:
@@ -302,5 +302,20 @@ CREATE TABLE IF NOT EXISTS new_item_alert_cooldown (
 
 CREATE INDEX IF NOT EXISTS idx_new_item_alert_cooldown_variant
   ON new_item_alert_cooldown(item_variant_id);
+"""
+
+
+def migration_015_account_ban_alert_cooldown() -> str:
+    """Suppress repeat Discord alerts for the same banned seller account."""
+    return """
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS account_ban_alert_cooldown (
+  seller TEXT PRIMARY KEY NOT NULL,
+  alerted_at_utc TEXT NOT NULL,
+  alert_cycle INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_inference_events_rule ON inference_events(rule);
 """
 

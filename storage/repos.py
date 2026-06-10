@@ -433,6 +433,43 @@ class PollsRepo:
         self._con.execute("DELETE FROM item_polls")
         self._con.execute("DELETE FROM poll_runs")
 
+    def list_ban_candidate_vanishes_for_cycles(
+        self,
+        *,
+        league: str,
+        min_cycle: int,
+        max_cycle: int,
+    ) -> list[BanCandidateVanishRow]:
+        rows = self._con.execute(
+            """
+            SELECT ie.seller, ie.fingerprint, ip.item_variant_id, ip.id AS item_poll_id,
+                   pr.cycle_number, iv.display_name
+            FROM inference_events ie
+            JOIN item_polls ip ON ip.id = ie.item_poll_id
+            JOIN poll_runs pr ON pr.id = ip.poll_run_id
+            JOIN item_variants iv ON iv.id = ip.item_variant_id
+            WHERE pr.league = ?
+              AND pr.cycle_number BETWEEN ? AND ?
+              AND ie.rule = 'ban_candidate_vanish'
+              AND ie.seller IS NOT NULL
+              AND TRIM(ie.seller) != ''
+              AND ie.fingerprint IS NOT NULL
+              AND TRIM(ie.fingerprint) != ''
+            """,
+            (str(league), int(min_cycle), int(max_cycle)),
+        ).fetchall()
+        return [
+            BanCandidateVanishRow(
+                seller=str(r["seller"]),
+                fingerprint=str(r["fingerprint"]),
+                item_variant_id=int(r["item_variant_id"]),
+                item_poll_id=int(r["item_poll_id"]),
+                cycle_number=int(r["cycle_number"]),
+                display_name=str(r["display_name"]),
+            )
+            for r in rows
+        ]
+
 
 class InferenceStateRepo:
     def __init__(self, con: sqlite3.Connection) -> None:
@@ -575,6 +612,42 @@ class InferenceStateRepo:
             """,
             pend_payload,
         )
+
+    def remove_pending_for_seller(self, *, item_variant_id: int, seller: str) -> None:
+        self._con.execute(
+            """
+            DELETE FROM inference_state_pending
+            WHERE item_variant_id = ? AND seller = ?
+            """,
+            (int(item_variant_id), str(seller)),
+        )
+
+
+class AccountBanAlertCooldownRepo:
+    def __init__(self, con: sqlite3.Connection) -> None:
+        self._con = con
+
+    def is_alerted(self, *, seller: str) -> bool:
+        row = self._con.execute(
+            "SELECT 1 FROM account_ban_alert_cooldown WHERE seller = ? LIMIT 1",
+            (str(seller),),
+        ).fetchone()
+        return row is not None
+
+    def mark_alerted(self, *, seller: str, alert_cycle: int, alerted_at_utc: str) -> None:
+        self._con.execute(
+            """
+            INSERT INTO account_ban_alert_cooldown(seller, alerted_at_utc, alert_cycle)
+            VALUES (?, ?, ?)
+            ON CONFLICT(seller) DO UPDATE SET
+              alerted_at_utc = excluded.alerted_at_utc,
+              alert_cycle = excluded.alert_cycle
+            """,
+            (str(seller), str(alerted_at_utc), int(alert_cycle)),
+        )
+
+    def clear_alerted(self, *, seller: str) -> None:
+        self._con.execute("DELETE FROM account_ban_alert_cooldown WHERE seller = ?", (str(seller),))
 
 
 class SalesRepo:
@@ -734,6 +807,78 @@ class SalesRepo:
             ),
         ).fetchone()
         return row is not None
+
+    def revert_sales_for_item_poll_seller(
+        self,
+        *,
+        item_poll_id: int,
+        seller: str,
+        reverted_at_utc: str,
+        reverted_reason: str,
+    ) -> list[dict[str, Any]]:
+        """
+        Revert all non-reverted inferred-sale rows for this poll + seller.
+
+        Returns metadata for each reverted row (for Discord / audit).
+        """
+        rows = self._con.execute(
+            """
+            SELECT id, rule, fingerprint, price_amount, price_currency, mirror_equiv, item_variant_id
+            FROM sales
+            WHERE item_poll_id = ?
+              AND seller = ?
+              AND rule IN ('likely_instant_sale', 'likely_non_instant_online_sale')
+              AND reverted_at_utc IS NULL
+            """,
+            (int(item_poll_id), str(seller)),
+        ).fetchall()
+        if not rows:
+            return []
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            cur = self._con.execute(
+                """
+                UPDATE sales
+                SET reverted_at_utc = ?,
+                    reverted_by_item_poll_id = ?,
+                    reverted_reason = ?
+                WHERE id = ?
+                  AND reverted_at_utc IS NULL
+                """,
+                (
+                    str(reverted_at_utc),
+                    int(item_poll_id),
+                    str(reverted_reason),
+                    int(row["id"]),
+                ),
+            )
+            if int(cur.rowcount or 0) <= 0:
+                continue
+            out.append(
+                {
+                    "saleId": int(row["id"]),
+                    "rule": str(row["rule"]),
+                    "fingerprint": str(row["fingerprint"] or ""),
+                    "seller": str(seller),
+                    "priceAmount": row["price_amount"],
+                    "priceCurrency": row["price_currency"],
+                    "mirrorEquiv": row["mirror_equiv"],
+                    "itemVariantId": int(row["item_variant_id"]),
+                    "itemPollId": int(item_poll_id),
+                }
+            )
+        return out
+
+
+@dataclass(frozen=True)
+class BanCandidateVanishRow:
+    seller: str
+    fingerprint: str
+    item_variant_id: int
+    item_poll_id: int
+    cycle_number: int
+    display_name: str
 
 
 class ListingHistoryRepo:

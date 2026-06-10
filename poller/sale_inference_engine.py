@@ -488,6 +488,76 @@ def non_instant_vanished_seller_accounts_for_online_probe(
     return out
 
 
+@dataclass(frozen=True)
+class VanishedListing:
+    fingerprint: str
+    seller: str
+    mirror_equiv: float | None
+    is_instant: bool
+
+
+def collect_inference_safe_vanishes(
+    prev_signals: list[dict[str, Any]],
+    curr_signals: list[dict[str, Any]],
+    *,
+    snapshot_truncated: bool = False,
+    truncation_cutoff_mirror: float | None = None,
+    truncation_safe_margin_pct: float = 6.0,
+    truncated_instant_vanish_max_above_floor_pct: float = 25.0,
+    truncated_instant_vanish_max_above_floor_mirrors: float = 0.08,
+) -> list[VanishedListing]:
+    """
+  Listings that disappeared between polls and pass the same vanish guards as the inference engine.
+
+  Includes instant and non-instant rows (sales and unlist-style removals) for account-ban detection.
+  """
+    prev_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in prev_signals}
+    curr_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in curr_signals}
+    cheapest_prev_mirror = _cheapest_mirror_equiv(prev_signals)
+    out: list[VanishedListing] = []
+    for fp, seller in prev_keys - curr_keys:
+        if not seller or seller == "unknown":
+            continue
+        meta = _meta_for(prev_signals, fp, seller)
+        if not meta:
+            continue
+        mirror_eq = meta.get("mirrorEquiv")
+        if not safe_to_infer_vanish(
+            mirror_eq,
+            snapshot_truncated=snapshot_truncated,
+            truncation_cutoff_mirror=truncation_cutoff_mirror,
+            truncation_safe_margin_pct=truncation_safe_margin_pct,
+        ):
+            continue
+        ps = _sellers_for_fingerprint(prev_signals, fp)
+        cs = _sellers_for_fingerprint(curr_signals, fp)
+        transfer = len(ps) == 1 and len(cs) == 1 and next(iter(ps)) != next(iter(cs))
+        if transfer:
+            continue
+        instant = bool(meta.get("isInstant"))
+        if instant and snapshot_truncated and not near_floor_for_truncated_instant_vanish(
+            mirror_eq,
+            cheapest_prev_mirror,
+            max_above_floor_pct=truncated_instant_vanish_max_above_floor_pct,
+            max_above_floor_mirrors=truncated_instant_vanish_max_above_floor_mirrors,
+        ):
+            continue
+        me: float | None
+        try:
+            me = float(mirror_eq) if mirror_eq is not None else None
+        except Exception:
+            me = None
+        out.append(
+            VanishedListing(
+                fingerprint=fp,
+                seller=seller,
+                mirror_equiv=me,
+                is_instant=instant,
+            )
+        )
+    return out
+
+
 def _canonical_price_currency(currency: Any) -> str | None:
     cur = str(currency or "").strip().lower()
     if not cur:

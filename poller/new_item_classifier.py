@@ -89,7 +89,7 @@ def _relist_excluded_keys(
         if not isinstance(ev, dict):
             continue
         rule = str(ev.get("rule") or "")
-        if rule not in {"relist_same_seller", "fetch_jitter_relist"}:
+        if rule not in {"relist_same_seller", "relist_same_seller_late", "fetch_jitter_relist"}:
             continue
         fp = str(ev.get("fingerprint") or "").strip()
         seller = str(ev.get("seller") or "").strip()
@@ -254,7 +254,11 @@ def classify_new_items(
                 seller=seller,
                 before_cycle=cycle,
             )
-            if last_seen is not None and cycle - last_seen >= max(1, int(config.return_min_cycles)):
+            min_return_cycles = max(1, int(config.return_min_cycles))
+            if last_seen is not None:
+                if cycle - last_seen < min_return_cycles:
+                    # Same seller+roll reappeared after a short gap — relist, not new supply.
+                    continue
                 kind = "returning_after_absence"
                 other_sellers = []
             elif fp not in all_fps_ever and fp not in prev_fps:

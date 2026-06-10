@@ -14,7 +14,15 @@ from typing import Any
 
 import requests
 
+from .account_ban_detector import (
+    AccountBanConfig,
+    BanWatchUser,
+    ban_candidate_vanish_events,
+    load_account_ban_config,
+    process_cycle_ban_checks,
+)
 from .sale_inference_engine import (
+    collect_inference_safe_vanishes,
     evaluate_listing_transition,
     fingerprint_trade_item,
     is_instant_buyout_listing,
@@ -163,6 +171,15 @@ def load_discord_new_items_webhook_url_from_env() -> str:
     No fallback to reprices/sales/main — set ``DISCORD_WEBHOOK_URL_NEW_ITEMS`` explicitly.
     """
     return os.getenv("DISCORD_WEBHOOK_URL_NEW_ITEMS", "").strip()
+
+
+def load_discord_bans_webhook_url_from_env() -> str:
+    """
+    Webhook URL for likely account-ban alerts.
+
+    No fallback — set ``DISCORD_WEBHOOK_URL_BANS`` explicitly.
+    """
+    return os.getenv("DISCORD_WEBHOOK_URL_BANS", "").strip()
 
 
 def load_discord_db_export_webhook_url_from_env() -> str:
@@ -705,7 +722,7 @@ def load_new_items_config(storage: StorageService, *, webhook_configured: bool) 
         enabled=enabled,
         known_fp_cycles=_market_config_int(data, "new_items_known_fp_cycles", 5, 1, 100),
         cooldown_cycles=_market_config_int(data, "new_items_cooldown_cycles", 5, 0, 500),
-        return_min_cycles=_market_config_int(data, "new_items_return_min_cycles", 3, 1, 500),
+        return_min_cycles=_market_config_int(data, "new_items_return_min_cycles", 3, 1, 10_000),
         include_transfers=_market_config_bool(data, "new_items_include_transfers", True),
         min_market_listings=_market_config_int(data, "new_items_min_market_listings", 1, 1, 50),
         jitter_grace_polls=load_inference_fetch_jitter_grace_polls(storage),
@@ -1677,6 +1694,30 @@ def search_item(
     return query_id, result_ids, total
 
 
+def build_account_ban_check_payload(account_name: str) -> dict[str, Any]:
+    """
+    Trade search JSON to detect whether an account has any listings at all (any status).
+
+    Used after multiple tracked listings vanish in a short window to infer a likely ban.
+    """
+    acct = (account_name or "").strip()
+    return {
+        "query": {
+            "status": {"option": "any"},
+            "stats": [{"type": "and", "filters": []}],
+            "filters": {
+                "trade_filters": {
+                    "filters": {
+                        "sale_type": {"option": "any"},
+                        "account": {"input": acct},
+                    }
+                }
+            },
+        },
+        "sort": {"price": "asc"},
+    }
+
+
 def build_account_search_payload(account_name: str) -> dict[str, Any]:
     """
     Minimal trade search JSON: filter by seller account (for "is the seller online in this league?"
@@ -1709,9 +1750,11 @@ def search_trade_by_account(
     *,
     league: str,
     account_name: str,
+    payload: dict[str, Any] | None = None,
 ) -> tuple[str | None, list[str], int]:
     url = f"{BASE_URL}/search/{league}"
-    payload = build_account_search_payload(account_name)
+    if payload is None:
+        payload = build_account_search_payload(account_name)
 
     rate_limiter.wait_before_request()
     response = session.post(url, data=json.dumps(payload), timeout=30.0)
@@ -1783,6 +1826,36 @@ def probe_seller_online_via_account_search(
     if isinstance(account, dict) and "online" in account:
         return bool(account.get("online"))
     return False
+
+
+def probe_account_has_zero_listings(
+    session: requests.Session,
+    rate_limiter: AdaptiveRateLimiter,
+    *,
+    league: str,
+    account_name: str,
+) -> bool | None:
+    """
+    Return True when the account has zero trade listings (any status), False when listings exist.
+
+    Returns None on HTTP / malformed API responses.
+    """
+    acct = (account_name or "").strip()
+    if not acct or acct == "unknown":
+        return None
+
+    try:
+        _query_id, _result_ids, total = search_trade_by_account(
+            session,
+            rate_limiter,
+            league=league,
+            account_name=acct,
+            payload=build_account_ban_check_payload(acct),
+        )
+    except Exception:
+        return None
+
+    return int(total) <= 0
 
 
 def find_first_priced_listing(listings: list[dict[str, Any]]) -> tuple[str, float] | None:
@@ -2811,6 +2884,8 @@ def run_cycle(
     sales_window_days: int = 90,
     icon_urls_by_key: dict[str, str | None] | None = None,
     discord_watch_users: list[DiscordWatchUser] | None = None,
+    bans_webhook_url: str = "",
+    account_ban_config: AccountBanConfig | None = None,
 ) -> float:
     """Run one poll cycle; returns the updated divines-per-mirror ratio."""
     # SQLite is the source of truth (no CSV or listings cache file).
@@ -3044,6 +3119,24 @@ def run_cycle(
         # Poll summary is persisted in SQLite (no CSV file).
 
         if variant_id:
+            ban_vanishes = collect_inference_safe_vanishes(
+                prev_signals,
+                inference_signals,
+                snapshot_truncated=snap_trunc,
+                truncation_cutoff_mirror=trunc_cutoff,
+                truncation_safe_margin_pct=float(truncation_margin_pct),
+                truncated_instant_vanish_max_above_floor_pct=load_inference_truncated_instant_vanish_max_above_floor_pct(
+                    storage
+                ),
+                truncated_instant_vanish_max_above_floor_mirrors=load_inference_truncated_instant_vanish_max_above_floor_mirrors(
+                    storage
+                ),
+            )
+            poll_inference_events = list(inf.events) + ban_candidate_vanish_events(
+                item_key=item_key,
+                cycle=cycle,
+                vanishes=ban_vanishes,
+            )
             write_result = storage.write_poll_result(
                 cycle_number=cycle,
                 league=DEFAULT_LEAGUE,
@@ -3077,7 +3170,7 @@ def run_cycle(
                 },
                 fetched_for_inference=len(listings_inference),
                 listing_preview_rows=listing_preview_rows,
-                inference_events=inf.events,
+                inference_events=poll_inference_events,
                 inference_state=(curr_signals, new_pending_inst, new_pending_on),
                 late_relist_window_days=load_late_relist_window_days(storage),
             )
@@ -3349,6 +3442,28 @@ def run_cycle(
                 f"relist={relist} non_instant_offline?={nib} reprice={repr_seller} multi_seller_fp={multi_fp} new_rows={new_rows}",
             )
 
+    ban_cfg = account_ban_config or AccountBanConfig()
+    if ban_cfg.enabled:
+        process_cycle_ban_checks(
+            session=session,
+            storage=storage,
+            cycle=cycle,
+            league=DEFAULT_LEAGUE,
+            bans_webhook_url=bans_webhook_url,
+            probe_account_has_zero_listings=lambda account_name: probe_account_has_zero_listings(
+                session,
+                rate_limiter,
+                league=DEFAULT_LEAGUE,
+                account_name=account_name,
+            ),
+            config=ban_cfg,
+            watch_users=[
+                BanWatchUser(seller_name=w.seller_name, user_id=w.user_id)
+                for w in (discord_watch_users or [])
+            ],
+            log_line=log_line,
+        )
+
     return divines_per_mirror
 
 
@@ -3509,6 +3624,13 @@ def main() -> None:
             "Set DISCORD_WEBHOOK_URL_NEW_ITEMS for the dedicated new-listings channel.",
         )
 
+    if not load_discord_bans_webhook_url_from_env():
+        log_line(
+            "warn",
+            "Account-ban Discord notifications are disabled (no webhook secret set). "
+            "Set DISCORD_WEBHOOK_URL_BANS for the dedicated ban-alerts channel.",
+        )
+
     if not load_discord_db_export_webhook_url_from_env():
         log_line(
             "warn",
@@ -3562,6 +3684,8 @@ def main() -> None:
         ml_retrain_cfg = load_ml_retrain_config_from_env()
         weekly_summary_cfg = load_weekly_summary_config_from_env()
         discord_watch_users = load_discord_market_watch_users(storage)
+        bans_webhook_url = load_discord_bans_webhook_url_from_env()
+        account_ban_config = load_account_ban_config(storage)
         if sales_webhook_url and not logged_sales_webhook_cfg:
             msg = f"Sales Discord webhook active; est.-sold window={sales_window_days}d"
             if not sales_webhook_dedicated:
@@ -3678,6 +3802,8 @@ def main() -> None:
                 sales_window_days=sales_window_days,
                 icon_urls_by_key=icon_urls_by_key,
                 discord_watch_users=discord_watch_users,
+                bans_webhook_url=bans_webhook_url,
+                account_ban_config=account_ban_config,
             )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "?"
