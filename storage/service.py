@@ -7,6 +7,8 @@ from typing import Any
 
 from .db import Database
 from .repos import (
+    AccountBanAlertCooldownRepo,
+    BanCandidateVanishRow,
     ConfigRepo,
     InferenceStateRepo,
     ItemsRepo,
@@ -737,4 +739,180 @@ class StorageService:
                 mirror_equiv=me,
                 quantity=1,
             )
+
+    def list_ban_candidate_vanishes_for_cycles(
+        self,
+        *,
+        league: str,
+        min_cycle: int,
+        max_cycle: int,
+    ) -> list[BanCandidateVanishRow]:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            return PollsRepo(con).list_ban_candidate_vanishes_for_cycles(
+                league=str(league),
+                min_cycle=int(min_cycle),
+                max_cycle=int(max_cycle),
+            )
+        finally:
+            con.close()
+
+    def is_account_ban_alerted(self, *, seller: str) -> bool:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            return AccountBanAlertCooldownRepo(con).is_alerted(seller=str(seller))
+        finally:
+            con.close()
+
+    def mark_account_ban_alerted(self, *, seller: str, alert_cycle: int) -> None:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            AccountBanAlertCooldownRepo(con).mark_alerted(
+                seller=str(seller),
+                alert_cycle=int(alert_cycle),
+                alerted_at_utc=_utc_now_iso(),
+            )
+            con.commit()
+        finally:
+            con.close()
+
+    def clear_account_ban_alerted(self, *, seller: str) -> None:
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            AccountBanAlertCooldownRepo(con).clear_alerted(seller=str(seller))
+            con.commit()
+        finally:
+            con.close()
+
+    def revert_sales_for_account_ban(
+        self,
+        *,
+        seller: str,
+        vanish_rows: list[BanCandidateVanishRow],
+        revert_poll_id: int,
+    ) -> list[dict[str, Any]]:
+        """
+        Revert false inferred sales for a banned seller across the vanish window.
+
+        Also clears pending inference rows for the seller on affected variants and
+        appends audit events to the poll that triggered the ban check.
+        """
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            sales_repo = SalesRepo(con)
+            inf_repo = InferenceStateRepo(con)
+            polls = PollsRepo(con)
+            now = _utc_now_iso()
+            reverted: list[dict[str, Any]] = []
+            seen_polls: set[int] = set()
+            variant_ids: set[int] = set()
+            display_by_variant = {
+                int(r.item_variant_id): str(r.display_name)
+                for r in vanish_rows
+                if str(r.seller) == str(seller)
+            }
+
+            for row in vanish_rows:
+                if str(row.seller) != str(seller):
+                    continue
+                variant_ids.add(int(row.item_variant_id))
+                poll_id = int(row.item_poll_id)
+                if poll_id in seen_polls:
+                    continue
+                seen_polls.add(poll_id)
+                batch = sales_repo.revert_sales_for_item_poll_seller(
+                    item_poll_id=poll_id,
+                    seller=str(seller),
+                    reverted_at_utc=now,
+                    reverted_reason="account_banned",
+                )
+                for sale in batch:
+                    vid = int(sale.get("itemVariantId") or 0)
+                    sale["displayName"] = display_by_variant.get(vid, "?")
+                    reverted.append(sale)
+
+            instant_by_poll: dict[int, int] = {}
+            online_by_poll: dict[int, int] = {}
+            for sale in reverted:
+                pid = int(sale.get("itemPollId") or 0)
+                rule = str(sale.get("rule") or "")
+                if rule == "likely_instant_sale":
+                    instant_by_poll[pid] = instant_by_poll.get(pid, 0) + 1
+                elif rule == "likely_non_instant_online_sale":
+                    online_by_poll[pid] = online_by_poll.get(pid, 0) + 1
+
+            for pid, n in instant_by_poll.items():
+                con.execute(
+                    "UPDATE item_polls SET inf_likely_instant_sale = MAX(0, inf_likely_instant_sale - ?) WHERE id = ?",
+                    (int(n), int(pid)),
+                )
+            for pid, n in online_by_poll.items():
+                con.execute(
+                    (
+                        "UPDATE item_polls SET inf_likely_non_instant_online = "
+                        "MAX(0, inf_likely_non_instant_online - ?) WHERE id = ?"
+                    ),
+                    (int(n), int(pid)),
+                )
+
+            audit_events: list[dict[str, Any]] = []
+            for sale in reverted:
+                audit_events.append(
+                    {
+                        "rule": "account_banned_sale_revert",
+                        "seller": str(seller),
+                        "fingerprint": sale.get("fingerprint"),
+                        "revertsSaleRule": sale.get("rule"),
+                        "displayName": sale.get("displayName"),
+                        "mirrorEquiv": sale.get("mirrorEquiv"),
+                        "priceAmount": sale.get("priceAmount"),
+                        "priceCurrency": sale.get("priceCurrency"),
+                    }
+                )
+
+            for variant_id in variant_ids:
+                inf_repo.remove_pending_for_seller(item_variant_id=int(variant_id), seller=str(seller))
+
+            if audit_events:
+                audit_poll_id = int(revert_poll_id)
+                seller_poll_ids = [
+                    int(r.item_poll_id) for r in vanish_rows if str(r.seller) == str(seller)
+                ]
+                if seller_poll_ids:
+                    audit_poll_id = max(seller_poll_ids)
+                polls.replace_inference_events(
+                    item_poll_id=audit_poll_id,
+                    events=_load_inference_events_for_poll(con, audit_poll_id) + audit_events,
+                )
+
+            con.commit()
+            return reverted
+        finally:
+            con.close()
+
+
+def _load_inference_events_for_poll(con, item_poll_id: int) -> list[dict[str, Any]]:
+    import json as _json
+
+    rows = con.execute(
+        "SELECT meta_json FROM inference_events WHERE item_poll_id = ? ORDER BY id ASC",
+        (int(item_poll_id),),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        raw = r["meta_json"]
+        if not raw:
+            continue
+        try:
+            parsed = _json.loads(str(raw))
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            out.append(parsed)
+    return out
 

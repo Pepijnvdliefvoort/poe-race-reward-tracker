@@ -411,6 +411,7 @@ Webhook routing:
 - estimated sales: `DISCORD_WEBHOOK_URL_SALES` (fallback to main)
 - reprices/new-item watch: `DISCORD_WEBHOOK_URL_REPRICES` (fallback to sales/main)
 - all new listings (classified, no pings): `DISCORD_WEBHOOK_URL_NEW_ITEMS` (dedicated channel only; no fallback)
+- likely account bans: `DISCORD_WEBHOOK_URL_BANS` (dedicated channel only; no fallback)
 - DB export uploads: `DISCORD_WEBHOOK_URL_DB_EXPORT` (or `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`)
 - ops health alerts: `DISCORD_WEBHOOK_URL_OPS` (or `POE_DISCORD_WEBHOOK_URL_OPS`) — poller stale/DB/API checks plus VPS cron probe (`python -m server.ops_health_probe`) for slow or oversized `/api/prices`
 - weekly recap (charts + stats): `DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY` or `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (fallback to main)

@@ -590,3 +590,64 @@ def send_new_items_channel_notification(
     }
     resp = session.post(webhook_url, json=payload, timeout=10.0)
     resp.raise_for_status()
+
+
+def _vanished_alt_art_summary(vanished_items: list[Any]) -> list[tuple[str, int]]:
+    """Distinct alt-art display names with how many vanished listings each had."""
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for row in vanished_items:
+        if hasattr(row, "display_name"):
+            name = str(getattr(row, "display_name") or "").strip()
+        elif isinstance(row, dict):
+            name = str(row.get("display_name") or "").strip()
+        else:
+            name = ""
+        if not name:
+            continue
+        if name not in counts:
+            order.append(name)
+            counts[name] = 0
+        counts[name] += 1
+    return [(name, counts[name]) for name in order]
+
+
+def build_account_banned_embed(
+    *,
+    account_name: str,
+    vanished_items: list[Any] | None = None,
+) -> dict[str, Any]:
+    lines = [f"**Account:** `{account_name}`"]
+    alt_arts = _vanished_alt_art_summary(list(vanished_items or []))
+    if alt_arts:
+        lines.append("")
+        lines.append("**Alt arts no longer available:**")
+        max_lines = 12
+        for name, count in alt_arts[:max_lines]:
+            suffix = f" (×{count})" if int(count) > 1 else ""
+            lines.append(f"- {name}{suffix}")
+        if len(alt_arts) > max_lines:
+            lines.append(f"- ...and {len(alt_arts) - max_lines} more")
+    return {
+        "title": "Account banned",
+        "description": "\n".join(lines),
+        "color": 0xE74C3C,
+    }
+
+
+def send_account_banned_notification(
+    session: requests.Session,
+    *,
+    webhook_url: str,
+    account_name: str,
+    vanished_items: list[Any] | None = None,
+    content: str | None = None,
+    allowed_user_ids: list[str] | None = None,
+) -> None:
+    embed = build_account_banned_embed(
+        account_name=account_name,
+        vanished_items=vanished_items,
+    )
+    payload = _build_discord_payload(embed=embed, content=content, allowed_user_ids=allowed_user_ids)
+    resp = session.post(webhook_url, json=payload, timeout=10.0)
+    resp.raise_for_status()
