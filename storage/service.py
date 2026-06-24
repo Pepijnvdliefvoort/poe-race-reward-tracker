@@ -24,6 +24,9 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_INFERENCE_FINGERPRINT_VERSION_KEY = "inference_fingerprint_version"
+
+
 def _reconcile_inference_counts_from_events(
     inference_counts: dict[str, int],
     inference_events: list[dict[str, Any]],
@@ -133,6 +136,56 @@ class StorageService:
         try:
             repo = InferenceStateRepo(con)
             return repo.load_state(item_variant_id=variant_id)
+        finally:
+            con.close()
+
+    def ensure_inference_fingerprint_version(self, *, current_version: int) -> dict[str, Any]:
+        """
+        Keep persisted inference state aligned with ``fingerprint_trade_item``.
+
+        - First run (no stored version): record ``current_version`` without clearing.
+        - Stored version matches: no-op.
+        - Stored version differs: wipe inference_state_* and update the stored version.
+        """
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            config = ConfigRepo(con)
+            stored = config.get_json(key=_INFERENCE_FINGERPRINT_VERSION_KEY)
+            stored_version: int | None = None
+            if isinstance(stored, dict):
+                try:
+                    stored_version = int(stored.get("version"))
+                except (TypeError, ValueError):
+                    stored_version = None
+
+            current = int(current_version)
+            if stored_version is None:
+                config.set_json(
+                    key=_INFERENCE_FINGERPRINT_VERSION_KEY,
+                    value={"version": current},
+                    updated_at_utc=_utc_now_iso(),
+                )
+                con.commit()
+                return {"adopted": True, "current": current, "cleared": False}
+
+            if stored_version == current:
+                return {"adopted": False, "current": current, "cleared": False}
+
+            signals_cleared, pending_cleared = InferenceStateRepo(con).clear_all()
+            config.set_json(
+                key=_INFERENCE_FINGERPRINT_VERSION_KEY,
+                value={"version": current},
+                updated_at_utc=_utc_now_iso(),
+            )
+            con.commit()
+            return {
+                "cleared": True,
+                "previous": stored_version,
+                "current": current,
+                "signals": signals_cleared,
+                "pending": pending_cleared,
+            }
         finally:
             con.close()
 

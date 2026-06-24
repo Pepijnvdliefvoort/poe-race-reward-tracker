@@ -475,6 +475,12 @@ class InferenceStateRepo:
     def __init__(self, con: sqlite3.Connection) -> None:
         self._con = con
 
+    def clear_all(self) -> tuple[int, int]:
+        """Delete all persisted inference signals and pending rows. Returns (signals, pending) counts."""
+        cur_sig = self._con.execute("DELETE FROM inference_state_signals")
+        cur_pend = self._con.execute("DELETE FROM inference_state_pending")
+        return int(cur_sig.rowcount or 0), int(cur_pend.rowcount or 0)
+
     def load_state(
         self, *, item_variant_id: int
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
