@@ -22,6 +22,7 @@ from .account_ban_detector import (
     process_cycle_ban_checks,
 )
 from .sale_inference_engine import (
+    FINGERPRINT_VERSION,
     collect_inference_safe_vanishes,
     evaluate_listing_transition,
     fingerprint_trade_item,
@@ -3504,6 +3505,15 @@ def main() -> None:
 
     root_dir = Path(__file__).resolve().parents[1]
     storage = StorageService(root_dir=root_dir)
+    fp_version_result = storage.ensure_inference_fingerprint_version(current_version=FINGERPRINT_VERSION)
+    if fp_version_result.get("cleared"):
+        log_line(
+            "warn",
+            "Inference fingerprint version changed "
+            f"({fp_version_result.get('previous')} -> {fp_version_result.get('current')}); "
+            f"cleared {fp_version_result.get('signals', 0)} signal row(s) and "
+            f"{fp_version_result.get('pending', 0)} pending row(s) to avoid false sales after deploy",
+        )
     item_specs = load_item_specs(items_file)
     variant_specs: list[VariantSpec] = []
     for idx, spec in enumerate(item_specs):

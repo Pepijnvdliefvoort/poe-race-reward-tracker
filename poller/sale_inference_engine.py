@@ -31,6 +31,13 @@ from pathlib import Path
 from typing import Any
 
 EXALTS_PER_DIVINE = 60.0
+
+# Bump when `fingerprint_trade_item` inputs change. On poller startup a stored
+# version mismatch clears inference_state_* so the first post-deploy poll does
+# not treat every listing as vanished (false sales).
+FINGERPRINT_VERSION = 1
+
+
 def _stack_size_signature(item: dict[str, Any]) -> str:
     """Include stack size when present so two stacks of the same currency differ."""
     props = item.get("properties")
