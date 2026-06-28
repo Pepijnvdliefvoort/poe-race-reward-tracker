@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 def migration_001_initial() -> str:
@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS inference_state_signals (
   seller TEXT NOT NULL,
   is_instant INTEGER NOT NULL DEFAULT 0,
   mirror_equiv REAL,
+  signal_count INTEGER NOT NULL DEFAULT 1,
   last_seen_cycle INTEGER,
   UNIQUE(item_variant_id, fingerprint, seller)
 );
@@ -319,3 +320,7 @@ CREATE TABLE IF NOT EXISTS account_ban_alert_cooldown (
 CREATE INDEX IF NOT EXISTS idx_inference_events_rule ON inference_events(rule);
 """
 
+
+def migration_016_inference_signal_count() -> str:
+    """Applied via a Python idempotent migration in `storage/db.py`."""
+    return ""

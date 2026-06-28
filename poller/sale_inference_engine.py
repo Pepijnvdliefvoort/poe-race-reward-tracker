@@ -16,7 +16,7 @@ Rules:
    The poller prefers a live account-filter search + fetch (`listing.account.online` on another of
    their listings); if that probe fails, it falls back to `sellerOnline` from the prior ladder fetch.
 5. Same fingerprint + same seller still listed but listed price changed -> repriced
-   (not a sale; distinguishes relist/reprice from churn).
+   (not a sale; only when that pair maps to exactly one listing on both polls).
 6. Same fingerprint offered by 2+ different sellers in one fetch -> multi-party contention signal.
 7. New (fingerprint, seller) pairs vs previous poll -> fresh supply / new listing rows this cycle.
 """
@@ -287,6 +287,22 @@ def _meta_for(
         if s.get("fingerprint") == fingerprint and str(s.get("seller") or "") == seller:
             return s
     return None
+
+
+def _signal_pair_counts(signals: list[dict[str, Any]]) -> dict[tuple[str, str], int]:
+    counts: dict[tuple[str, str], int] = {}
+    for s in signals:
+        fp = str(s.get("fingerprint") or "")
+        seller = str(s.get("seller") or "")
+        if not fp or not seller:
+            continue
+        key = (fp, seller)
+        count_hint = s.get("signalCount")
+        if isinstance(count_hint, int) and count_hint > 0:
+            counts[key] = max(counts.get(key, 0), int(count_hint))
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _as_float(x: Any) -> float | None:
@@ -1061,7 +1077,13 @@ def evaluate_listing_transition(
             )
 
     # --- Rule 5: same listing identity, listed price changed (reprice / note change) ---
+    prev_pair_counts = _signal_pair_counts(prev_signals)
+    curr_pair_counts = _signal_pair_counts(curr_signals)
     for fp, seller in prev_keys & curr_keys:
+        if prev_pair_counts.get((fp, seller), 0) != 1 or curr_pair_counts.get((fp, seller), 0) != 1:
+            # Multiple listings share this (fingerprint, seller) pair, so listing identity is ambiguous.
+            # Skip repricing to avoid false positives from switching between distinct copies.
+            continue
         pm = _meta_for(prev_signals, fp, seller)
         cm = _meta_for(curr_signals, fp, seller)
         if not pm or not cm:
