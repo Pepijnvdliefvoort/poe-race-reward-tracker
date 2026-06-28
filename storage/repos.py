@@ -486,7 +486,7 @@ class InferenceStateRepo:
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
         sig_rows = self._con.execute(
             """
-            SELECT fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency, seller_online
+            SELECT fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency, seller_online, signal_count
             FROM inference_state_signals
             WHERE item_variant_id = ?
             """,
@@ -509,6 +509,7 @@ class InferenceStateRepo:
                 "mirrorEquiv": (float(r["mirror_equiv"]) if r["mirror_equiv"] is not None else None),
                 "priceAmount": (float(r["price_amount"]) if r["price_amount"] is not None else None),
                 "priceCurrency": (str(r["price_currency"]) if r["price_currency"] is not None else None),
+                "signalCount": max(1, int(r["signal_count"] or 1)),
             }
             for r in sig_rows
         ]
@@ -545,6 +546,14 @@ class InferenceStateRepo:
         self._con.execute("DELETE FROM inference_state_pending WHERE item_variant_id = ?", (item_variant_id,))
 
         sig_payload: list[tuple] = []
+        key_counts: dict[tuple[str, str], int] = {}
+        for s in curr_signals:
+            fp = str(s.get("fingerprint") or "")
+            seller = str(s.get("seller") or "")
+            if not fp or not seller:
+                continue
+            key = (fp, seller)
+            key_counts[key] = key_counts.get(key, 0) + 1
         seen_sig: set[tuple[str, str]] = set()
         for s in curr_signals:
             fp = str(s.get("fingerprint") or "")
@@ -553,7 +562,7 @@ class InferenceStateRepo:
                 continue
             key = (fp, seller)
             if key in seen_sig:
-                # Same seller can list multiple identical items; state tracks the (fingerprint,seller) pair.
+                # Same seller can list multiple identical items; persist one representative plus signal_count.
                 continue
             seen_sig.add(key)
             sig_payload.append(
@@ -565,6 +574,7 @@ class InferenceStateRepo:
                     s.get("mirrorEquiv"),
                     s.get("priceAmount"),
                     (str(s.get("priceCurrency") or "").strip().lower() or None),
+                    max(1, int(key_counts.get(key, 1))),
                     cycle,
                     1 if bool(s.get("sellerOnline")) else 0,
                 )
@@ -572,8 +582,8 @@ class InferenceStateRepo:
         self._con.executemany(
             """
             INSERT INTO inference_state_signals(
-              item_variant_id, fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency, last_seen_cycle, seller_online
-            ) VALUES (?,?,?,?,?,?,?,?,?)
+              item_variant_id, fingerprint, seller, is_instant, mirror_equiv, price_amount, price_currency, signal_count, last_seen_cycle, seller_online
+            ) VALUES (?,?,?,?,?,?,?,?,?,?)
             """,
             sig_payload,
         )
@@ -1081,4 +1091,3 @@ class PriceAlertCooldownRepo:
             """,
             (int(item_variant_id), int(last_alert_cycle), float(last_alert_low_mirror), str(updated_at_utc)),
         )
-

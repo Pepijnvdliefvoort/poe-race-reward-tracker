@@ -24,6 +24,7 @@ from .schema import (
     migration_013_inference_pending_jitter_grace,
     migration_014_new_item_alert_cooldown,
     migration_015_account_ban_alert_cooldown,
+    migration_016_inference_signal_count,
 )
 
 
@@ -129,6 +130,7 @@ class Database:
             (13, migration_013_inference_pending_jitter_grace()),
             (14, migration_014_new_item_alert_cooldown()),
             (15, migration_015_account_ban_alert_cooldown()),
+            (16, migration_016_inference_signal_count()),
         ]
 
         for version, sql in migrations:
@@ -150,6 +152,8 @@ class Database:
                 self._migration_012_item_variants_image_filter(con)
             elif version == 13:
                 self._migration_013_inference_pending_jitter_grace(con)
+            elif version == 16:
+                self._migration_016_inference_signal_count(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -406,7 +410,21 @@ class Database:
                 "ALTER TABLE inference_state_pending ADD COLUMN jitter_grace_polls INTEGER NOT NULL DEFAULT 0"
             )
 
+    def _migration_016_inference_signal_count(self, con: sqlite3.Connection) -> None:
+        sig_cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(inference_state_signals)").fetchall()
+        }
+        if "signal_count" not in sig_cols:
+            con.execute("ALTER TABLE inference_state_signals ADD COLUMN signal_count INTEGER NOT NULL DEFAULT 1")
+        con.execute(
+            """
+            UPDATE inference_state_signals
+               SET signal_count = 1
+             WHERE signal_count IS NULL OR signal_count < 1
+            """
+        )
+
 
 def execute_many(con: sqlite3.Connection, sql: str, rows: Iterable[tuple]) -> None:
     con.executemany(sql, list(rows))
-
