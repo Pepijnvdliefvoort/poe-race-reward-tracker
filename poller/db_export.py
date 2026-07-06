@@ -378,6 +378,12 @@ def maybe_export_db_to_discord(
         if _compact_sqlite_db(snapshot_path, compacted_path):
             use_path = compacted_path
         _zip_file(use_path, zip_path)
+        # Raw snapshots are only needed for zipping; delete them immediately to save disk.
+        for _raw in (snapshot_path, compacted_path):
+            try:
+                _raw.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
 
         size_bytes = int(zip_path.stat().st_size)
         size_mb = size_bytes / (1024 * 1024)
@@ -452,6 +458,12 @@ def export_db_to_discord_now(
     if _compact_sqlite_db(snapshot_path, compacted_path):
         use_path = compacted_path
     _zip_file(use_path, zip_path)
+    # Raw snapshots are only needed for zipping; delete them immediately to save disk.
+    for _raw in (snapshot_path, compacted_path):
+        try:
+            _raw.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
 
     size_bytes = int(zip_path.stat().st_size)
     size_mb = size_bytes / (1024 * 1024)

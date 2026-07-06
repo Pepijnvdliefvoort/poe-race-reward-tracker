@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import secrets
 import sys
@@ -39,7 +40,10 @@ def _build_logger(name: str, filename: str) -> logging.Logger:
 
     # Avoid duplicate handlers if reloaded.
     if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == str(path) for h in logger.handlers):
-        file_handler = logging.FileHandler(path, encoding="utf-8")
+        # Rotate at 50 MiB, keep 3 backups → max ~200 MiB on disk per log file.
+        file_handler = logging.handlers.RotatingFileHandler(
+            path, maxBytes=50 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
         file_handler.setFormatter(JsonlFormatter())
         file_handler.setLevel(logging.INFO)
         logger.addHandler(file_handler)
