@@ -644,6 +644,13 @@ def evaluate_listing_transition(
     seller relist (rule 3) can decrement that credit. Legacy pendings without `countedImmediate`
     still resolve to +1 on the first later cycle where the row stays gone (old behaviour).
 
+    Rule 2c handles the case where a seller holds multiple copies of the same item (same
+    fingerprint) and sells one while keeping the others: the (fingerprint, seller) key never
+    appears as vanished, but the listing count decreases. On non-truncated snapshots, a count
+    drop of N instant listings credits N `likely_instant_sale` events immediately with no
+    pending entry (adding a pending would cause an immediate relist-revert the next cycle
+    because the seller is still present in curr_keys).
+
     Non-instant rows that vanish while the seller was online (rule 4b) credit `likely_non_instant_online`;
     pending entries allow a same-seller relist to decrement that credit.
 
@@ -1112,6 +1119,92 @@ def evaluate_listing_transition(
                 "cycle": cycle,
             }
         )
+
+    # --- Rule 2c: same-seller listing-count decrease while seller still present ---
+    # Fires when a seller's instant-buyout count for a fingerprint drops between polls but
+    # the seller still has at least one listing remaining (so the key never appears in
+    # prev_keys - curr_keys and the normal vanish path is bypassed). Typical scenario:
+    # seller lists N copies of the same item; one sells while the others remain.
+    # Not applied to truncated snapshots to avoid false positives from fetch-window bumps.
+    if not snapshot_truncated:
+        for fp, seller in prev_keys & curr_keys:
+            prev_count = prev_pair_counts.get((fp, seller), 1)
+            curr_count = curr_pair_counts.get((fp, seller), 1)
+            delta = prev_count - curr_count
+            if delta <= 0:
+                continue
+            meta = _meta_for(prev_signals, fp, seller)
+            if not meta or not bool(meta.get("isInstant")):
+                # Non-instant multi-listing decreases are too ambiguous without an online probe.
+                continue
+            mirror_eq = meta.get("mirrorEquiv")
+            price_amount = meta.get("priceAmount")
+            price_currency = meta.get("priceCurrency")
+            if (not low_floor_market) and _priced_too_high_vs_baseline(
+                mirror_eq,
+                baseline_mirror=baseline_mirror,
+                max_above_baseline_pct=sale_max_above_baseline_pct,
+            ):
+                for _ in range(delta):
+                    events.append(
+                        {
+                            "rule": "unlisted_above_baseline",
+                            "itemKey": item_key,
+                            "fingerprint": fp,
+                            "seller": seller,
+                            "mirrorEquiv": mirror_eq,
+                            "priceAmount": price_amount,
+                            "priceCurrency": price_currency,
+                            "baselineMirror": baseline_mirror,
+                            "maxAboveBaselinePct": sale_max_above_baseline_pct,
+                            "cycle": cycle,
+                        }
+                    )
+            elif _priced_outside_baseline_range_sub10(
+                mirror_eq,
+                cheapest_mirror=cheapest_prev_mirror,
+                baseline_mirror=baseline_mirror,
+                floor_below_mirrors=sale_floor_ignore_if_floor_below_mirrors,
+                baseline_range_mirrors=sale_baseline_range_mirrors,
+            ):
+                for _ in range(delta):
+                    events.append(
+                        {
+                            "rule": "unlisted_above_floor_sub10",
+                            "itemKey": item_key,
+                            "fingerprint": fp,
+                            "seller": seller,
+                            "mirrorEquiv": mirror_eq,
+                            "priceAmount": price_amount,
+                            "priceCurrency": price_currency,
+                            "baselineMirror": baseline_mirror,
+                            "floorMirror": cheapest_prev_mirror,
+                            "floorBelowMirrors": sale_floor_ignore_if_floor_below_mirrors,
+                            "baselineRangeMirrors": sale_baseline_range_mirrors,
+                            "minAboveBaselineMirrors": sale_baseline_range_mirrors,
+                            "minAboveFloorMirrors": sale_baseline_range_mirrors,
+                            "cycle": cycle,
+                        }
+                    )
+            else:
+                # Credit delta sales immediately without adding pending entries.
+                # The seller is still active so (fp, seller) will remain in curr_keys;
+                # any pending we added would be immediately reverted as a relist on the
+                # next cycle, undoing the credit. Skip pending entirely.
+                result.likely_instant_sale += delta
+                for _ in range(delta):
+                    events.append(
+                        {
+                            "rule": "likely_instant_sale",
+                            "itemKey": item_key,
+                            "fingerprint": fp,
+                            "seller": seller,
+                            "mirrorEquiv": mirror_eq,
+                            "priceAmount": price_amount,
+                            "priceCurrency": price_currency,
+                            "cycle": cycle,
+                        }
+                    )
 
     # --- Rule 6: multiple sellers listing the same roll in one ladder slice ---
     result.multi_seller_same_fingerprint = _count_multi_seller_fingerprints(curr_signals)
