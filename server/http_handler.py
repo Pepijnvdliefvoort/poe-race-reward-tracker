@@ -714,6 +714,38 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            if req_path in {"/api/admin/market/aa-price-points", "/api/admin/market/price-points"}:
+                mode_default = "aa" if req_path.endswith("/aa-price-points") else "all"
+                mode = (params.get("mode", [mode_default])[0] or mode_default).strip().lower()
+                item_query = (params.get("item", [""])[0] or "").strip()
+
+                instant_only: bool | None = None
+                instant_raw = (params.get("instantOnly", [""])[0] or "").strip().lower()
+                if instant_raw in {"1", "true", "yes"}:
+                    instant_only = True
+                elif instant_raw in {"0", "false", "no"}:
+                    instant_only = False
+
+                try:
+                    max_price_points = int((params.get("maxPricePoints", ["50"])[0] or "50").strip())
+                except Exception:
+                    max_price_points = 50
+
+                payload = ServerStorage(ROOT_DIR).fetch_variant_price_points(
+                    mode=mode,
+                    item_query=item_query,
+                    instant_only=instant_only,
+                    max_price_points=max_price_points,
+                )
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             if req_path == "/api/admin/app-config":
                 # List available app_config keys.
                 storage = ServerStorage(ROOT_DIR)
@@ -1049,6 +1081,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 req_path,
             )
 
+        if req_path in {"/aa-ladder", "/aa-ladder/"}:
+            record_site_visit(
+                get_client_ip(self.headers.get("X-Forwarded-For"), self.client_address[0]),
+                req_path,
+            )
+
         if parsed.path == "/api/prices":
             qs = parse_qs(parsed.query or "")
             full_history = (qs.get("full") or [""])[0].strip().lower() in ("1", "true", "yes")
@@ -1196,6 +1234,38 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+        if parsed.path == "/api/market/aa-price-points":
+            params = parse_qs(parsed.query)
+            mode = (params.get("mode", ["aa"])[0] or "aa").strip().lower()
+            item_query = (params.get("item", [""])[0] or "").strip()
+
+            instant_only: bool | None = None
+            instant_raw = (params.get("instantOnly", [""])[0] or "").strip().lower()
+            if instant_raw in {"1", "true", "yes"}:
+                instant_only = True
+            elif instant_raw in {"0", "false", "no"}:
+                instant_only = False
+
+            try:
+                max_price_points = int((params.get("maxPricePoints", ["50"])[0] or "50").strip())
+            except Exception:
+                max_price_points = 50
+
+            payload = ServerStorage(ROOT_DIR).fetch_variant_price_points(
+                mode=mode,
+                item_query=item_query,
+                instant_only=instant_only,
+                max_price_points=max_price_points,
+            )
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if parsed.path == "/api/companion/auth":
             if not admin_security_enabled():
                 payload = {
@@ -1271,6 +1341,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
 
+        if parsed.path == "/aa-ladder.html":
+            loc = "/aa-ladder"
+            if parsed.query:
+                loc += f"?{parsed.query}"
+            self.send_response(302)
+            self.send_header("Location", loc)
+            self.end_headers()
+            return
+
         if parsed.path in {"/admin", "/admin/"}:
             self._note_admin_auth_success()
             q = parsed.query
@@ -1283,6 +1362,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/alt-arts", "/alt-arts/"}:
             q = parsed.query
             self.path = "/alt-arts.html" + (f"?{q}" if q else "")
+
+        if parsed.path in {"/aa-ladder", "/aa-ladder/"}:
+            q = parsed.query
+            self.path = "/aa-ladder.html" + (f"?{q}" if q else "")
 
         if parsed.path in {"/admin/db", "/admin/db/"}:
             self._note_admin_auth_success()

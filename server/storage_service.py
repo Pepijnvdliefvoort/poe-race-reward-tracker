@@ -590,6 +590,191 @@ class ServerStorage:
         finally:
             con.close()
 
+    def fetch_variant_price_points(
+        self,
+        *,
+        mode: str = "aa",
+        item_query: str | None = None,
+        instant_only: bool | None = None,
+        max_price_points: int = 50,
+    ) -> dict[str, Any]:
+        """
+        Summarize latest listing-snapshot depth grouped by mirror-equivalent price point.
+
+        Returned shape is stable and intended for admin analytics/reporting.
+        """
+        mode_norm = str(mode or "aa").strip().lower()
+        if mode_norm in {"all", "any", "*", ""}:
+            mode_filter: str | None = None
+        elif mode_norm in {"aa", "normal"}:
+            mode_filter = mode_norm
+        else:
+            mode_filter = "aa"
+
+        item_like = str(item_query or "").strip().lower()
+        if item_like:
+            item_like = f"%{item_like}%"
+
+        max_points = max(1, min(500, int(max_price_points or 50)))
+
+        instant_filter: int | None
+        if instant_only is None:
+            instant_filter = None
+        else:
+            instant_filter = 1 if bool(instant_only) else 0
+
+        def _format_mirror(value: float) -> str:
+            rounded = round(float(value), 3)
+            if abs(rounded - round(rounded)) < 1e-9:
+                return str(int(round(rounded)))
+            out = f"{rounded:.3f}".rstrip("0").rstrip(".")
+            return out or "0"
+
+        con = self.connect()
+        con.row_factory = sqlite3.Row
+        try:
+            rows = con.execute(
+                """
+                WITH latest_poll AS (
+                  SELECT ip.item_variant_id, MAX(ip.id) AS item_poll_id
+                  FROM item_polls ip
+                  GROUP BY ip.item_variant_id
+                ),
+                priced AS (
+                  SELECT
+                    v.id AS variant_id,
+                    i.name AS base_item_name,
+                    v.display_name,
+                    v.mode,
+                    ip.requested_at_utc AS updated_at_utc,
+                    CASE
+                      WHEN LOWER(TRIM(ls.currency)) IN ('mirror', 'mirrors', 'mirror of kalandra') THEN ls.amount
+                      WHEN LOWER(TRIM(ls.currency)) IN ('divine', 'divines', 'div', 'divine orb', 'divine orbs')
+                        THEN ls.amount / NULLIF(pr.divines_per_mirror, 0)
+                      WHEN LOWER(TRIM(ls.currency)) IN ('exalted', 'exalt', 'exa', 'exalted orb', 'exalted orbs')
+                        THEN (ls.amount / 60.0) / NULLIF(pr.divines_per_mirror, 0)
+                      ELSE NULL
+                    END AS mirror_equiv,
+                    CASE
+                      WHEN ls.listing_count IS NULL OR ls.listing_count < 1 THEN 1
+                      ELSE ls.listing_count
+                    END AS listing_count
+                  FROM latest_poll lp
+                  JOIN item_polls ip ON ip.id = lp.item_poll_id
+                  JOIN item_variants v ON v.id = ip.item_variant_id
+                  JOIN items i ON i.id = v.item_id
+                  JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                  JOIN listing_snapshots ls ON ls.item_poll_id = ip.id
+                  WHERE ls.amount IS NOT NULL
+                    AND ls.amount > 0
+                    AND (? IS NULL OR v.mode = ?)
+                    AND (? IS NULL OR ls.is_instant_buyout = ?)
+                    AND (
+                      ? = ''
+                      OR LOWER(i.name) LIKE ?
+                      OR LOWER(v.display_name) LIKE ?
+                    )
+                )
+                SELECT
+                  variant_id,
+                  base_item_name,
+                  display_name,
+                  mode,
+                  updated_at_utc,
+                  ROUND(mirror_equiv, 3) AS mirror_price,
+                  SUM(listing_count) AS listing_count
+                FROM priced
+                WHERE mirror_equiv IS NOT NULL
+                GROUP BY
+                  variant_id,
+                  base_item_name,
+                  display_name,
+                  mode,
+                  updated_at_utc,
+                  ROUND(mirror_equiv, 3)
+                ORDER BY display_name ASC, mirror_price ASC
+                """,
+                (
+                    mode_filter,
+                    mode_filter,
+                    instant_filter,
+                    instant_filter,
+                    item_like or "",
+                    item_like or "",
+                    item_like or "",
+                ),
+            ).fetchall()
+
+            grouped: dict[int, dict[str, Any]] = {}
+            for r in rows:
+                variant_id = int(r["variant_id"])
+                variant = grouped.get(variant_id)
+                if variant is None:
+                    variant = {
+                        "variantId": variant_id,
+                        "itemName": str(r["base_item_name"] or ""),
+                        "displayName": str(r["display_name"] or ""),
+                        "mode": str(r["mode"] or ""),
+                        "updatedAt": str(r["updated_at_utc"] or ""),
+                        "totalListings": 0,
+                        "pricePoints": [],
+                    }
+                    grouped[variant_id] = variant
+
+                mirror_price = r["mirror_price"]
+                count = int(r["listing_count"] or 0)
+                if mirror_price is None or count <= 0:
+                    continue
+
+                mirror_value = float(mirror_price)
+                variant["pricePoints"].append(
+                    {
+                        "mirror": mirror_value,
+                        "label": f"{_format_mirror(mirror_value)} mirrors",
+                        "listingCount": count,
+                    }
+                )
+                variant["totalListings"] += count
+
+            variants = []
+            summary_lines: list[str] = []
+            for variant in grouped.values():
+                points = variant.get("pricePoints") or []
+                points.sort(key=lambda p: float(p.get("mirror") or 0.0))
+                if len(points) > max_points:
+                    variant["pricePoints"] = points[:max_points]
+                    variant["truncatedPricePoints"] = int(len(points) - max_points)
+                else:
+                    variant["pricePoints"] = points
+                    variant["truncatedPricePoints"] = 0
+
+                for p in variant["pricePoints"]:
+                    summary_lines.append(
+                        f"{int(p['listingCount'])}x {variant['displayName']} at {p['label']}"
+                    )
+                variants.append(variant)
+
+            variants.sort(
+                key=lambda v: (
+                    str(v.get("displayName") or ""),
+                    str(v.get("mode") or ""),
+                )
+            )
+
+            return {
+                "ok": True,
+                "generatedAt": _utc_now_iso(),
+                "mode": mode_filter or "all",
+                "itemQuery": str(item_query or "").strip(),
+                "instantOnly": (None if instant_filter is None else bool(instant_filter)),
+                "maxPricePoints": max_points,
+                "variantCount": len(variants),
+                "variants": variants,
+                "summaryLines": summary_lines,
+            }
+        finally:
+            con.close()
+
     def fetch_account_compare(
         self,
         *,
