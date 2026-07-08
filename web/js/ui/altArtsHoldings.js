@@ -11,6 +11,8 @@ import { formatMirror } from "../core/utils.js";
 const STORAGE_KEY = "pmf.altArtsHoldings.v1";
 const SOLD_DETAILS_OPEN_KEY = "pmf.altArts.soldDetailsOpen.v1";
 const PRICES_REFRESH_MS = 30_000;
+const LADDER_MAX_POINTS = 12;
+const LADDER_RENDER_VARIANTS_NO_FILTER = 8;
 
 /** @type {Map<string, { variantKey: string, itemName: string, baseItemName: string, mode: string, imageNameFilter: string | null, imagePath: string | null, lowestMirror: number | null }>} */
 let catalogByKey = new Map();
@@ -44,7 +46,14 @@ const els = {
   variantWrap: () => document.getElementById("altArtsVariantWrap"),
   variantPicker: () => document.getElementById("altArtsVariantPicker"),
   soldDetails: () => document.getElementById("altArtsSoldDetails"),
+  ladderStatus: () => document.getElementById("altArtsLadderStatus"),
+  ladderList: () => document.getElementById("altArtsLadderList"),
+  ladderItemInput: () => document.getElementById("altArtsLadderItemInput"),
+  ladderRefreshBtn: () => document.getElementById("altArtsLadderRefreshBtn"),
 };
+
+let ladderPayload = null;
+let ladderFilter = "";
 
 function newId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -344,6 +353,165 @@ function setStatus(text, ok = true) {
   if (dot) {
     dot.classList.remove("ok", "warn", "err");
     dot.classList.add(ok ? "ok" : "warn");
+  }
+}
+
+function setLadderStatus(text, isError = false) {
+  const el = els.ladderStatus();
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("alt-arts-ladder-status--error", Boolean(isError && text));
+}
+
+function ladderFilterText() {
+  const raw = String(els.ladderItemInput()?.value || "").trim();
+  return raw;
+}
+
+function ladderRequestUrl(itemText) {
+  const params = new URLSearchParams();
+  params.set("maxPricePoints", String(LADDER_MAX_POINTS));
+  const filter = String(itemText || "").trim();
+  if (filter) {
+    params.set("item", filter);
+  }
+  return `/api/market/aa-price-points?${params.toString()}`;
+}
+
+function buildLadderVariantCard(variant) {
+  const card = document.createElement("article");
+  card.className = "alt-arts-ladder-card";
+
+  const title = document.createElement("h4");
+  title.className = "alt-arts-ladder-card-title";
+  title.textContent = String(variant?.displayName || variant?.itemName || "Unknown item");
+
+  const total = document.createElement("p");
+  total.className = "alt-arts-ladder-card-total";
+  total.textContent = `${Number(variant?.totalListings || 0)} listings`;
+
+  const list = document.createElement("ul");
+  list.className = "alt-arts-ladder-points";
+
+  const points = Array.isArray(variant?.pricePoints) ? variant.pricePoints : [];
+  for (const point of points) {
+    const li = document.createElement("li");
+    li.className = "alt-arts-ladder-point";
+    const count = Number(point?.listingCount || 0);
+    li.textContent = `${count}x at ${String(point?.label || "?")}`;
+    list.appendChild(li);
+  }
+
+  if (!points.length) {
+    const li = document.createElement("li");
+    li.className = "alt-arts-ladder-point alt-arts-ladder-point--empty";
+    li.textContent = "No price buckets";
+    list.appendChild(li);
+  }
+
+  if (Number(variant?.truncatedPricePoints || 0) > 0) {
+    const more = document.createElement("p");
+    more.className = "alt-arts-ladder-card-more";
+    more.textContent = `+${Number(variant.truncatedPricePoints)} more price points`;
+    card.append(title, total, list, more);
+    return card;
+  }
+
+  card.append(title, total, list);
+  return card;
+}
+
+function renderLadder() {
+  const root = els.ladderList();
+  if (!root) return;
+  root.innerHTML = "";
+
+  const hasFilter = Boolean(String(ladderFilter || "").trim());
+  if (!hasFilter) {
+    const placeholder = document.createElement("article");
+    placeholder.className = "alt-arts-ladder-placeholder";
+
+    const title = document.createElement("h4");
+    title.className = "alt-arts-ladder-placeholder-title";
+    title.textContent = "Enter AA name to filter";
+
+    const body = document.createElement("p");
+    body.className = "alt-arts-ladder-placeholder-body";
+    body.textContent = "Example: Storm Cloud, enter key, then view listing buckets by mirror price.";
+
+    placeholder.append(title, body);
+    root.appendChild(placeholder);
+    return;
+  }
+
+  if (!ladderPayload || !Array.isArray(ladderPayload.variants)) {
+    const empty = document.createElement("p");
+    empty.className = "alt-arts-ladder-empty";
+    empty.textContent = "Ladder data not loaded yet.";
+    root.appendChild(empty);
+    return;
+  }
+
+  const variants = hasFilter
+    ? ladderPayload.variants
+    : ladderPayload.variants.slice(0, LADDER_RENDER_VARIANTS_NO_FILTER);
+
+  if (!variants.length) {
+    const empty = document.createElement("p");
+    empty.className = "alt-arts-ladder-empty";
+    empty.textContent = hasFilter
+      ? `No AA ladder matches "${ladderFilter}".`
+      : "No AA ladder data is available.";
+    root.appendChild(empty);
+    return;
+  }
+
+  for (const variant of variants) {
+    root.appendChild(buildLadderVariantCard(variant));
+  }
+
+  if (!hasFilter && Number(ladderPayload.variantCount || 0) > variants.length) {
+    const hint = document.createElement("p");
+    hint.className = "alt-arts-ladder-empty";
+    hint.textContent = `Showing ${variants.length} of ${Number(ladderPayload.variantCount || variants.length)} variants. Use filter for a specific item.`;
+    root.appendChild(hint);
+  }
+}
+
+async function fetchLadder() {
+  const filter = ladderFilterText();
+  ladderFilter = filter;
+
+  if (!filter) {
+    ladderPayload = null;
+    setLadderStatus("Enter an AA name to load ladder.", false);
+    renderLadder();
+    return false;
+  }
+
+  setLadderStatus("Loading ladder…", false);
+
+  try {
+    const res = await fetch(ladderRequestUrl(filter), { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const payload = await res.json();
+    ladderPayload = payload && payload.ok ? payload : { variants: [], variantCount: 0 };
+    renderLadder();
+
+    const n = Number(ladderPayload?.variantCount || 0);
+    setLadderStatus(
+      filter ? `Ladder updated (${n} matched variant${n === 1 ? "" : "s"}).` : "Ladder updated.",
+      false,
+    );
+    return true;
+  } catch {
+    ladderPayload = null;
+    renderLadder();
+    setLadderStatus("Failed to load ladder data.", true);
+    return false;
   }
 }
 
@@ -1294,14 +1462,37 @@ export function initAltArtsHoldings() {
     itemInput.addEventListener("input", onItemFieldChange);
     itemInput.addEventListener("change", onItemFieldChange);
   }
+  const ladderRefreshBtn = els.ladderRefreshBtn();
+  if (ladderRefreshBtn) {
+    ladderRefreshBtn.addEventListener("click", () => {
+      fetchLadder();
+    });
+  }
+  const ladderItemInput = els.ladderItemInput();
+  if (ladderItemInput) {
+    ladderItemInput.addEventListener("change", () => {
+      fetchLadder();
+    });
+    ladderItemInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      fetchLadder();
+    });
+  }
   updateItemInputUi();
   renderAll();
+  setLadderStatus("Enter an AA name to load ladder.", false);
+  renderLadder();
   fetchPrices().then(() => {
     updateItemInputUi();
     renderAll();
   });
   setInterval(async () => {
-    await fetchPrices();
+    if (ladderFilterText()) {
+      await Promise.all([fetchPrices(), fetchLadder()]);
+    } else {
+      await fetchPrices();
+    }
     updateItemInputUi();
     renderAll();
   }, PRICES_REFRESH_MS);

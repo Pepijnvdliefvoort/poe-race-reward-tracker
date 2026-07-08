@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AA price-point ladder — PoE Race Rewards</title>
+    <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
+    <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./css/variables.css" />
+    <link rel="stylesheet" href="./css/layout.css" />
+    <link rel="stylesheet" href="./css/filters.css" />
+    <link rel="stylesheet" href="./css/footer.css" />
+    <link rel="stylesheet" href="./css/mobile.css" />
+    <link rel="stylesheet" href="./css/compare.css" />
+    <link rel="stylesheet" href="./css/aa-ladder.css" />
+    <script type="module" src="./js/aaLadderPage.js" defer></script>
+  </head>
+  <body class="page-aa-ladder">
+    <div class="bg-orb bg-orb-a" aria-hidden="true"></div>
+    <div class="bg-orb bg-orb-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Tools</p>
+        <h1>AA price-point ladder</h1>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-actions">
+          <nav class="topbar-nav" aria-label="Tools">
+            <a href="/" class="topbar-nav-link">Dashboard</a>
+            <a href="/compare" class="topbar-nav-link">Compare</a>
+            <a href="/aa-ladder" class="topbar-nav-link" aria-current="page">AA ladder</a>
+            <a href="/alt-arts" class="topbar-nav-link">Alt arts</a>
+          </nav>
+          <span class="topbar-actions-filters-gap" aria-hidden="true"></span>
+          <button id="themeToggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+            <span class="theme-icon">🌙</span>
+          </button>
+        </div>
+        <div class="meta" id="meta">
+          <span id="aaLadderStatusDot" class="status-dot ok"></span>
+          <span id="aaLadderStatusText">Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="compare-panel aa-ladder-panel" aria-label="AA ladder explorer">
+        <div class="compare-head">
+          <div>
+            <p class="eyebrow">Market depth</p>
+            <h2 class="compare-title">Filter-first listing buckets</h2>
+            <p class="compare-subtitle">Enter an AA item name to see how many listings are posted at each mirror price point.</p>
+          </div>
+          <div class="aa-ladder-controls">
+            <label class="compare-control aa-ladder-control">
+              <span class="compare-label">AA item</span>
+              <input
+                id="aaLadderItemInput"
+                class="compare-input"
+                type="text"
+                list="aaLadderItemDatalist"
+                spellcheck="false"
+                placeholder="e.g. Storm Cloud"
+              />
+              <datalist id="aaLadderItemDatalist"></datalist>
+            </label>
+            <div class="aa-ladder-actions">
+              <button id="aaLadderAddBtn" class="compare-btn" type="button">Add card</button>
+              <button id="aaLadderClearBtn" class="compare-btn compare-btn--ghost" type="button">Clear</button>
+            </div>
+          </div>
+        </div>
+        <p id="aaLadderInlineStatus" class="aa-ladder-inline-status" aria-live="polite">Enter an AA name and add a card.</p>
+        <div id="aaLadderList" class="aa-ladder-list" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        &copy; 2026. Made by
+        <a href="https://www.pathofexile.com/account/view-profile/iNeoxiz-3422" target="_blank" rel="noopener noreferrer">iNeoxiz</a>.
+      </p>
+      <p class="site-footer-note">
+        This product isn't affiliated with or endorsed by Grinding Gear Games in any way.
+      </p>
+    </footer>
+  </body>
+</html>
