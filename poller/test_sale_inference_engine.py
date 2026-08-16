@@ -189,5 +189,121 @@ class SaleInferenceEngineMultiListingCountDecreaseTests(unittest.TestCase):
         self.assertTrue(any(ev.get("rule") == "unlisted_above_baseline" for ev in result.events))
 
 
+class SaleInferenceEngineNonInstantOnlineGraceTests(unittest.TestCase):
+    """Rule 4b: defer crediting a non-instant online vanish so a quick relist isn't a false sale."""
+
+    def _prev_signal(self, seller: str = "seller1") -> dict:
+        return {
+            "fingerprint": "fp1",
+            "seller": seller,
+            "isInstant": False,
+            "mirrorEquiv": 5.0,
+            "priceAmount": 5.0,
+            "priceCurrency": "mirror",
+        }
+
+    def test_vanish_defers_credit_when_grace_enabled(self) -> None:
+        """A non-instant online vanish holds as pending instead of crediting immediately."""
+        result, _, new_pending_online, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=1,
+            prev_signals=[self._prev_signal()],
+            curr_signals=[],
+            pending_instant=[],
+            pending_online=[],
+            seller_online_probe={"seller1": True},
+            baseline_mirror=5.0,
+            non_instant_online_grace_polls=1,
+        )
+        self.assertEqual(result.likely_non_instant_online, 0)
+        self.assertFalse(any(ev.get("rule") == "likely_non_instant_online_sale" for ev in result.events))
+        self.assertTrue(any(ev.get("rule") == "non_instant_online_removed_pending" for ev in result.events))
+        self.assertEqual(len(new_pending_online), 1)
+        self.assertFalse(new_pending_online[0]["countedImmediate"])
+
+    def test_relist_within_grace_is_fetch_jitter_not_revert(self) -> None:
+        """A same-seller reappearance within the grace window is jitter, not a sale + revert pair."""
+        pending = [
+            {
+                "fingerprint": "fp1",
+                "seller": "seller1",
+                "removed_cycle": 1,
+                "countedImmediate": False,
+                "jitterGracePolls": 1,
+                "mirrorEquiv": 5.0,
+                "priceAmount": 5.0,
+                "priceCurrency": "mirror",
+            }
+        ]
+        result, _, new_pending_online, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[],
+            curr_signals=[self._prev_signal()],
+            pending_instant=[],
+            pending_online=pending,
+            non_instant_online_grace_polls=1,
+        )
+        self.assertEqual(result.likely_non_instant_online, 0)
+        self.assertEqual(result.relist_same_seller, 0)
+        self.assertTrue(any(ev.get("rule") == "fetch_jitter_relist" for ev in result.events))
+        self.assertEqual(len(new_pending_online), 0)
+
+    def test_credit_after_grace_elapses_without_reappearance(self) -> None:
+        """No reappearance within the grace window credits the sale on the next cycle."""
+        pending = [
+            {
+                "fingerprint": "fp1",
+                "seller": "seller1",
+                "removed_cycle": 1,
+                "countedImmediate": False,
+                "jitterGracePolls": 1,
+                "mirrorEquiv": 5.0,
+                "priceAmount": 5.0,
+                "priceCurrency": "mirror",
+            }
+        ]
+        result, _, new_pending_online, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=3,
+            prev_signals=[],
+            curr_signals=[],
+            pending_instant=[],
+            pending_online=pending,
+            non_instant_online_grace_polls=1,
+        )
+        self.assertEqual(result.likely_non_instant_online, 1)
+        self.assertTrue(any(ev.get("rule") == "likely_non_instant_online_sale" for ev in result.events))
+        self.assertEqual(len(new_pending_online), 0)
+
+    def test_late_relist_after_credit_still_reverts(self) -> None:
+        """Once counted immediate (grace elapsed), a later relist still reverts the sale."""
+        pending = [
+            {
+                "fingerprint": "fp1",
+                "seller": "seller1",
+                "removed_cycle": 1,
+                "countedImmediate": True,
+                "jitterGracePolls": 0,
+                "mirrorEquiv": 5.0,
+                "priceAmount": 5.0,
+                "priceCurrency": "mirror",
+            }
+        ]
+        result, _, new_pending_online, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=4,
+            prev_signals=[],
+            curr_signals=[self._prev_signal()],
+            pending_instant=[],
+            pending_online=pending,
+            non_instant_online_grace_polls=1,
+        )
+        self.assertEqual(result.likely_non_instant_online, -1)
+        self.assertEqual(result.relist_same_seller, 1)
+        self.assertTrue(any(ev.get("rule") == "relist_same_seller" for ev in result.events))
+        self.assertEqual(len(new_pending_online), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

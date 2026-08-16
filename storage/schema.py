@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 def migration_001_initial() -> str:
@@ -322,5 +322,10 @@ CREATE INDEX IF NOT EXISTS idx_inference_events_rule ON inference_events(rule);
 
 
 def migration_016_inference_signal_count() -> str:
+    """Applied via a Python idempotent migration in `storage/db.py`."""
+    return ""
+
+
+def migration_017_backfill_online_pending_counted_immediate() -> str:
     """Applied via a Python idempotent migration in `storage/db.py`."""
     return ""
