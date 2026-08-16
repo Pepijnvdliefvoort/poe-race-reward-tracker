@@ -790,6 +790,25 @@ def load_inference_fetch_jitter_grace_polls(storage: StorageService) -> int:
     return max(0, min(10, int(raw)))
 
 
+def load_inference_non_instant_online_grace_polls(storage: StorageService) -> int:
+    """
+    Defer crediting a non-instant "seller was online" vanish (rule 4b) for this many poll cycles.
+
+    PoE trade's `account.online` flag can lag a real logout, so a listing that disappears right as
+    its seller goes offline can look "online" for one more cycle. Holding the credit for a short
+    grace window lets a quick same-seller reappearance resolve as fetch jitter instead of a
+    sale + revert alert pair.
+
+    Config key: app_config.market.inference_non_instant_online_grace_polls (default 1)
+    """
+    try:
+        data = storage.get_config(key="market") or {}
+        raw = int(float(data.get("inference_non_instant_online_grace_polls", 1)))
+    except Exception:
+        raw = 1
+    return max(0, min(10, int(raw)))
+
+
 def load_inference_truncated_instant_vanish_max_above_floor_pct(storage: StorageService) -> float:
     """
     When the trade search returns more IDs than we fetch, only infer instant vanishes for listings
@@ -3029,6 +3048,7 @@ def run_cycle(
                 storage
             ),
             fetch_jitter_grace_polls=load_inference_fetch_jitter_grace_polls(storage),
+            non_instant_online_grace_polls=load_inference_non_instant_online_grace_polls(storage),
         )
         (
             xfer,

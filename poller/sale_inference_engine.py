@@ -15,6 +15,8 @@ Rules:
 4b. Non-instant listing gone while seller appears online -> likely sold (pending relist can undo).
    The poller prefers a live account-filter search + fetch (`listing.account.online` on another of
    their listings); if that probe fails, it falls back to `sellerOnline` from the prior ladder fetch.
+   PoE's online flag can lag a real logout, so this credit defers for a short grace window (see
+   `non_instant_online_grace_polls`) before counting, to avoid alerting on a seller who just logged off.
 5. Same fingerprint + same seller still listed but listed price changed -> repriced
    (not a sale; only when that pair maps to exactly one listing on both polls).
 6. Same fingerprint offered by 2+ different sellers in one fetch -> multi-party contention signal.
@@ -635,6 +637,7 @@ def evaluate_listing_transition(
     truncated_instant_vanish_max_above_floor_pct: float = 25.0,
     truncated_instant_vanish_max_above_floor_mirrors: float = 0.08,
     fetch_jitter_grace_polls: int = 2,
+    non_instant_online_grace_polls: int = 1,
 ) -> tuple[InferenceCycleResult, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Returns (result, new_pending_instant, new_pending_online_non_instant, curr_signals_for_storage).
@@ -651,8 +654,12 @@ def evaluate_listing_transition(
     pending entry (adding a pending would cause an immediate relist-revert the next cycle
     because the seller is still present in curr_keys).
 
-    Non-instant rows that vanish while the seller was online (rule 4b) credit `likely_non_instant_online`;
-    pending entries allow a same-seller relist to decrement that credit.
+    Non-instant rows that vanish while the seller was online (rule 4b) defer for
+    `non_instant_online_grace_polls` cycles before crediting `likely_non_instant_online` (the
+    PoE trade `account.online` flag lags real logouts, so a same-seller reappearance within the
+    grace window is treated as `fetch_jitter_relist`, not a sale + revert pair). Once the grace
+    window elapses without a reappearance, the sale is credited and a pending entry with
+    `countedImmediate` stays open so a later same-seller relist can still decrement that credit.
 
     ``seller_online_probe``: optional map account name -> online bool from a live account search + fetch
     (poller). When present for a seller, overrides ``sellerOnline`` stored on the prior snapshot row.
@@ -663,6 +670,7 @@ def evaluate_listing_transition(
     pending_online = pending_online or []
     seller_online_probe = seller_online_probe or {}
     jitter_grace = max(0, int(fetch_jitter_grace_polls))
+    online_grace = max(0, int(non_instant_online_grace_polls))
 
     prev_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in prev_signals}
     curr_keys = {(str(s["fingerprint"]), str(s["seller"])) for s in curr_signals}
@@ -683,10 +691,32 @@ def evaluate_listing_transition(
         price_currency = pend.get("priceCurrency")
         if not fp or not seller:
             continue
+        counted_imm = bool(pend.get("countedImmediate", True))
+        pend_grace = int(pend.get("jitterGracePolls") or 0)
+        polls_absent = max(0, cycle - removed)
         if (fp, seller) in curr_keys:
-            result.relist_same_seller += 1
-            result.likely_non_instant_online -= 1
             new_meta = _meta_for(curr_signals, fp, seller)
+            if not counted_imm and pend_grace > 0 and polls_absent <= pend_grace:
+                events.append(
+                    {
+                        "rule": "fetch_jitter_relist",
+                        "itemKey": item_key,
+                        "fingerprint": fp,
+                        "seller": seller,
+                        "mirrorEquiv": mirror_eq,
+                        "priceAmount": price_amount,
+                        "priceCurrency": price_currency,
+                        "newPriceAmount": new_meta.get("priceAmount") if new_meta else None,
+                        "newPriceCurrency": new_meta.get("priceCurrency") if new_meta else None,
+                        "pollsAbsent": polls_absent,
+                        "jitterGracePolls": pend_grace,
+                        "cycle": cycle,
+                    }
+                )
+                continue
+            result.relist_same_seller += 1
+            if counted_imm:
+                result.likely_non_instant_online -= 1
             events.append(
                 {
                     "rule": "relist_same_seller",
@@ -704,6 +734,27 @@ def evaluate_listing_transition(
             )
             continue
         if removed < cycle:
+            if counted_imm:
+                pass
+            elif pend_grace > 0 and polls_absent <= pend_grace:
+                new_pending_online.append(pend)
+                continue
+            else:
+                # Grace window elapsed with no reappearance; safe to credit the sale now.
+                result.likely_non_instant_online += 1
+                events.append(
+                    {
+                        "rule": "likely_non_instant_online_sale",
+                        "itemKey": item_key,
+                        "fingerprint": fp,
+                        "seller": seller,
+                        "mirrorEquiv": mirror_eq,
+                        "priceAmount": price_amount,
+                        "priceCurrency": price_currency,
+                        "cycle": cycle,
+                        "deferredCycles": polls_absent,
+                    }
+                )
             continue
         new_pending_online.append(pend)
 
@@ -959,24 +1010,43 @@ def evaluate_listing_transition(
                         }
                     )
                 else:
-                    result.likely_non_instant_online += 1
-                    events.append(
-                        {
-                            "rule": "likely_non_instant_online_sale",
-                            "itemKey": item_key,
-                            "fingerprint": fp,
-                            "seller": seller,
-                            "mirrorEquiv": mirror_eq,
-                            "priceAmount": price_amount,
-                            "priceCurrency": price_currency,
-                            "cycle": cycle,
-                        }
-                    )
+                    # Defer crediting for online_grace polls: PoE's account.online flag can lag a
+                    # real logout, so a quick same-seller reappearance is fetch jitter, not a sale.
+                    defer_for_online_jitter = online_grace > 0
+                    if not defer_for_online_jitter:
+                        result.likely_non_instant_online += 1
+                        events.append(
+                            {
+                                "rule": "likely_non_instant_online_sale",
+                                "itemKey": item_key,
+                                "fingerprint": fp,
+                                "seller": seller,
+                                "mirrorEquiv": mirror_eq,
+                                "priceAmount": price_amount,
+                                "priceCurrency": price_currency,
+                                "cycle": cycle,
+                            }
+                        )
+                    else:
+                        events.append(
+                            {
+                                "rule": "non_instant_online_removed_pending",
+                                "itemKey": item_key,
+                                "fingerprint": fp,
+                                "seller": seller,
+                                "mirrorEquiv": mirror_eq,
+                                "priceAmount": price_amount,
+                                "priceCurrency": price_currency,
+                                "cycle": cycle,
+                            }
+                        )
                     new_pending_online.append(
                         {
                             "fingerprint": fp,
                             "seller": seller,
                             "removed_cycle": cycle,
+                            "countedImmediate": not defer_for_online_jitter,
+                            "jitterGracePolls": online_grace if defer_for_online_jitter else 0,
                             "mirrorEquiv": mirror_eq,
                             "priceAmount": price_amount,
                             "priceCurrency": price_currency,

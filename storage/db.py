@@ -25,6 +25,7 @@ from .schema import (
     migration_014_new_item_alert_cooldown,
     migration_015_account_ban_alert_cooldown,
     migration_016_inference_signal_count,
+    migration_017_backfill_online_pending_counted_immediate,
 )
 
 
@@ -131,6 +132,7 @@ class Database:
             (14, migration_014_new_item_alert_cooldown()),
             (15, migration_015_account_ban_alert_cooldown()),
             (16, migration_016_inference_signal_count()),
+            (17, migration_017_backfill_online_pending_counted_immediate()),
         ]
 
         for version, sql in migrations:
@@ -154,6 +156,8 @@ class Database:
                 self._migration_013_inference_pending_jitter_grace(con)
             elif version == 16:
                 self._migration_016_inference_signal_count(con)
+            elif version == 17:
+                self._migration_017_backfill_online_pending_counted_immediate(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -422,6 +426,23 @@ class Database:
             UPDATE inference_state_signals
                SET signal_count = 1
              WHERE signal_count IS NULL OR signal_count < 1
+            """
+        )
+
+    def _migration_017_backfill_online_pending_counted_immediate(self, con: sqlite3.Connection) -> None:
+        """
+        Pre-fix pending `online_non_instant` rows were always credited immediately (rule 4b had no
+        jitter-grace deferral), but were persisted with `counted_immediate = 0` (the field wasn't set
+        yet). Mark still-open rows with `jitter_grace_polls = 0` as `counted_immediate = 1` so the new
+        deferral-aware resolution logic doesn't double-credit or skip their revert decrement.
+        """
+        con.execute(
+            """
+            UPDATE inference_state_pending
+               SET counted_immediate = 1
+             WHERE pending_kind = 'online_non_instant'
+               AND jitter_grace_polls = 0
+               AND counted_immediate = 0
             """
         )
 
