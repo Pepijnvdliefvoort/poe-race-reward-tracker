@@ -2028,20 +2028,6 @@ def _dedupe_listings_for_display(listings: list[dict[str, Any]]) -> list[dict[st
     return out
 
 
-def fetch_listings_for_inference(
-    session: requests.Session,
-    rate_limiter: AdaptiveRateLimiter,
-    query_id: str,
-    result_ids: list[str],
-    cap: int,
-) -> list[dict[str, Any]]:
-    """All listing payloads returned by search (same order), up to `cap`."""
-    if cap <= 0:
-        return []
-    ids = [x for x in result_ids if isinstance(x, str)][:cap]
-    return _fetch_listing_entries_batched(session, rate_limiter, query_id, ids)
-
-
 def _median_absolute_deviation(values: list[float], median_value: float) -> float:
     deviations = [abs(v - median_value) for v in values]
     if not deviations:
@@ -2935,7 +2921,9 @@ def run_cycle(
             status_option_override=status_override,
         )
         # Fetch a small slice for fast pricing summaries and UI affordances.
-        listings = fetch_top_listings(session, rate_limiter, query_id, result_ids)
+        listings_raw_top = fetch_top_listings(session, rate_limiter, query_id, result_ids)
+        top_ids_count = len([x for x in result_ids[:TOP_IDS_LIMIT] if isinstance(x, str)])
+        listings = listings_raw_top
         # Filter listings by image_name_filter if specified
         if item.image_name_filter:
             listings_before = listings
@@ -2962,13 +2950,17 @@ def run_cycle(
                 inference_fetch_cap,
             )
 
-        listings_inference = fetch_listings_for_inference(
-            session,
-            rate_limiter,
-            query_id,
-            result_ids,
-            cap=effective_inference_cap,
-        )
+        # The inference cap's leading ids are the same ones already fetched above for the
+        # top-listings preview; reuse that response instead of re-fetching them, and only
+        # fetch the extra ids (if the inference cap reaches beyond TOP_IDS_LIMIT).
+        if effective_inference_cap <= top_ids_count:
+            listings_inference = listings_raw_top[:effective_inference_cap]
+        else:
+            extra_ids = [
+                x for x in result_ids[top_ids_count:effective_inference_cap] if isinstance(x, str)
+            ]
+            extra_listings = _fetch_listing_entries_batched(session, rate_limiter, query_id, extra_ids)
+            listings_inference = listings_raw_top + extra_listings
         # Filter listings by image_name_filter if specified
         if item.image_name_filter:
             listings_inference_before = listings_inference
