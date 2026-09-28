@@ -2,7 +2,10 @@
 Transparent expected-return-per-day estimate for buying an item now and reselling it.
 
     ask            = fair value x (1 - undercut)            what we list at
-    sale rate      = shrunk sales/day x share of recent sales at >= ask
+    buyer flow     = shrunk sales/day x share of recent sales at >= ask
+    queue          = other instant listings priced <= ask   buyers take those first
+    sale rate      = buyer flow / (queue + 1)
+                     (optionally updated with how listings at a similar price fared; off by default)
     P(sell <= H)   = 1 - exp(-rate x H)                     exponential time-to-sale
     E[days held]   = (1 - exp(-rate x H)) / rate + lag      capped at the horizon H
     E[return]      = P x (ask x (1 - fee) / entry - 1) + (1 - P) x unsold return
@@ -30,6 +33,15 @@ class EstimatorParams:
     undercut_pct: float = 5.0
     prior_exposure_days: float = 60.0  # weight of the market-wide sale rate for sparse items
     listing_lag_days: float = 0.5  # time to list + first buyer to notice
+    # Each cheaper-or-equal instant listing is sold before ours.
+    use_queue: bool = True
+    # Update the sale rate with sold/unsold listing episodes priced near our ask. Off by default: on the
+    # Sep 2026 production DB it pushed the predicted sell chance to ~45% where ~77% actually sold
+    # (it measures how fast an *average* listing at that price sells, while ours is the cheapest).
+    # The same counts are still passed to the learned model as features.
+    use_listing_evidence: bool = False
+    evidence_band: tuple[float, float] = (0.9, 1.25)  # "similar price" relative to our ask
+    evidence_prior_listing_days: float = 60.0  # pseudo listing-days behind the flow-based rate
 
 
 @dataclass(frozen=True)
@@ -44,6 +56,9 @@ class Estimate:
     return_per_day: float
     confidence: str
     sales_at_or_above_ask_90d: int
+    queue_ahead: int = 0
+    similar_listing_days_90d: float = 0.0
+    similar_listings_sold_90d: int = 0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -67,6 +82,10 @@ def params_from_config(cfg: dict | None) -> EstimatorParams:
         undercut_pct=num("invest_undercut_pct", defaults.undercut_pct, 0.0, 50.0),
         prior_exposure_days=defaults.prior_exposure_days,
         listing_lag_days=defaults.listing_lag_days,
+        use_queue=defaults.use_queue,
+        use_listing_evidence=defaults.use_listing_evidence,
+        evidence_band=defaults.evidence_band,
+        evidence_prior_listing_days=defaults.evidence_prior_listing_days,
     )
 
 
@@ -91,6 +110,25 @@ def estimate(snap: Snapshot, params: EstimatorParams = EstimatorParams()) -> Est
     share_at_ask = (n_at_ask + 0.5) / (n90 + 1.0)
     rate = max(1e-6, all_sales_rate * share_at_ask)
 
+    queue = 0
+    if params.use_queue and snap.instant_ladder:
+        # Index 0 is the listing we buy; everything else at or below our ask sells first.
+        queue = sum(1 for p in snap.instant_ladder[1:] if p <= ask + 1e-9)
+        rate = rate / (queue + 1)
+
+    exposure = 0.0
+    sold = 0
+    if snap.listing_evidence:
+        lo, hi = ask * params.evidence_band[0], ask * params.evidence_band[1]
+        for price, days, was_sold in snap.listing_evidence:
+            if lo <= price <= hi:
+                exposure += days
+                sold += int(was_sold)
+    if params.use_listing_evidence and exposure > 0:
+        # Gamma-Poisson update: the flow/queue rate is the prior, listing-days are the evidence.
+        b_ev = max(1e-6, params.evidence_prior_listing_days)
+        rate = max(1e-6, (sold + rate * b_ev) / (exposure + b_ev))
+
     p_sell = 1.0 - math.exp(-rate * horizon)
     expected_days = p_sell / rate + max(0.0, params.listing_lag_days)
     expected_days = min(expected_days, horizon + params.listing_lag_days)
@@ -111,4 +149,7 @@ def estimate(snap: Snapshot, params: EstimatorParams = EstimatorParams()) -> Est
         return_per_day=expected_return / expected_days,
         confidence=confidence_tier(n90),
         sales_at_or_above_ask_90d=n_at_ask,
+        queue_ahead=queue,
+        similar_listing_days_90d=exposure,
+        similar_listings_sold_90d=sold,
     )

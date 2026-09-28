@@ -32,6 +32,9 @@ MODEL_FEATURES: list[str] = FEATURE_NAMES + [
     "est_sell_probability",
     "est_return_if_sold",
     "est_log_days",
+    "est_queue_ahead",
+    "est_log1p_similar_listing_days",
+    "est_similar_listings_sold",
 ]
 
 # Realized return/day is heavy-tailed (a +20% sale after 3 hours is 160%/day). Train on a tempered,
@@ -51,6 +54,9 @@ def feature_vector(snap: Snapshot, params: EstimatorParams) -> list[float]:
             "est_sell_probability": est.sell_probability,
             "est_return_if_sold": est.return_if_sold,
             "est_log_days": math.log(max(est.expected_days, 1e-3)),
+            "est_queue_ahead": float(est.queue_ahead),
+            "est_log1p_similar_listing_days": math.log1p(est.similar_listing_days_90d),
+            "est_similar_listings_sold": float(est.similar_listings_sold_90d),
         }
     )
     return [row[name] for name in MODEL_FEATURES]

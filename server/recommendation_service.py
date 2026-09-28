@@ -33,7 +33,9 @@ VALID_RISKS = {"safe", "balanced", "speculative"}
 VALID_MODES = {"ranked", "portfolio"}
 MAX_RECOMMENDATIONS = 8
 MIN_FLIP_PROFIT_MIRRORS = 1.0
-MARKET_CACHE_TTL_SECONDS = 120.0
+MARKET_CACHE_TTL_SECONDS = 300.0
+# Features look back at most ~90 days; load a margin on top.
+MARKET_HISTORY_DAYS = 130
 
 # Per risk profile: minimum sell chance within the horizon and allowed confidence tiers.
 RISK_FILTERS: dict[str, dict[str, Any]] = {
@@ -91,16 +93,19 @@ def _latest_divines_per_mirror(storage: ServerStorage) -> float | None:
         con.close()
 
 
-def _load_market_cached(storage: ServerStorage) -> Market:
-    """Full history load is the expensive part; reuse it for a couple of minutes."""
-    key = str(storage.db_path)
+def _load_market_cached(storage: ServerStorage, *, with_episodes: bool) -> Market:
+    """
+    History load is the expensive part; reuse it for a few minutes. Light mode (no listing
+    episodes) is enough for the estimator; the learned model also needs listing episodes.
+    """
+    key = (str(storage.db_path), with_episodes)
     now = time.monotonic()
     with _market_cache_lock:
         if _market_cache["key"] == key and now - _market_cache["loaded_at"] < MARKET_CACHE_TTL_SECONDS:
             return _market_cache["market"]
     con = storage.connect()
     try:
-        market = load_market(con)
+        market = load_market(con, since_ts=time.time() - MARKET_HISTORY_DAYS * 86400, episodes=with_episodes)
     finally:
         con.close()
     with _market_cache_lock:
@@ -411,7 +416,7 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
 
     now = _utc_now()
     now_ts = now.timestamp()
-    market = _load_market_cached(storage)
+    market = _load_market_cached(storage, with_episodes=model is not None)
     latest_rows = _load_latest_poll_rows(storage)
     ladders = _load_latest_listing_ladders(storage, [int(r["item_poll_id"]) for r in latest_rows.values()])
     rate = market_sale_rate(market, now_ts)

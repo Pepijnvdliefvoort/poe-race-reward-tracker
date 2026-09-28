@@ -4,8 +4,10 @@ import contextlib
 import io
 import json
 import math
+import sqlite3
 import tempfile
 import unittest
+from array import array
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -24,7 +26,10 @@ T0 = 1_700_000_000.0
 def _hist(polls: list[tuple[float, float | None]], sales: list[tuple[float, float]] | None = None, listings: int = 5) -> VariantHistory:
     h = VariantHistory(variant_id=1, base_item_name="X", display_name="X", mode="aa")
     h.polls = [
-        PollPoint(ts=T0 + d * DAY, floor_mirror=p, total_results=listings, new_listing_rows=0, instant_floor=p)
+        PollPoint(
+            ts=T0 + d * DAY, floor_mirror=p, total_results=listings, new_listing_rows=0,
+            instant_ladder=array("f", [p] if p is not None else []),
+        )
         for d, p in polls
     ]
     h.sales = [SalePoint(ts=T0 + d * DAY, price_mirror=p) for d, p in (sales or [])]
@@ -67,36 +72,84 @@ class FeatureTests(unittest.TestCase):
         self.assertGreater(one_sale.fair_value, 10.0)
 
 
+def _poll_db(root: Path, polls: list[list[tuple[str, str, float, int]]], sales: list[tuple[int, str, str, float]]) -> Path:
+    """Tiny DB: one variant, one poll per day; `polls[i]` = [(seller, fingerprint, mirror price, instant)]."""
+    from storage.db import Database
+
+    db = Database(root_dir=root)
+    con = db.connect()
+    con.execute("INSERT INTO items(name, created_at_utc) VALUES ('X', '2026-01-01T00:00:00+00:00')")
+    con.execute("INSERT INTO item_variants(item_id, mode, display_name) VALUES (1, 'aa', 'X')")
+    poll_ids = []
+    for day, listings in enumerate(polls):
+        ts = f"2026-01-{day + 1:02d}T00:00:00+00:00"
+        con.execute("INSERT INTO poll_runs(cycle_number, league, started_at_utc, divines_per_mirror) VALUES (?, 'S', ?, 1600)", (day + 1, ts))
+        floor = min((p for _, _, p, _ in listings), default=None)
+        con.execute(
+            "INSERT INTO item_polls(poll_run_id, item_variant_id, requested_at_utc, query_id, lowest_mirror) VALUES (?, 1, ?, 'q', ?)",
+            (day + 1, ts, floor),
+        )
+        poll_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+        poll_ids.append(poll_id)
+        for rank, (seller, fp, price, inst) in enumerate(sorted(listings, key=lambda x: x[2]), start=1):
+            con.execute(
+                """INSERT INTO listing_snapshots(item_poll_id, rank, seller_name, price_text, amount, currency,
+                       is_instant_buyout, fingerprint) VALUES (?, ?, ?, 'p', ?, 'mirror', ?, ?)""",
+                (poll_id, rank, seller, price, inst, fp),
+            )
+    for day, seller, fp, price in sales:
+        ts = f"2026-01-{day + 1:02d}T00:00:00+00:00"
+        con.execute(
+            """INSERT INTO sales(item_poll_id, item_variant_id, occurred_at_utc, recorded_at_utc, rule, fingerprint,
+                   seller, mirror_equiv) VALUES (?, 1, ?, ?, 'likely_instant_sale', ?, ?, ?)""",
+            (poll_ids[day], ts, ts, fp, seller, price),
+        )
+    con.commit()
+    con.close()
+    return db.path
+
+
+def _load(db: Path, **kw) -> Market:
+    con = open_readonly(db)
+    try:
+        return load_market(con, **kw)
+    finally:
+        con.close()
+
+
 class MarketLoaderTests(unittest.TestCase):
-    def test_implausible_sales_dropped_and_instant_floor_used(self) -> None:
+    def test_sale_dropped_only_when_same_roll_was_cheaper(self) -> None:
+        # Day 0: seller A lists roll R at 1 mirror, seller B lists the same roll R at 0.4,
+        #        seller C lists a different roll Q at 0.4. Day 1: A's and C's listings are gone.
+        day0 = [("A", "R", 1.0, 1), ("B", "R", 0.4, 1), ("C", "Q", 0.4, 1), ("D", "S", 1.0, 1)]
+        day1 = [("B", "R", 0.4, 1)]
         with tempfile.TemporaryDirectory() as tmp:
-            db = build_synthetic_db(Path(tmp), variants=2, days=10, poll_hours=24, seed=1)
-            con = __import__("sqlite3").connect(db)
-            poll_id, vid, floor = con.execute(
-                "SELECT id, item_variant_id, lowest_mirror FROM item_polls ORDER BY id LIMIT 1"
-            ).fetchone()
-            for price, fp in ((floor * 3.0, "anchor"), (floor * 1.1, "real")):
-                con.execute(
-                    """INSERT INTO sales(item_poll_id, item_variant_id, occurred_at_utc, recorded_at_utc, rule,
-                           fingerprint, seller, mirror_equiv) VALUES (?, ?, '2026-01-01T00:00:00+00:00',
-                           '2026-01-01T00:00:00+00:00', 'likely_instant_sale', ?, 'S', ?)""",
-                    (poll_id, vid, fp, price),
-                )
-            con.execute("UPDATE listing_snapshots SET is_instant_buyout = 0 WHERE item_poll_id = ?", (poll_id,))
-            con.commit()
-            con.close()
-            con = open_readonly(db)
-            try:
-                market = load_market(con)
-            finally:
-                con.close()
-            self.assertEqual(market.sales_dropped_implausible, 1)
-            prices = [s.price_mirror for s in market.variants[vid].sales]
-            self.assertIn(floor * 1.1, prices)
-            self.assertNotIn(floor * 3.0, prices)
-            first = market.variants[vid].polls[0]
-            self.assertIsNone(first.instant_floor)
-            self.assertEqual(first.floor_mirror, floor)
+            db = _poll_db(Path(tmp), [day0, day1, day1], [(1, "A", "R", 1.0), (1, "D", "S", 1.0)])
+            roll = _load(db)
+            ratio = _load(db, sale_filter="floor_ratio")
+        # A's 1-mirror sale is implausible (same roll R listed at 0.4 by B); D's roll S had no cheaper twin.
+        self.assertEqual((roll.sales_dropped_implausible, roll.sales_kept), (1, 1))
+        # The blunt floor-ratio filter drops both, because the cheapest listing of any roll was 0.4.
+        self.assertEqual((ratio.sales_dropped_implausible, ratio.sales_kept), (2, 0))
+
+    def test_listing_episodes_track_sold_removed_and_still_listed(self) -> None:
+        polls = [
+            [("A", "R", 2.0, 1), ("B", "Q", 3.0, 1), ("C", "S", 5.0, 1)],
+            [("A", "R", 2.0, 1), ("B", "Q", 3.0, 1), ("C", "S", 5.0, 1)],
+            [("C", "S", 5.0, 1)],  # A sold, B removed
+            [("C", "S", 4.5, 1)],  # C repriced
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _poll_db(Path(tmp), polls, [(2, "A", "R", 2.0)])
+            hist = next(iter(_load(db).variants.values()))
+        by_price = {e.price_mirror: e for e in hist.episodes}
+        self.assertTrue(by_price[2.0].sold)
+        self.assertFalse(by_price[3.0].sold)
+        self.assertFalse(by_price[3.0].still_listed)
+        self.assertFalse(by_price[5.0].sold)  # ended by a reprice, not a sale
+        self.assertTrue(by_price[4.5].still_listed)
+        self.assertEqual(list(hist.polls[0].instant_ladder), [2.0, 3.0, 5.0])
+        self.assertAlmostEqual(hist.polls[0].instant_floor, 2.0)
 
 
 class EstimatorTests(unittest.TestCase):
@@ -126,6 +179,27 @@ class EstimatorTests(unittest.TestCase):
         est = estimate(_snap(sales_90d=0, recent_sale_prices=(), market_sale_rate_per_day=1e-4))
         params = EstimatorParams()
         self.assertLessEqual(est.expected_days, params.horizon_days + params.listing_lag_days + 1e-9)
+
+    def test_listings_ahead_of_us_slow_the_sale(self) -> None:
+        alone = estimate(_snap(instant_ladder=(10.0,)))
+        behind_wall = estimate(_snap(instant_ladder=(10.0, 10.5, 11.0, 11.0)))
+        self.assertEqual(behind_wall.queue_ahead, 3)
+        self.assertGreater(behind_wall.expected_days, alone.expected_days)
+
+    def test_unsold_listings_at_similar_price_slow_the_sale(self) -> None:
+        on = EstimatorParams(use_listing_evidence=True)
+        base = estimate(_snap(), on)
+        ask = base.ask_price
+        stale = estimate(_snap(listing_evidence=((ask, 80.0, False), (ask * 1.1, 90.0, False))), on)
+        selling = estimate(_snap(listing_evidence=((ask, 3.0, True), (ask * 1.05, 2.0, True))), on)
+        self.assertLess(stale.sale_rate_per_day, base.sale_rate_per_day)
+        self.assertGreater(selling.sale_rate_per_day, base.sale_rate_per_day)
+        far_away = estimate(_snap(listing_evidence=((ask * 3, 90.0, False),)), on)
+        self.assertAlmostEqual(far_away.sale_rate_per_day, base.sale_rate_per_day)
+        # Off by default, but the counts are still reported (they feed the learned model).
+        default = estimate(_snap(listing_evidence=((ask, 80.0, False),)))
+        self.assertAlmostEqual(default.sale_rate_per_day, estimate(_snap()).sale_rate_per_day)
+        self.assertAlmostEqual(default.similar_listing_days_90d, 80.0)
 
     def test_params_from_config_clamps(self) -> None:
         p = params_from_config({"invest_horizon_days": 5000, "invest_fee_pct": -3, "invest_undercut_pct": "x"})

@@ -23,7 +23,9 @@ listing counts and their change, new-listing rate, momentum.
 |---|---|
 | fair value | sale anchor, shrunk toward the listing anchor when there are few sales (`w = n / (n + 3)`) |
 | ask | fair value x (1 - `invest_undercut_pct`) |
-| sale rate at the ask | (90d sales + market rate x 60d prior) / 150d x share of recent sales at >= ask |
+| buyer flow at the ask | (90d sales + market rate x 60d prior) / 150d x share of recent sales at >= ask |
+| queue | other instant listings priced at or below our ask (buyers take those first) |
+| sale rate for our copy | buyer flow / (queue + 1) |
 | P(sell within H) | `1 - exp(-rate x H)` (H = `invest_horizon_days`) |
 | expected days held | `P / rate` + listing lag, capped at H |
 | expected return | `P x (ask x (1 - fee) / entry - 1) + (1 - P) x unsold return` |
@@ -31,9 +33,17 @@ listing counts and their change, new-listing rate, momentum.
 
 Sparse items borrow the market-wide sale rate, so one lucky sale doesn't make a rare item look liquid.
 
-Sales recorded above 1.5x the cheapest listing of the same poll are ignored (`market.MAX_SALE_TO_FLOOR_RATIO`).
-In Sep 2026 about 1 in 5 recorded sales were at exactly 1 mirror on items trading far below that, which
-looks like "1 mirror" anchor listings vanishing rather than real purchases.
+A recorded sale is ignored when, in the poll just before it, another seller listed the **same roll**
+(fingerprint) at least 10% cheaper: a buyer would have taken that copy (`market.sale_filter="roll"`).
+In the Sep 2026 production DB this removed 460 of 2,664 sales, mostly "1 mirror" listings vanishing
+while the same roll sat at ~0.4 mirror. Sales of *different* rolls priced above the floor are kept,
+because better rolls can sell at a premium; whether 1-mirror sales of near-identical rolls are real
+cannot be decided from this data alone (see "Known uncertainty" below).
+
+Listing episodes (each seller + roll + price from first seen to gone) are also built. Using them to
+update the sell rate (`use_listing_evidence`) made sell-chance predictions worse on the production
+DB (predicted ~45% vs ~77% actual: it measures an average listing at that price, while ours is the
+cheapest), so it is off by default; the counts are still model inputs.
 
 ## How it is evaluated (`simulate.py`)
 
@@ -58,6 +68,14 @@ weeks. On synthetic data with no learnable signal, this gate enabled the model i
 looser 4-week gate enabled it in 3 of 12). Until then, and whenever the model was trained with a
 different scikit-learn version, the transparent estimator ranks.
 
+## Known uncertainty: sales far above the floor
+
+Some items (e.g. Wurm's Molt, Karui Ward) have many recorded sales at exactly 1 mirror while near-
+identical copies are listed around 0.5 mirror. If those are real, buying at the floor and listing
+near 1 mirror is very profitable; if they are delistings, it is not. On the production DB the top-5
+backtest gives +1.01%/day treating them as real and +0.42%/day treating every sale above 1.5x the
+floor as fake; both beat random picks (about -0.45%/day).
+
 ## Operations
 
 - Weekly retrain (poller, `poller/ml_retrain.py`) runs `scripts/retrain_ml_pipeline.py`, which writes
@@ -67,4 +85,6 @@ different scikit-learn version, the transparent estimator ranks.
 - Config (`app_config` key `market`): `invest_horizon_days` (60), `invest_fee_pct` (0),
   `invest_undercut_pct` (5).
 - Run locally: `python scripts/retrain_ml_pipeline.py [--db path] [--root path]`.
+- The server loads the last 130 days in light mode (no listing episodes, ~2s on the production DB)
+  unless the learned model is enabled, which needs listing episodes as inputs.
 - `ML/synthetic.py` generates a synthetic market for tests and experiments.

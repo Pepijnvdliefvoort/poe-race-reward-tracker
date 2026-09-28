@@ -39,6 +39,10 @@ class Snapshot:
     sale_momentum: float | None  # sale anchor (last 30d) / sale median (30-90d ago) - 1
     floor_momentum: float | None  # entry price / median floor 30-60 days ago - 1
     market_sale_rate_per_day: float  # pooled prior across all variants at ts
+    # Cheapest instant listings at the entry poll, ascending (index 0 is the one we would buy).
+    instant_ladder: tuple[float, ...] = ()
+    # Instant listing episodes overlapping the last 90 days: (price, days listed in window, sold by ts).
+    listing_evidence: tuple[tuple[float, float, bool], ...] = ()
 
     def as_feature_row(self) -> dict[str, float]:
         """Numeric model inputs (NaN = unknown; the model handles missing values)."""
@@ -126,6 +130,7 @@ def snapshot(hist: VariantHistory, ts: float, *, market_rate: float) -> Snapshot
     if entry_age > MAX_FLOOR_AGE_DAYS:
         return None
     entry = float(latest_buyable.instant_floor)
+    ladder = tuple(float(p) for p in latest_buyable.instant_ladder)
 
     def floors_between(lo_days: float, hi_days: float) -> list[float]:
         lo, hi = ts - lo_days * DAY, ts - hi_days * DAY
@@ -165,6 +170,17 @@ def snapshot(hist: VariantHistory, ts: float, *, market_rate: float) -> Snapshot
     first_ts = polls[0].ts
     observed_days = max(1.0, min(30.0, (ts - first_ts) / DAY))
 
+    evidence = []
+    for ep in hist.episodes:
+        if ep.start_ts > ts:
+            break  # episodes are sorted by start
+        if not ep.instant:
+            continue
+        lo, hi = max(ep.start_ts, lo90), min(ep.end_ts, ts)
+        if hi <= lo:
+            continue
+        evidence.append((ep.price_mirror, (hi - lo) / DAY, ep.sold and ep.end_ts <= ts))
+
     return Snapshot(
         variant_id=hist.variant_id,
         ts=ts,
@@ -183,6 +199,8 @@ def snapshot(hist: VariantHistory, ts: float, *, market_rate: float) -> Snapshot
         sale_momentum=sale_momentum,
         floor_momentum=(entry / older_floor - 1.0) if older_floor else None,
         market_sale_rate_per_day=market_rate,
+        instant_ladder=ladder,
+        listing_evidence=tuple(evidence),
     )
 
 
