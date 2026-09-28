@@ -47,6 +47,8 @@ requests/*
 storage/exports/
 
 # Generated ML retrain artifacts (local automation outputs)
+ML/models/
+# Legacy artifacts from the pre-2026-09 ML pipeline (may still exist on servers)
 ML/candidates/
 ML/archive/
 ML/**/promotion_summary.json
