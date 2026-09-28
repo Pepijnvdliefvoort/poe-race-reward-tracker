@@ -276,6 +276,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def _client_ip(self) -> str:
         return get_client_ip(self.headers.get("X-Forwarded-For"), self.client_address[0])
 
+    def _send_json_body(self, status_code: int, body: bytes) -> None:
+        """Send an already-encoded JSON body with the standard no-store API headers."""
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_error_page(
         self,
         status_code: int,
@@ -375,12 +384,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         message = "Admin authentication is not configured on this server."
         if want_json:
             body = json.dumps({"error": message}).encode("utf-8")
-            self.send_response(503)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_json_body(503, body)
             return
         self._send_error_page(503, title="Admin auth not configured", message=message)
 
@@ -401,12 +405,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._note_failed_admin_auth_if_applicable(auth_header, query_token, cookie_header)
             if want_json:
                 body = json.dumps({"error": "Forbidden"}).encode("utf-8")
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(403, body)
             else:
                 self._send_admin_unauthorized_page()
             return False
@@ -632,12 +631,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 finally:
                     con.close()
                 body = json.dumps({"ok": True, "variants": variants}, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if req_path == "/api/admin/market/sales":
@@ -653,12 +647,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 if variant_id <= 0:
                     body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
 
                 storage = ServerStorage(ROOT_DIR)
@@ -706,12 +695,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     con.close()
 
                 body = json.dumps({"ok": True, "variantId": variant_id, "sales": sales}, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if req_path in {"/api/admin/market/aa-price-points", "/api/admin/market/price-points"}:
@@ -738,12 +722,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     max_price_points=max_price_points,
                 )
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if req_path == "/api/admin/app-config":
@@ -756,24 +735,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 finally:
                     con.close()
                 body = json.dumps({"ok": True, "items": items}, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if req_path == "/api/admin/app-config/get":
                 key = (params.get("key", [""])[0] or "").strip()
                 if not key:
                     body = json.dumps({"ok": False, "error": "Missing key"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
                 storage = ServerStorage(ROOT_DIR)
                 con = storage.connect()
@@ -815,12 +784,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                 "updated_at_utc": str(row["updated_at_utc"] or ""),
                             }
                             body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                            self.send_response(200)
-                            self.send_header("Content-Type", "application/json; charset=utf-8")
-                            self.send_header("Cache-Control", "no-store")
-                            self.send_header("Content-Length", str(len(body)))
-                            self.end_headers()
-                            self.wfile.write(body)
+                            self._send_json_body(200, body)
                             return
                     if key == "ml_retrain":
                         # Row doesn't exist yet on a fresh deployment (written only after first retrain).
@@ -838,20 +802,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         raw = json.dumps(default_value, ensure_ascii=False, sort_keys=True, indent=2)
                         payload = {"ok": True, "key": "ml_retrain", "value_json": raw, "updated_at_utc": ""}
                         body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json; charset=utf-8")
-                        self.send_header("Cache-Control", "no-store")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
+                        self._send_json_body(200, body)
                         return
                     body = json.dumps({"ok": False, "error": "Not found"}).encode("utf-8")
-                    self.send_response(404)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(404, body)
                     return
                 raw = str(row["value_json"] or "")
                 # Pretty-print JSON when possible (so the editor has readable defaults).
@@ -862,12 +816,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     pass
                 payload = {"ok": True, "key": str(row["key"]), "value_json": raw, "updated_at_utc": str(row["updated_at_utc"] or "")}
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if req_path == "/api/admin/ml-retrain-status":
@@ -892,12 +841,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if not isinstance(cfg, dict):
                     cfg = {}
                 body = json.dumps({"ok": True, "status": cfg}, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if req_path.rstrip("/").endswith("/stats"):
@@ -905,12 +849,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
                 # Avoid surfacing a 500 for expected local-dev conditions (e.g. missing psutil).
                 # The UI can still render a helpful error message from the JSON payload.
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if req_path == "/api/admin/logs":
@@ -945,12 +884,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         since=since,
                     )
                     body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(200, body)
                 else:
                     text = tail_log_file(log_path)
                     body = text.encode("utf-8")
@@ -965,36 +899,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if req_path == "/api/admin/visitor-map":
                 payload = visitor_map_payload()
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if req_path == "/api/admin/download/price_poll.csv":
                 body = json.dumps({"error": "CSV export has been removed (SQLite is the source of truth)."}).encode(
                     "utf-8"
                 )
-                self.send_response(410)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(410, body)
                 return
 
             if req_path == "/api/admin/download/market.db":
                 db_path = ServerStorage(ROOT_DIR).db_path
                 if not db_path.is_file():
                     body = json.dumps({"error": "DB file not found"}).encode("utf-8")
-                    self.send_response(404)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(404, body)
                     return
 
                 snapshot_path: Path | None = None
@@ -1041,12 +960,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     return
                 except Exception as exc:  # noqa: BLE001
                     body = json.dumps({"error": f"DB snapshot export failed: {exc}"}).encode("utf-8")
-                    self.send_response(500)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(500, body)
                     return
                 finally:
                     if snapshot_path is not None:
@@ -1129,23 +1043,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(body)
                     return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_json_body(200, body)
             return
 
         if parsed.path == "/api/config":
             payload = load_config()
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_json_body(200, body)
             return
 
         if parsed.path == "/api/listings":
@@ -1167,32 +1071,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 variant_id = None
             if not query_id and variant_id is None:
                 body = json.dumps({"error": "Missing queryId parameter"}).encode("utf-8")
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(400, body)
                 return
 
             try:
                 payload = fetch_listing_preview(query_id, limit=limit, variant_id=variant_id)
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
             except Exception as exc:  # noqa: BLE001
                 body = json.dumps({"error": str(exc)}).encode("utf-8")
-                self.send_response(502)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(502, body)
                 return
 
         if parsed.path == "/api/account-compare":
@@ -1217,21 +1106,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 top_n = max(1, min(10, top_n))
                 payload = fetch_account_compare(accounts=accounts, mode=mode, top_n=top_n)
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
             except Exception as exc:  # noqa: BLE001
                 body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
-                self.send_response(502)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(502, body)
                 return
 
         if parsed.path == "/api/market/aa-price-points":
@@ -1258,12 +1137,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 max_price_points=max_price_points,
             )
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_json_body(200, body)
             return
 
         if parsed.path == "/api/companion/auth":
@@ -1285,23 +1159,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "configured": True,
                 }
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_json_body(200, body)
             return
 
         if parsed.path == "/api/stats":
             # Moved to /api/admin/stats (admin-protected).
             body = json.dumps({"error": "Not found"}).encode("utf-8")
-            self.send_response(404)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_json_body(404, body)
             return
 
         if parsed.path in {"/error", "/error.html"}:
@@ -1430,33 +1294,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 value_raw = str(value_raw or "").strip()
                 if not key:
                     body = json.dumps({"ok": False, "error": "Missing key"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
                 if not value_raw:
                     body = json.dumps({"ok": False, "error": "Missing value_json"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
                 try:
                     parsed_json = json.loads(value_raw)
                     normalized = json.dumps(parsed_json, ensure_ascii=False, sort_keys=True, indent=2)
                 except Exception as exc:  # noqa: BLE001
                     body = json.dumps({"ok": False, "error": f"Invalid JSON: {exc}"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
                 updated_at = datetime.now(timezone.utc).isoformat()
                 storage = ServerStorage(ROOT_DIR)
@@ -1476,12 +1325,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 finally:
                     con.close()
                 body = json.dumps({"ok": True, "key": key, "value_json": normalized, "updated_at_utc": updated_at}, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if parsed.path == "/api/admin/alerts/test":
@@ -1500,12 +1344,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     variant_id = 0
                 if variant_id <= 0:
                     body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
 
                 raw_types = data.get("types")
@@ -1542,12 +1381,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     ).fetchone()
                     if not variant_row:
                         body = json.dumps({"ok": False, "error": "Variant not found"}).encode("utf-8")
-                        self.send_response(404)
-                        self.send_header("Content-Type", "application/json; charset=utf-8")
-                        self.send_header("Cache-Control", "no-store")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
+                        self._send_json_body(404, body)
                         return
 
                     latest_poll = con.execute(
@@ -1919,12 +1753,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     },
                     allow_nan=False,
                 ).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if parsed.path == "/api/admin/clear-data":
@@ -1938,12 +1767,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     csv_path=Path("price_poll.csv"),
                 )
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if parsed.path == "/api/admin/sales/delete":
@@ -1965,12 +1789,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 if variant_id <= 0:
                     body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
 
                 try:
@@ -1986,12 +1805,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         row = con.execute("SELECT item_id FROM item_variants WHERE id = ?", (variant_id,)).fetchone()
                         if not row:
                             body = json.dumps({"ok": False, "error": "Variant not found"}).encode("utf-8")
-                            self.send_response(404)
-                            self.send_header("Content-Type", "application/json; charset=utf-8")
-                            self.send_header("Cache-Control", "no-store")
-                            self.send_header("Content-Length", str(len(body)))
-                            self.end_headers()
-                            self.wfile.write(body)
+                            self._send_json_body(404, body)
                             return
                         item_id = int(row["item_id"])
                         ids = con.execute("SELECT id FROM item_variants WHERE item_id = ?", (item_id,)).fetchall()
@@ -2020,12 +1834,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     {"ok": True, "scope": scope, "variantIds": variant_ids, "deleted": deleted_total, "deletedByVariantId": deleted_by_variant},
                     allow_nan=False,
                 ).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if parsed.path == "/api/admin/sales/resend-alert":
@@ -2071,23 +1880,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 if not sale_ids:
                     body = json.dumps({"ok": False, "error": "saleId or saleIds is required"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
 
                 webhook_url = _load_discord_sales_webhook_url_from_env()
                 if not webhook_url:
                     body = json.dumps({"ok": False, "error": "Sales Discord webhook is not configured"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
 
                 storage = ServerStorage(ROOT_DIR)
@@ -2122,43 +1921,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     ).fetchall()
                     if not rows:
                         body = json.dumps({"ok": False, "error": "Sale not found"}).encode("utf-8")
-                        self.send_response(404)
-                        self.send_header("Content-Type", "application/json; charset=utf-8")
-                        self.send_header("Cache-Control", "no-store")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
+                        self._send_json_body(404, body)
                         return
 
                     if len(rows) != len(sale_ids):
                         body = json.dumps({"ok": False, "error": "One or more sale IDs were not found"}).encode("utf-8")
-                        self.send_response(404)
-                        self.send_header("Content-Type", "application/json; charset=utf-8")
-                        self.send_header("Cache-Control", "no-store")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
+                        self._send_json_body(404, body)
                         return
 
                     first_variant_id = int(rows[0]["item_variant_id"])
                     if any(int(r["item_variant_id"]) != first_variant_id for r in rows):
                         body = json.dumps({"ok": False, "error": "All selected sales must be from the same variant"}).encode("utf-8")
-                        self.send_response(400)
-                        self.send_header("Content-Type", "application/json; charset=utf-8")
-                        self.send_header("Cache-Control", "no-store")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
+                        self._send_json_body(400, body)
                         return
 
                     if any(r["reverted_at_utc"] for r in rows):
                         body = json.dumps({"ok": False, "error": "One or more selected sales were reverted and cannot be resent"}).encode("utf-8")
-                        self.send_response(400)
-                        self.send_header("Content-Type", "application/json; charset=utf-8")
-                        self.send_header("Cache-Control", "no-store")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
+                        self._send_json_body(400, body)
                         return
 
                     variant_id = first_variant_id
@@ -2303,12 +2082,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     },
                     allow_nan=False,
                 ).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if parsed.path == "/api/admin/inference/reset-counters":
@@ -2329,12 +2103,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 if variant_id <= 0:
                     body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
 
                 try:
@@ -2371,12 +2140,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     con.close()
 
                 body = json.dumps({"ok": True, "variantId": variant_id, "pollsUpdated": polls}, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if parsed.path == "/api/admin/market/wipe-variant":
@@ -2398,12 +2162,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 if variant_id <= 0:
                     body = json.dumps({"ok": False, "error": "variantId is required"}).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
 
                 try:
@@ -2418,12 +2177,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         row = con.execute("SELECT item_id FROM item_variants WHERE id = ?", (variant_id,)).fetchone()
                         if not row:
                             body = json.dumps({"ok": False, "error": "Variant not found"}).encode("utf-8")
-                            self.send_response(404)
-                            self.send_header("Content-Type", "application/json; charset=utf-8")
-                            self.send_header("Cache-Control", "no-store")
-                            self.send_header("Content-Length", str(len(body)))
-                            self.end_headers()
-                            self.wfile.write(body)
+                            self._send_json_body(404, body)
                             return
                         item_id = int(row["item_id"])
                         ids = con.execute("SELECT id FROM item_variants WHERE item_id = ?", (item_id,)).fetchall()
@@ -2442,12 +2196,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                     sale_ids.append(n)
                         if not sale_ids:
                             body = json.dumps({"ok": False, "error": "saleIds is required for scope=sales"}).encode("utf-8")
-                            self.send_response(400)
-                            self.send_header("Content-Type", "application/json; charset=utf-8")
-                            self.send_header("Cache-Control", "no-store")
-                            self.send_header("Content-Length", str(len(body)))
-                            self.end_headers()
-                            self.wfile.write(body)
+                            self._send_json_body(400, body)
                             return
                         qmarks = ",".join(["?"] * len(sale_ids))
                         cur = con.execute(
@@ -2526,12 +2275,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             },
                             allow_nan=False,
                         ).encode("utf-8")
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json; charset=utf-8")
-                        self.send_header("Cache-Control", "no-store")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
+                        self._send_json_body(200, body)
                         return
                     else:
                         variant_ids = [variant_id]
@@ -2613,12 +2357,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     },
                     allow_nan=False,
                 ).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if parsed.path == "/api/admin/trigger-ml-retrain":
@@ -2655,12 +2394,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 finally:
                     con.close()
                 body = json.dumps({"ok": True}, allow_nan=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json_body(200, body)
                 return
 
             if parsed.path == "/api/admin/restart-poller":
@@ -2675,12 +2409,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(body)
                 except Exception as exc:  # noqa: BLE001
                     body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
-                    self.send_response(500)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(500, body)
                 return
 
             if parsed.path == "/api/admin/stop-poller":
@@ -2695,12 +2424,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(body)
                 except Exception as exc:  # noqa: BLE001
                     body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
-                    self.send_response(500)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(500, body)
                 return
 
             if parsed.path == "/api/admin/run-db-export":
@@ -2713,12 +2437,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         },
                         allow_nan=False,
                     ).encode("utf-8")
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(400, body)
                     return
 
                 try:
@@ -2740,12 +2459,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(body)
                 except Exception as exc:  # noqa: BLE001
                     body = json.dumps({"ok": False, "error": str(exc)}).encode("utf-8")
-                    self.send_response(500)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json_body(500, body)
                 return
 
             body = json.dumps({"error": "Unknown admin endpoint"}).encode("utf-8")
@@ -2783,12 +2497,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 payload = {"ok": False, "error": str(exc)}
                 status = 500
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_json_body(status, body)
             return
 
         if parsed.path == "/api/config":

@@ -199,6 +199,12 @@ def preview_table(*, root_dir: Path, name: str, limit: int = 100) -> dict[str, A
     db.ensure_initialized()
     con = db.connect()
     try:
+        exists = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE (type IN ('table','view')) AND name = ? LIMIT 1",
+            (tname,),
+        ).fetchone()
+        if not exists:
+            return {"ok": False, "error": f"Table not found: {tname}"}
         sql = f"SELECT * FROM {_sqlite_identifier(tname)} LIMIT ?"
         cur = con.execute(sql, (limit,))
         cols = [d[0] for d in (cur.description or [])]
@@ -237,6 +243,9 @@ def run_query(*, root_dir: Path, sql: str, limit: int = 200) -> dict[str, Any]:
     db.ensure_initialized()
     con = db.connect()
     try:
+        # The keyword allow-list is not a sandbox (e.g. `WITH ... DELETE`, persistent PRAGMAs);
+        # query_only makes SQLite itself reject writes on this connection.
+        con.execute("PRAGMA query_only = ON;")
         t0 = time.perf_counter()
         cur = con.execute(statement)
         cols = [d[0] for d in (cur.description or [])]
