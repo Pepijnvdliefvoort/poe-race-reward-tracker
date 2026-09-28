@@ -41,6 +41,7 @@ config.json
 logs/
 data/market.db
 data/market.repaired*.db
+data/backups/
 requests/*
 .cursor
 storage/exports/

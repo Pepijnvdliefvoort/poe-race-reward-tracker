@@ -6,6 +6,7 @@ import ipaddress
 import math
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -351,15 +352,6 @@ def stop_poller() -> dict[str, Any]:
 def poller_autostart_enabled() -> bool:
     return (os.environ.get("POE_POLLER_AUTOSTART") or "").strip().lower() in {"1", "true", "yes"}
 
-_DEFAULT_PRICE_POLL_HEADER = (
-    "timestamp_utc,cycle,item_name,item_mode,query_id,total_results,used_results,"
-    "unsupported_price_count,mirror_count,lowest_mirror,median_mirror,highest_mirror,"
-    "divine_count,lowest_divine,median_divine,highest_divine,"
-    "inference_confirmed_transfer,inference_likely_instant_sale,inference_likely_non_instant_online,"
-    "inference_relist_same_seller,inference_non_instant_removed,"
-    "inference_reprice_same_seller,inference_multi_seller_same_fingerprint,"
-    "inference_new_listing_rows\n"
-)
 
 
 def _load_geo_cache_unlocked() -> dict[str, dict[str, Any]]:
@@ -725,55 +717,51 @@ def csv_download_headers() -> tuple[str, Path]:
     return "price_poll.csv", Path("price_poll.csv")
 
 
+def _remove_legacy_file(path: Path) -> bool:
+    try:
+        path.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+def _backup_db_before_clear(db_path: Path) -> Path:
+    """Full SQLite snapshot (backup API, WAL-safe) so an accidental wipe can be restored."""
+    backup_dir = db_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dst_path = backup_dir / f"pre-clear-{stamp}.db"
+    src = sqlite3.connect(str(db_path), timeout=30.0)
+    dst = sqlite3.connect(str(dst_path), timeout=30.0)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return dst_path
+
+
 def clear_market_data(*, listings_cache_path: Path, csv_path: Path) -> dict[str, Any]:
     """
-    Clear local cache + CSV history.
+    Wipe market data from SQLite (after a full backup) and remove leftover pre-SQLite files.
 
-    - listings_cache.json: delete if present (dashboard will treat as cache-miss)
-    - price_poll.csv: truncate to header only (preserves column names for downstream readers)
-    - sale_inference_state.json: delete if present (resets sale inference rules engine state)
+    - listings_cache.json / price_poll.csv / sale_inference_state.json: legacy files, deleted if present
+    - SQLite market tables: cleared only if the pre-clear backup succeeded
     """
-    cleared_cache = False
-    cleared_csv = False
-    cleared_inference = False
-
-    try:
-        if listings_cache_path.exists():
-            listings_cache_path.unlink()
-        cleared_cache = True
-    except OSError:
-        cleared_cache = False
-
-    inference_path = csv_path.with_name("sale_inference_state.json")
-    try:
-        if inference_path.exists():
-            inference_path.unlink()
-        cleared_inference = True
-    except OSError:
-        cleared_inference = False
-
-    header = _DEFAULT_PRICE_POLL_HEADER
-    if csv_path.exists():
-        try:
-            with csv_path.open("r", encoding="utf-8", newline="") as fh:
-                first_line = fh.readline()
-            if first_line.strip():
-                header = first_line.rstrip("\n") + "\n"
-        except OSError:
-            pass
-
-    try:
-        with csv_path.open("w", encoding="utf-8", newline="") as fh:
-            fh.write(header)
-        cleared_csv = True
-    except OSError:
-        cleared_csv = False
+    cleared_cache = _remove_legacy_file(listings_cache_path)
+    cleared_csv = _remove_legacy_file(csv_path)
+    cleared_inference = _remove_legacy_file(csv_path.with_name("sale_inference_state.json"))
 
     cleared_sqlite = False
+    storage = ServerStorage()
     try:
-        ServerStorage().clear_market_data()
+        backup_path = _backup_db_before_clear(Path(storage.db_path)) if Path(storage.db_path).is_file() else None
+        if backup_path is not None:
+            print(f"[admin] Pre-clear DB backup written to {backup_path}", flush=True)
+        storage.clear_market_data()
         cleared_sqlite = True
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        print(f"[error] Clear market data aborted: {exc}", flush=True)
         cleared_sqlite = False
 
     return {
@@ -794,9 +782,15 @@ def admin_session_cookie_value() -> str:
     return hmac.new(token.encode("utf-8"), b"poe-admin-session-v1", hashlib.sha256).hexdigest()
 
 
+def _token_matches(candidate: str | None, expected: str) -> bool:
+    if not candidate or not expected:
+        return False
+    return hmac.compare_digest(candidate.strip().encode("utf-8"), expected.encode("utf-8"))
+
+
 def should_issue_admin_session_cookie(query_token: str | None) -> bool:
     expected = os.environ.get("ADMIN_TOKEN", "").strip()
-    return bool(expected and query_token and query_token.strip() == expected)
+    return _token_matches(query_token, expected)
 
 
 def build_admin_session_set_cookie(x_forwarded_proto: str | None) -> str:
@@ -833,10 +827,10 @@ def admin_authorized(
     token = os.environ.get("ADMIN_TOKEN", "").strip()
     if not token:
         return True
-    if query_token and query_token.strip() == token:
+    if _token_matches(query_token, token):
         return True
     if auth_header and auth_header.startswith("Bearer "):
-        if auth_header[7:].strip() == token:
+        if _token_matches(auth_header[7:], token):
             return True
     expected_cookie = admin_session_cookie_value()
     if expected_cookie:
