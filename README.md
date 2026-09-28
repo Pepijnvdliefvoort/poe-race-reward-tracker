@@ -20,7 +20,7 @@ This README reflects the current implementation in this repository.
   - inferred sales rows (with late-relist reversal)
 - Detects potential flip opportunities and can send Discord alerts.
 - Serves a browser UI with charts, filters, compare pages, alt-art holdings tracker (localStorage), admin panel, DB explorer, and account compare.
-- Provides a companion recommendations endpoint (`/api/companion/recommend`) with heuristic ranking plus optional ML shadow/hybrid scoring.
+- Provides a companion recommendations endpoint (`/api/companion/recommend`) that ranks items by expected % return per day held (see `ML/README.md`).
 
 ## Current Architecture
 
@@ -150,44 +150,19 @@ python -m server.server
 
 ## Automated ML Retraining
 
-Run the full retrain pipeline (dataset rebuild -> train candidate models -> backtest -> quality-gated promotion):
+Evaluate the investment ranking on recorded history and retrain the learned model:
 
 ```powershell
 python .\scripts\retrain_ml_pipeline.py
 ```
 
-What it does:
+What it does (details in `ML/README.md`):
 
-- rebuilds `ML/training_30d.csv` from `data/market.db`
-- trains candidate artifacts under `ML/candidates/<timestamp>/`
-- backtests the candidate models
-- compares candidate metrics against current live reports
-- promotes candidate models/reports only when gates pass
-- archives live artifacts to `ML/archive/<timestamp>/` before promotion
-
-Default quality gates:
-
-- classifier PR-AUC drop <= `0.02`
-- classifier ROC-AUC drop <= `0.02`
-- regressor MAPE increase <= `0.10`
-- backtest `avgRealizedEdgeAllLift` at top-k `20,50,100` remains non-negative and does not drop by more than `0.05`
-
-Useful flags:
-
-```powershell
-python .\scripts\retrain_ml_pipeline.py --required-lift-k 20,50,100 --max-lift-drop 0.03
-python .\scripts\retrain_ml_pipeline.py --friction 0.25
-python .\scripts\retrain_ml_pipeline.py --retain-candidate-days 90 --retain-archive-days 180
-python .\scripts\retrain_ml_pipeline.py --force-promote
-```
-
-For unattended scheduling on Windows Task Scheduler, use a task action like:
-
-```text
-Program/script: C:\Users\pepij\Documents\Repos\poe-market-flips\.venv\Scripts\python.exe
-Add arguments: scripts\retrain_ml_pipeline.py
-Start in: C:\Users\pepij\Documents\Repos\poe-market-flips
-```
+- replays history as a weekly trading simulation (buy the floor, list at the estimated ask, sell at the first later sale at or above it)
+- compares the transparent return-per-day estimator, the learned model (walk-forward) and random picks
+- trains the final model and writes `ML/models/profit_model.pkl` + `profit_model.json`
+- enables the model for ranking only if it beat the estimator by 10% on at least 8 evaluated weeks and won 75% of them; otherwise the estimator ranks
+- exits `0` whenever it completes (including when the model stays disabled)
 
 ### Poller Weekly Trigger
 
@@ -338,6 +313,10 @@ The project can bootstrap this from `config.json` once if no DB config exists.
   - `notify_always_if_cheap_max_buy_divines`
   - `notify_always_if_cheap_if_next_price_at_least_mirrors`
   - `notify_always_if_buy_currency_exalted`
+- companion investment ranking:
+  - `invest_horizon_days` (default `60`)
+  - `invest_fee_pct` (default `0`)
+  - `invest_undercut_pct` (default `2`)
 - other:
   - `sales_discord_window_days`
   - `discord_market_watch_users`
@@ -465,22 +444,15 @@ Pattern:
 
 ## ML Ranking Status
 
-ML artifacts are consolidated under `ML/`.
+The companion ranks by expected % return per day held. Code lives in the `ML/` package and is shared by
+the server and the weekly retrain, so the dashboard computes exactly what was backtested:
 
-Current baseline and assets:
+- `ML/features.py` / `ML/estimator.py`: point-in-time snapshot and the transparent return-per-day formula
+- `ML/simulate.py`: trading-simulation backtest
+- `ML/model.py` / `ML/pipeline.py`: gated learned model and retrain entry point
+- `server/recommendation_service.py`: companion endpoint
 
-- `ML/ML_FEATURE_BASELINE.md`
-- `ML/build_training_dataset.py`
-- `ML/training_30d.csv`
-- `ML/training_30d.meta.json`
-
-Runtime recommendations support:
-
-- heuristic ranking (default-safe path)
-- ML shadow inference fields in API responses
-- hybrid ranking gate (`ml_hybrid_enabled`, alpha blending, confidence-tier gating)
-
-Runtime scoring logic is in `server/recommendation_service.py`.
+The admin ML retrain card shows which ranking is live and the latest backtest return/day.
 
 ## Known Limitations / Notes
 
