@@ -561,6 +561,16 @@ class StorageService:
                     dt = dt.replace(tzinfo=timezone.utc)
                 min_cutoff = (dt - timedelta(days=win_days)).isoformat()
 
+                # A relist means the pair was absent on the previous poll. Pairs that stayed listed
+                # (e.g. a seller keeping other copies after a Rule 2c sale) must not revert anything.
+                # Read before save_state() below overwrites the previous snapshot.
+                prev_state_signals = InferenceStateRepo(con).load_state(item_variant_id=int(variant_id))[0]
+                prev_pairs: set[tuple[str, str]] = {
+                    (str(s.get("fingerprint") or "").strip(), str(s.get("seller") or "").strip())
+                    for s in prev_state_signals
+                    if isinstance(s, dict)
+                }
+
                 sales_repo = SalesRepo(con)
                 seen_pairs: set[tuple[str, str]] = set()
                 for r in listing_preview_rows or []:
@@ -577,6 +587,9 @@ class StorageService:
 
                     # Skip pairs already handled by same-poll relist events.
                     if (fp, seller.casefold()) in relist_pairs_in_poll:
+                        continue
+
+                    if key in prev_pairs:
                         continue
 
                     # Guard: if a confirmed_transfer was recorded for this (fingerprint, seller)
