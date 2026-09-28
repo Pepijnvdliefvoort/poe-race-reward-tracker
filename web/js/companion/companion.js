@@ -23,11 +23,10 @@ const MESSAGE_PAUSE_MS = 250;
 let renderSequenceId = 0;
 
 const CATEGORY_HELP = {
-  "Best fit": "High overall score for your wealth and risk profile.",
-  Liquid: "Stronger inferred sale activity, meaning there is clearer evidence of demand.",
-  Speculative: "Higher-risk pick because of thin supply, large trend movement, or speculative settings.",
-  "Value watch": "Recent price is down enough that it may be worth monitoring.",
-  Watchlist: "Decent candidate, but without a stronger specific signal.",
+  "Quick flip": "Expected to resell within about two weeks at the target price.",
+  Steady: "Expected to resell within about 15 to 45 days.",
+  "Slow hold": "Profitable on paper, but expected to take more than 45 days to sell.",
+  Speculative: "Very few recent sales, so the sell-time estimate leans on market-wide averages.",
 };
 
 const RISK_POLICY = {
@@ -37,9 +36,9 @@ const RISK_POLICY = {
 };
 
 const RISK_HELP = {
-  safe: "Safe mode leans toward proven demand, cleaner entries, and tighter position sizing. Hybrid ML only nudges names that clear the confidence gate.",
-  balanced: "Balanced mode blends demand, price fit, trend, and whole-mirror ladder structure, then lets hybrid ML nudge medium- and strong-confidence names instead of fully overriding the ranking.",
-  speculative: "Speculative mode gives more room to trend and upside, but still treats thin listings and weak sales support as risk rather than proof of value.",
+  safe: "Safe mode only keeps items with at least two recent sales and a 50%+ chance of selling within the horizon.",
+  balanced: "Balanced mode keeps items with at least a 25% chance of selling within the horizon.",
+  speculative: "Speculative mode keeps every item with a positive expected return, including ones with almost no sales history.",
 };
 
 function formatMirror(value) {
@@ -370,43 +369,21 @@ function formatPercentWhole(value) {
   return `${Math.round(n)}%`;
 }
 
-function buildHybridSummary(payload) {
-  const mlShadow = payload?.mlShadow || {};
-  const telemetry = payload?.mlTelemetry || {};
-  const alpha = Number(mlShadow.alphaHeuristic);
-  const heuristicWeight = Number.isFinite(alpha) ? Math.round(alpha * 100) : null;
-  const mlWeight = Number.isFinite(alpha) ? Math.round((1 - alpha) * 100) : null;
-  const minTier = String(mlShadow.minConfidenceTier || "medium");
-  const total = Number(telemetry.totalCandidates ?? 0);
-  const applied = Number(telemetry.hybridAppliedCandidates ?? 0);
-  const skippedBelowConfidence = Number(telemetry.hybridSkippedReasonCounts?.["below-min-confidence"] ?? 0);
-
-  if (!mlShadow.enabled) {
-    return "ML is off, so ranking is heuristic-only.";
+function buildRankingMethodSummary(payload) {
+  const ranking = payload?.ranking || {};
+  const horizon = Number(ranking.horizonDays);
+  const horizonText = Number.isFinite(horizon) ? `${Math.round(horizon)} days` : "the horizon";
+  if (ranking.modelEnabled) {
+    return `Ranked by a trained model's expected % return per day, which beat the formula on past data. Sell chances use a ${horizonText} window.`;
   }
-
-  if (!mlShadow.hybridEnabled) {
-    return "ML is shadow-only; ranking still comes from the heuristic stack.";
-  }
-
-  if (heuristicWeight != null && mlWeight != null) {
-    return `Hybrid ranking: ${heuristicWeight}% heuristic, ${mlWeight}% ML for ${formatCompanionChoice(minTier)}+ confidence.`;
-  }
-  if (total > 0 && skippedBelowConfidence > 0) {
-    return `Hybrid ranking applied to ${applied}/${total}; ${skippedBelowConfidence} stayed heuristic-only below ${formatCompanionChoice(minTier)} confidence.`;
-  }
-  return `Hybrid ranking is on with a ${formatCompanionChoice(minTier)} confidence gate.`;
+  return `Ranked by expected % return per day: buy at the cheapest listing, list just under recent sale prices, and divide the expected gain by the expected days to sell (within ${horizonText}).`;
 }
 
 function buildRankingValueSummary(payload) {
-  const risk = String(payload?.risk || "balanced").toLowerCase();
-  if (risk === "safe") {
-    return "Safe mode prioritizes demand and clean entries first.";
-  }
-  if (risk === "speculative") {
-    return "Speculative mode gives more weight to trend and upside.";
-  }
-  return "Balanced mode weighs demand, price fit, trend, and real ladder structure.";
+  const ranking = payload?.ranking || {};
+  const fee = Number(ranking.feePct);
+  const feeText = Number.isFinite(fee) && fee > 0 ? ` after a ${fee}% trading cost` : "";
+  return `A quick small gain ranks above a larger gain that takes months${feeText}.`;
 }
 
 function buildPortfolioDeploymentSummary(payload) {
@@ -461,42 +438,36 @@ function createFactList(items) {
   return facts;
 }
 
+function formatPerDay(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "n/a";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(2)}%/day`;
+}
+
+function formatDays(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "n/a";
+  return n < 1.5 ? "~1 day" : `~${Math.round(n)} days`;
+}
+
 function summarizeWhyPicked(rec) {
+  const est = rec.estimate || {};
   const parts = [];
-  const sales = Number(rec.inferredSales30d ?? 0);
-  const trend = Number(rec.trendPct30d);
-  const entry = Number(rec.priceMirror);
-  const wealthShare = Number(rec.wealthShare);
-  const expectedValue = Number(rec.expectedValue30d);
+  const days = Number(est.expectedDays);
+  const sold = Number(est.returnIfSoldPct);
+  const chance = Number(est.sellProbability);
 
-  if (rec.rankingSource === "hybrid" && Number.isFinite(expectedValue)) {
-    parts.push(
-      expectedValue > 0
-        ? `ML favors the 30-day value at ${formatMirrorDelta(expectedValue)}.`
-        : `ML still ranked it highly even with ${formatMirrorDelta(expectedValue)} expected 30-day value.`,
-    );
-  } else if (rec.flip?.viable) {
-    parts.push(`Picked for the immediate ladder gap of ${formatMirrorDelta(rec.flip.expectedProfitMirror)}.`);
-  } else if (sales > 0) {
-    parts.push(`Picked for active demand with about ${sales} inferred sale${sales === 1 ? "" : "s"} in 30 days.`);
-  } else {
-    parts.push("Picked as a higher-risk setup rather than a proven liquid market.");
+  if (Number.isFinite(sold) && Number.isFinite(days)) {
+    parts.push(`Buy at ${formatMirror(rec.priceMirror)} and list at ${formatMirror(est.askPriceMirror)}: ${formatPercent(sold)} if it sells, expected in ${formatDays(days)}.`);
   }
-
-  if (Number.isFinite(trend)) {
-    if (trend >= 15) {
-      parts.push(`Momentum is strong at ${formatPercent(trend)}.`);
-    } else if (trend <= -15) {
-      parts.push(`Price is off ${formatPercent(trend)}, so this reads more like a rebound setup.`);
-    } else {
-      parts.push(`Recent pricing is stable at ${formatPercent(trend)}.`);
-    }
+  if (Number.isFinite(chance)) {
+    const sales = Number(est.sales90d ?? 0);
+    parts.push(`${Math.round(chance * 100)}% chance to sell within ${Math.round(Number(est.horizonDays) || 0)} days, based on ${sales} sale${sales === 1 ? "" : "s"} in 90 days.`);
   }
-
-  if (Number.isFinite(entry) && Number.isFinite(wealthShare)) {
-    parts.push(`Entry is ${formatMirror(entry)} using ${Math.round(wealthShare * 100)}% of bankroll.`);
+  if (rec.flip?.viable) {
+    parts.push(`The ladder also has an immediate gap of ${formatMirrorDelta(rec.flip.expectedProfitMirror)}.`);
   }
-
   return parts.join(" ");
 }
 
@@ -516,12 +487,14 @@ function buildFlipFacts(flip) {
   ];
 }
 
-function buildHoldFacts(hold) {
-  if (!hold) return [];
+function buildResaleFacts(rec) {
+  const est = rec.estimate;
+  if (!est) return [];
   return [
-    ["Target", formatMirror(hold.expectedPriceMirror)],
-    ["30d return", `${formatMirrorDelta(hold.expectedProfitMirror)} (${formatPercent(hold.expectedReturnPct)})`],
-    ["Plan", hold.sellTiming],
+    ["Fair value", formatMirror(est.fairValueMirror)],
+    ["List at", formatMirror(est.askPriceMirror)],
+    ["If sold", formatPercent(est.returnIfSoldPct)],
+    ["Expected", `${formatPercent(est.expectedReturnPct)} over ${formatDays(est.expectedDays)}`],
   ];
 }
 
@@ -551,28 +524,30 @@ function renderRecommendation(rec, options = {}) {
 
   const badge = document.createElement("span");
   badge.className = "companion-badge";
-  badge.textContent = rec.category || "Watchlist";
-  badge.title = CATEGORY_HELP[badge.textContent] || CATEGORY_HELP.Watchlist;
+  badge.textContent = rec.category || "Speculative";
+  badge.title = CATEGORY_HELP[badge.textContent] || "";
 
   headingRow.append(title, badge);
 
   const metrics = document.createElement("div");
   metrics.className = "companion-metrics";
+  const est = rec.estimate || {};
+  const chance = Number(est.sellProbability);
   if (portfolio) {
     metrics.append(
       createMetric("Units", `${rec.portfolioUnits ?? rec.suggestedUnits ?? 1}`),
       createMetric("Position", formatMirror(rec.portfolioAllocationMirror)),
       createMetric("Share", rec.portfolioShare == null ? "n/a" : `${Math.round(Number(rec.portfolioShare) * 100)}%`),
-      createMetric("Score", `${rec.score ?? 0}`),
+      createMetric("Return/day", formatPerDay(est.returnPerDayPct)),
       createMetric("Entry", formatMirror(rec.priceMirror)),
     );
   } else {
     metrics.append(
-      createMetric("Score", `${rec.score ?? 0}`),
+      createMetric("Return/day", formatPerDay(est.returnPerDayPct)),
       createMetric("Entry", formatMirror(rec.priceMirror)),
-      createMetric("Allocation", formatMirror(rec.suggestedAllocationMirror)),
-      createMetric("30d trend", rec.trendPct30d == null ? "n/a" : formatPercent(rec.trendPct30d)),
-      createMetric("Est. sold", `~${rec.inferredSales30d ?? 0}`),
+      createMetric("Sell in", formatDays(est.expectedDays)),
+      createMetric("Sell chance", Number.isFinite(chance) ? `${Math.round(chance * 100)}%` : "n/a"),
+      createMetric("Units", `${rec.suggestedUnits ?? 1}`),
     );
   }
 
@@ -595,21 +570,20 @@ function renderRecommendation(rec, options = {}) {
     body.appendChild(block);
   }
 
-  if (rec.hold30d) {
-    const hold = rec.hold30d;
+  if (rec.estimate) {
     const block = document.createElement("div");
-    block.className = Number(hold.expectedProfitMirror) > 0 ? "companion-outlook companion-outlook-good" : "companion-outlook companion-outlook-muted";
+    block.className = Number(rec.estimate.expectedReturnPct) > 0 ? "companion-outlook companion-outlook-good" : "companion-outlook companion-outlook-muted";
 
     const heading = document.createElement("strong");
     heading.className = "companion-outlook-title";
-    heading.textContent = "30-day hold";
+    heading.textContent = "Resale plan";
 
-    block.append(heading, createFactList(buildHoldFacts(hold)));
+    block.append(heading, createFactList(buildResaleFacts(rec)));
 
-    if (hold.cycleNote) {
+    if (Array.isArray(rec.reasons) && rec.reasons.length) {
       const note = document.createElement("p");
       note.className = "companion-outlook-note";
-      note.textContent = hold.cycleNote;
+      note.textContent = rec.reasons.join(" ");
       block.appendChild(note);
     }
 
@@ -644,7 +618,7 @@ async function renderPortfolio(payload, sequenceId) {
 
   const topics = [
     buildPortfolioDeploymentSummary(payload),
-    buildHybridSummary(payload),
+    buildRankingMethodSummary(payload),
     buildRankingValueSummary(payload),
     RISK_HELP[payload.risk] || RISK_HELP.balanced,
   ];
@@ -688,7 +662,7 @@ async function renderResults(payload, sequenceId) {
 
   const topics = [
     `I found ${recommendations.length} ranked estimate${recommendations.length === 1 ? "" : "s"} for a ${formatMirror(payload.wealthMirror)} budget.`,
-    buildHybridSummary(payload),
+    buildRankingMethodSummary(payload),
     buildRankingValueSummary(payload),
     RISK_HELP[payload.risk] || RISK_HELP.balanced,
   ];
