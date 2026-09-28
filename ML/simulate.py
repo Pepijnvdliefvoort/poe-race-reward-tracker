@@ -1,10 +1,15 @@
 """
 Trading simulation on recorded history.
 
-At each weekly decision time a strategy ranks the variants; we "buy" the top picks at their floor
-price and list them at the estimator's ask price. A position sells at the first later recorded
-sale at or above our ask (a buyer who paid that much would have taken our cheaper copy). If no
-such sale happens within the horizon, the position is marked to market at the floor price then.
+At each weekly decision time a strategy ranks the variants; we "buy" the top picks at their
+cheapest instant listing and list them with the estimator's plan:
+- undercut plan: listings cheaper than ours are shown and bought first, so our copy sells at the
+  (queue + 1)-th later sale in the normal channel, provided that sale was at or above our ask;
+- 1-mirror plan: buyers pick among equal 1-mirror listings at random (measured on the production
+  DB: the sold listing's position and age are uniform), so our copy sells at the (N + 1)-th later
+  1-mirror sale on average.
+If it doesn't sell within the horizon, the position is marked to market at the later floor, never
+above the purchase price.
 
 Only decision times whose full horizon lies inside the recorded data are used, so every outcome
 is fully observed (no right-censoring).
@@ -54,13 +59,29 @@ def decision_times(market: Market, *, horizon_days: float, warmup_days: float = 
     return out
 
 
-def realize_trade(hist: VariantHistory, snap: Snapshot, *, ask: float, horizon_days: float, fee_pct: float) -> TradeOutcome:
+def realize_trade(
+    hist: VariantHistory,
+    snap: Snapshot,
+    *,
+    ask: float,
+    horizon_days: float,
+    fee_pct: float,
+    queue: int = 0,
+    plan: str = "undercut",
+) -> TradeOutcome:
     fee = max(0.0, fee_pct) / 100.0
     end = snap.ts + horizon_days * DAY
     first = hist.sales_upto(snap.ts)
     last = hist.sales_upto(end)
+    one_mirror_plan = plan == "one_mirror"
+    needed = max(0, int(queue)) + 1
+    seen = 0
     for sale in hist.sales[first:last]:
-        if sale.price_mirror >= ask - 1e-9:
+        premium_1m = snap.one_mirror_premium and sale.one_mirror
+        if one_mirror_plan != premium_1m:
+            continue  # the other channel's buyers don't take our listing
+        seen += 1
+        if seen >= needed and sale.price_mirror >= ask - 1e-9:
             days = max(MIN_HOLD_DAYS, (sale.ts - snap.ts) / DAY)
             return TradeOutcome(snap.variant_id, snap.ts, snap.entry_price, ask, True, days, ask * (1 - fee) / snap.entry_price - 1)
 
@@ -106,6 +127,15 @@ class StrategyResult:
         }
 
 
+def realize_estimate(hist: VariantHistory, snap: Snapshot, params: EstimatorParams) -> TradeOutcome:
+    """Simulate the estimator's own listing plan (ask, queue, channel) for this snapshot."""
+    est = estimate(snap, params)
+    return realize_trade(
+        hist, snap, ask=est.ask_price, horizon_days=params.horizon_days, fee_pct=params.fee_pct,
+        queue=est.queue_ahead, plan=est.plan,
+    )
+
+
 def estimator_scorer(params: EstimatorParams) -> Scorer:
     return lambda snaps: {s.variant_id: estimate(s, params).return_per_day for s in snaps}
 
@@ -144,13 +174,7 @@ def run_backtest(
             )[:top_k]
             if not ranked:
                 continue
-            outcomes = []
-            for vid in ranked:
-                snap = by_id[vid]
-                ask = estimate(snap, params).ask_price
-                outcomes.append(
-                    realize_trade(market.variants[vid], snap, ask=ask, horizon_days=params.horizon_days, fee_pct=params.fee_pct)
-                )
+            outcomes = [realize_estimate(market.variants[vid], by_id[vid], params) for vid in ranked]
             results[name].trades.extend(outcomes)
             results[name].per_decision[ts] = sum(o.ret for o in outcomes) / sum(o.days for o in outcomes)
     return results

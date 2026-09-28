@@ -11,6 +11,12 @@ Transparent expected-return-per-day estimate for buying an item now and resellin
     E[return]      = P x (ask x (1 - fee) / entry - 1) + (1 - P) x unsold return
     return / day   = E[return] / E[days held]
 
+Two listing plans are evaluated and the better return/day wins:
+- "undercut": list just under the normal-channel fair value (above).
+- "one_mirror": for items normally worth under ~0.9 mirror, list at exactly 1 mirror. Some buyers
+  take 1-mirror listings without comparing prices, but slowly: the rate comes only from past
+  1-mirror sales, and every existing 1-mirror listing is assumed to sell before ours.
+
 Sparse items borrow strength from the market-wide sale rate, so one lucky sale does not make a
 rare item look liquid. Everything is in % of the entry price, so cheap and expensive items rank
 on the same scale.
@@ -31,7 +37,10 @@ class EstimatorParams:
     # List this far below fair value. On real data (Sep 2026) 5% beat 2% at both 30d and 60d horizons:
     # in a thin market, a slightly lower ask sells noticeably faster.
     undercut_pct: float = 5.0
-    prior_exposure_days: float = 60.0  # weight of the market-wide sale rate for sparse items
+    # Weight (in days) of the market-wide sale rate for sparse items. 30 had the best sell-chance
+    # calibration on the cleaned production DB (predicted ~54% vs ~56% actual); 60 pulled busy items
+    # down too hard, 15 ranked slightly better but was less calibrated (differences within noise).
+    prior_exposure_days: float = 30.0
     listing_lag_days: float = 0.5  # time to list + first buyer to notice
     # Each cheaper-or-equal instant listing is sold before ours.
     use_queue: bool = True
@@ -42,6 +51,7 @@ class EstimatorParams:
     use_listing_evidence: bool = False
     evidence_band: tuple[float, float] = (0.9, 1.25)  # "similar price" relative to our ask
     evidence_prior_listing_days: float = 60.0  # pseudo listing-days behind the flow-based rate
+    consider_one_mirror: bool = True  # also evaluate listing at exactly 1 mirror (see module docstring)
 
 
 @dataclass(frozen=True)
@@ -59,6 +69,7 @@ class Estimate:
     queue_ahead: int = 0
     similar_listing_days_90d: float = 0.0
     similar_listings_sold_90d: int = 0
+    plan: str = "undercut"  # "undercut" or "one_mirror"
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -97,10 +108,47 @@ def confidence_tier(sales_90d: int) -> str:
     return "sparse"
 
 
-def estimate(snap: Snapshot, params: EstimatorParams = EstimatorParams()) -> Estimate:
+def _finish(
+    snap: Snapshot,
+    params: EstimatorParams,
+    *,
+    ask: float,
+    rate: float,
+    plan: str,
+    n_at_ask: int,
+    queue: int,
+    exposure: float,
+    sold: int,
+) -> Estimate:
     fee = max(0.0, params.fee_pct) / 100.0
     horizon = max(1.0, params.horizon_days)
+    rate = max(1e-6, rate)
+    p_sell = 1.0 - math.exp(-rate * horizon)
+    expected_days = min(p_sell / rate + max(0.0, params.listing_lag_days), horizon + params.listing_lag_days)
 
+    return_if_sold = ask * (1.0 - fee) / snap.entry_price - 1.0
+    # Unsold at the horizon: still holding a copy worth roughly the cheaper of entry/fair.
+    return_if_unsold = min(snap.entry_price, snap.fair_value) * (1.0 - fee) / snap.entry_price - 1.0
+    expected_return = p_sell * return_if_sold + (1.0 - p_sell) * return_if_unsold
+    return Estimate(
+        ask_price=ask,
+        sale_rate_per_day=rate,
+        sell_probability=p_sell,
+        expected_days=expected_days,
+        return_if_sold=return_if_sold,
+        return_if_unsold=return_if_unsold,
+        expected_return=expected_return,
+        return_per_day=expected_return / expected_days,
+        confidence=confidence_tier(snap.one_mirror_sales_90d if plan == "one_mirror" else snap.sales_90d),
+        sales_at_or_above_ask_90d=n_at_ask,
+        queue_ahead=queue,
+        similar_listing_days_90d=exposure,
+        similar_listings_sold_90d=sold,
+        plan=plan,
+    )
+
+
+def _undercut_plan(snap: Snapshot, params: EstimatorParams) -> Estimate:
     ask = snap.fair_value * (1.0 - max(0.0, params.undercut_pct) / 100.0)
     n90 = snap.sales_90d
     n_at_ask = sum(1 for p in snap.recent_sale_prices if p >= ask - 1e-9)
@@ -129,27 +177,26 @@ def estimate(snap: Snapshot, params: EstimatorParams = EstimatorParams()) -> Est
         b_ev = max(1e-6, params.evidence_prior_listing_days)
         rate = max(1e-6, (sold + rate * b_ev) / (exposure + b_ev))
 
-    p_sell = 1.0 - math.exp(-rate * horizon)
-    expected_days = p_sell / rate + max(0.0, params.listing_lag_days)
-    expected_days = min(expected_days, horizon + params.listing_lag_days)
+    return _finish(snap, params, ask=ask, rate=rate, plan="undercut", n_at_ask=n_at_ask, queue=queue, exposure=exposure, sold=sold)
 
-    return_if_sold = ask * (1.0 - fee) / snap.entry_price - 1.0
-    # Unsold at the horizon: still holding a copy worth roughly the cheaper of entry/fair.
-    return_if_unsold = min(snap.entry_price, snap.fair_value) * (1.0 - fee) / snap.entry_price - 1.0
-    expected_return = p_sell * return_if_sold + (1.0 - p_sell) * return_if_unsold
 
-    return Estimate(
-        ask_price=ask,
-        sale_rate_per_day=rate,
-        sell_probability=p_sell,
-        expected_days=expected_days,
-        return_if_sold=return_if_sold,
-        return_if_unsold=return_if_unsold,
-        expected_return=expected_return,
-        return_per_day=expected_return / expected_days,
-        confidence=confidence_tier(n90),
-        sales_at_or_above_ask_90d=n_at_ask,
-        queue_ahead=queue,
-        similar_listing_days_90d=exposure,
-        similar_listings_sold_90d=sold,
+def _one_mirror_plan(snap: Snapshot, params: EstimatorParams) -> Estimate | None:
+    if not (params.consider_one_mirror and snap.one_mirror_premium) or snap.entry_price >= 1.0:
+        return None
+    # Prior: the pooled 1-mirror sale rate across items, which is far below the normal sale rate.
+    b = max(0.0, params.prior_exposure_days)
+    rate = (snap.one_mirror_sales_90d + snap.market_one_mirror_rate_per_day * b) / (SALE_WINDOW_DAYS + b)
+    # Every existing 1-mirror listing is assumed to be shown and sold before ours.
+    queue = snap.one_mirror_listings if params.use_queue else 0
+    rate = rate / (queue + 1)
+    return _finish(
+        snap, params, ask=1.0, rate=rate, plan="one_mirror", n_at_ask=snap.one_mirror_sales_90d, queue=queue, exposure=0.0, sold=0
     )
+
+
+def estimate(snap: Snapshot, params: EstimatorParams = EstimatorParams()) -> Estimate:
+    best = _undercut_plan(snap, params)
+    alt = _one_mirror_plan(snap, params)
+    if alt is not None and alt.return_per_day > best.return_per_day:
+        best = alt
+    return best

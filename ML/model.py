@@ -21,7 +21,7 @@ from typing import Any
 from ML.estimator import EstimatorParams, estimate
 from ML.features import DAY, FEATURE_NAMES, Snapshot
 from ML.market import Market
-from ML.simulate import realize_trade
+from ML.simulate import realize_estimate
 
 MODEL_DIR_NAME = "models"
 MODEL_FILE = "profit_model.pkl"
@@ -77,10 +77,7 @@ def label_rows(market: Market, snaps_by_time: dict[float, list[Snapshot]], param
         if market.end_ts is None or ts + params.horizon_days * DAY > market.end_ts:
             continue
         for snap in snaps:
-            ask = estimate(snap, params).ask_price
-            outcome = realize_trade(
-                market.variants[snap.variant_id], snap, ask=ask, horizon_days=params.horizon_days, fee_pct=params.fee_pct
-            )
+            outcome = realize_estimate(market.variants[snap.variant_id], snap, params)
             y = outcome.ret / max(outcome.days, LABEL_MIN_DAYS)
             rows.append(LabeledRow(ts, snap.variant_id, feature_vector(snap, params), min(max(y, LABEL_CLIP[0]), LABEL_CLIP[1])))
     return rows

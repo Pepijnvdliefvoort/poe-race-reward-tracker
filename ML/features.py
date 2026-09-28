@@ -16,6 +16,9 @@ LISTING_ANCHOR_DAYS = 30
 MAX_FLOOR_AGE_DAYS = 7  # older floors are not a buyable price any more
 SALE_HALF_LIFE_DAYS = 30.0
 FAIR_VALUE_SHRINK_K = 3.0  # sales needed before the sale anchor outweighs listing floors
+# Below this normal price level, a listing at exactly 1 mirror is a premium sold to buyers who don't
+# compare prices (slow, separate channel). Above it, a 1-mirror sale is just an ordinary sale.
+ONE_MIRROR_PREMIUM_BELOW = 0.9
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,12 @@ class Snapshot:
     instant_ladder: tuple[float, ...] = ()
     # Instant listing episodes overlapping the last 90 days: (price, days listed in window, sold by ts).
     listing_evidence: tuple[tuple[float, float, bool], ...] = ()
+    # 1-mirror channel (only when 1 mirror is a premium for this item; its sales are then excluded
+    # from the normal-channel fields above).
+    one_mirror_premium: bool = False
+    one_mirror_sales_90d: int = 0
+    one_mirror_listings: int = 0
+    market_one_mirror_rate_per_day: float = 0.0  # pooled 1-mirror sale rate per premium variant (prior)
 
     def as_feature_row(self) -> dict[str, float]:
         """Numeric model inputs (NaN = unknown; the model handles missing values)."""
@@ -64,6 +73,9 @@ class Snapshot:
             "floor_momentum": f(self.floor_momentum),
             "entry_age_days": self.entry_age_days,
             "market_sale_rate_per_day": self.market_sale_rate_per_day,
+            "one_mirror_premium": float(self.one_mirror_premium),
+            "one_mirror_sales_90d": float(self.one_mirror_sales_90d),
+            "one_mirror_listings": float(self.one_mirror_listings),
         }
 
 
@@ -81,6 +93,9 @@ FEATURE_NAMES: list[str] = [
     "floor_momentum",
     "entry_age_days",
     "market_sale_rate_per_day",
+    "one_mirror_premium",
+    "one_mirror_sales_90d",
+    "one_mirror_listings",
 ]
 
 
@@ -115,7 +130,20 @@ def market_sale_rate(market: Market, ts: float) -> float:
     return max(1.0 / 365.0, sum(rates) / len(rates))
 
 
-def snapshot(hist: VariantHistory, ts: float, *, market_rate: float) -> Snapshot | None:
+def market_one_mirror_rate(market: Market, ts: float) -> float:
+    """Pooled 1-mirror sales/day per variant over the last 90 days (prior for the 1-mirror plan)."""
+    lo = ts - SALE_WINDOW_DAYS * DAY
+    n_variants = 0
+    n_sales = 0
+    for hist in market.variants.values():
+        if hist.polls_upto(ts) == 0:
+            continue
+        n_variants += 1
+        n_sales += sum(1 for s in hist.sales[hist.sales_upto(lo):hist.sales_upto(ts)] if s.one_mirror)
+    return n_sales / (n_variants * SALE_WINDOW_DAYS) if n_variants else 0.0
+
+
+def snapshot(hist: VariantHistory, ts: float, *, market_rate: float, market_one_mirror: float = 0.0) -> Snapshot | None:
     """Point-in-time view of `hist` at `ts`, or None if there is no recent buyable price."""
     n_polls = hist.polls_upto(ts)
     if n_polls == 0:
@@ -139,9 +167,16 @@ def snapshot(hist: VariantHistory, ts: float, *, market_rate: float) -> Snapshot
     listing_anchor = _median_or_none(floors_between(LISTING_ANCHOR_DAYS, 0))
     older_floor = _median_or_none(floors_between(60, 30))
 
+    premium = (listing_anchor if listing_anchor is not None else entry) < ONE_MIRROR_PREMIUM_BELOW
+
+    def normal_channel(sale) -> bool:
+        return not (premium and sale.one_mirror)
+
     n_sales = hist.sales_upto(ts)
     lo90 = ts - SALE_WINDOW_DAYS * DAY
-    recent = [s for s in hist.sales[hist.sales_upto(lo90):n_sales]]
+    window = hist.sales[hist.sales_upto(lo90):n_sales]
+    recent = [s for s in window if normal_channel(s)]
+    one_mirror_sales = len(window) - len(recent)
     recent_30 = [s for s in recent if s.ts > ts - RECENT_SALE_DAYS * DAY]
     older_sales = [s.price_mirror for s in recent if s.ts <= ts - RECENT_SALE_DAYS * DAY]
 
@@ -159,7 +194,8 @@ def snapshot(hist: VariantHistory, ts: float, *, market_rate: float) -> Snapshot
     else:
         fair = listing_ref
 
-    days_since_last_sale = (ts - hist.sales[n_sales - 1].ts) / DAY if n_sales else None
+    last_normal = next((s for s in reversed(hist.sales[:n_sales]) if normal_channel(s)), None)
+    days_since_last_sale = (ts - last_normal.ts) / DAY if last_normal else None
 
     listings_now = polls[-1].total_results
     past_listings = [p.total_results for p in polls if ts - 37 * DAY < p.ts <= ts - 23 * DAY]
@@ -201,14 +237,19 @@ def snapshot(hist: VariantHistory, ts: float, *, market_rate: float) -> Snapshot
         market_sale_rate_per_day=market_rate,
         instant_ladder=ladder,
         listing_evidence=tuple(evidence),
+        one_mirror_premium=premium,
+        one_mirror_sales_90d=one_mirror_sales,
+        one_mirror_listings=latest_buyable.one_mirror_listings,
+        market_one_mirror_rate_per_day=market_one_mirror,
     )
 
 
 def snapshots_at(market: Market, ts: float) -> list[Snapshot]:
     rate = market_sale_rate(market, ts)
+    one_mirror_rate = market_one_mirror_rate(market, ts)
     out = []
     for hist in market.variants.values():
-        snap = snapshot(hist, ts, market_rate=rate)
+        snap = snapshot(hist, ts, market_rate=rate, market_one_mirror=one_mirror_rate)
         if snap is not None:
             out.append(snap)
     return out

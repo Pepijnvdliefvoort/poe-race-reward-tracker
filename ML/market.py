@@ -18,6 +18,29 @@ MAX_SALE_TO_FLOOR_RATIO = 1.5
 # at 0.4 mirror elsewhere (about 60% of the 1-mirror "sales" in the Sep 2026 production DB).
 CHEAPER_SAME_ROLL_MARGIN = 0.10
 SALE_FILTERS = ("roll", "floor_ratio", "none")
+# Default: keep every non-reverted sale. Per the market owner, rolls rarely matter and "1 mirror"
+# listings do sell (buyers who don't compare prices), just slowly. They are modelled as a separate
+# sales channel (see is_one_mirror) instead of being filtered out.
+DEFAULT_SALE_FILTER = "none"
+
+
+def is_one_mirror(amount: Any, currency: Any) -> bool:
+    """A listing or sale priced at exactly 1 Mirror of Kalandra (its own, slower sales channel)."""
+    a = positive_or_none(amount)
+    return a is not None and abs(a - 1.0) < 1e-9 and str(currency or "").strip().lower() in _MIRROR
+
+# Market-wide anomaly days: when a day's recorded sales exceed this multiple of the median of the
+# previous 14 days, listings vanished en masse (e.g. 2026-07-21..25 around GGG's trade rate-limit
+# change: 330/452/607 "sales" from up to 197 sellers vs ~55 normally) and that day's sales are
+# not used.
+ANOMALY_DAY_MULTIPLE = 4.0
+ANOMALY_MIN_SALES = 30  # never flag quiet days
+ANOMALY_LOOKBACK_DAYS = 14
+
+# Seller-swap "transfers" (same roll leaves seller A, appears at seller B) are weak evidence when rolls
+# are interchangeable: two traders relisting copies look identical. When the same two sellers
+# "transfer" to each other more than once, none of those transfers are used (38 of 85 in Sep 2026).
+PING_PONG_MIN_TRANSFERS = 2
 
 LADDER_DEPTH = 15  # cheapest instant listings kept per poll (enough to count the queue ahead of us)
 
@@ -67,6 +90,7 @@ class PollPoint:
     total_results: int
     new_listing_rows: int
     instant_ladder: array = field(default_factory=lambda: array("f"))  # cheapest instant listings, ascending
+    one_mirror_listings: int = 0  # instant listings at exactly 1 mirror (all of them, not just the cheapest)
 
     @property
     def instant_floor(self) -> float | None:
@@ -78,6 +102,7 @@ class PollPoint:
 class SalePoint:
     ts: float
     price_mirror: float
+    one_mirror: bool = False  # sold from a listing at exactly 1 mirror
 
 
 @dataclass(frozen=True)
@@ -127,7 +152,10 @@ class Market:
     end_ts: float | None
     sales_dropped_implausible: int = 0
     sales_kept: int = 0
-    sale_filter: str = "roll"
+    sales_dropped_anomaly_days: int = 0
+    sales_dropped_ping_pong: int = 0
+    anomaly_days: tuple[str, ...] = ()
+    sale_filter: str = DEFAULT_SALE_FILTER
 
 
 _LISTING_COLUMNS = """ip.item_variant_id, ls.item_poll_id, ls.seller_name, ls.fingerprint, ls.amount, ls.currency,
@@ -172,7 +200,7 @@ def _listing_stream(con: sqlite3.Connection, since_iso: str | None) -> Iterator[
 def load_market(
     con: sqlite3.Connection,
     *,
-    sale_filter: str = "roll",
+    sale_filter: str = DEFAULT_SALE_FILTER,
     since_ts: float | None = None,
     episodes: bool = True,
 ) -> Market:
@@ -225,18 +253,31 @@ def load_market(
         start_ts = ts if start_ts is None else min(start_ts, ts)
         end_ts = ts if end_ts is None else max(end_ts, ts)
 
+    anomaly_days = _anomaly_days(con)
+    ping_pong_pairs = _ping_pong_pairs(con)
+    dropped_ping_pong = 0
+
     # Sales keyed by the poll in which they were observed.
     sales_by_poll: dict[int, list[sqlite3.Row]] = {}
+    dropped_anomaly = 0
     where = "AND s.occurred_at_utc >= ?" if since_iso else ""
     for r in con.execute(
         f"""
         SELECT s.item_variant_id, s.item_poll_id, s.occurred_at_utc, s.mirror_equiv, s.fingerprint, s.seller,
-               ip.lowest_mirror AS poll_floor
+               s.buyer, s.rule, s.price_amount, s.price_currency, ip.lowest_mirror AS poll_floor
         FROM sales s LEFT JOIN item_polls ip ON ip.id = s.item_poll_id
         WHERE s.reverted_at_utc IS NULL AND s.mirror_equiv IS NOT NULL AND s.mirror_equiv > 0 {where}
         """,
         (since_iso,) if since_iso else (),
     ):
+        if str(r["occurred_at_utc"] or "")[:10] in anomaly_days:
+            dropped_anomaly += 1
+            continue
+        if r["rule"] == "confirmed_transfer" and (
+            int(r["item_variant_id"]), frozenset((str(r["seller"] or ""), str(r["buyer"] or "")))
+        ) in ping_pong_pairs:
+            dropped_ping_pong += 1
+            continue
         sales_by_poll.setdefault(int(r["item_poll_id"]), []).append(r)
 
     light_rows: dict[int, list[tuple]] = {}
@@ -283,6 +324,7 @@ def load_market(
             ]
 
             point.instant_ladder = array("f", sorted(p for _, _, p, inst in listings if inst and p is not None)[:LADDER_DEPTH])
+            point.one_mirror_listings = sum(1 for row in raw_rows if bool(row[6]) and is_one_mirror(row[4], row[5]))
             hist.polls.append(point)
 
             credible_keys: set[tuple[str, str]] = set()
@@ -295,7 +337,9 @@ def load_market(
                     dropped += 1
                     continue
                 kept += 1
-                hist.sales.append(SalePoint(ts=dt.timestamp(), price_mirror=price))
+                hist.sales.append(
+                    SalePoint(ts=dt.timestamp(), price_mirror=price, one_mirror=is_one_mirror(s["price_amount"], s["price_currency"]))
+                )
                 credible_keys.add((str(s["seller"] or ""), str(s["fingerprint"] or "")))
 
             if not episodes:
@@ -334,8 +378,41 @@ def load_market(
         end_ts=end_ts,
         sales_dropped_implausible=dropped,
         sales_kept=kept,
+        sales_dropped_anomaly_days=dropped_anomaly,
+        sales_dropped_ping_pong=dropped_ping_pong,
+        anomaly_days=tuple(sorted(anomaly_days)),
         sale_filter=sale_filter,
     )
+
+
+def _ping_pong_pairs(con: sqlite3.Connection) -> set[tuple[int, frozenset]]:
+    counts: dict[tuple[int, frozenset], int] = {}
+    for vid, seller, buyer in con.execute(
+        "SELECT item_variant_id, seller, buyer FROM sales WHERE rule = 'confirmed_transfer' AND reverted_at_utc IS NULL"
+    ):
+        key = (int(vid), frozenset((str(seller or ""), str(buyer or ""))))
+        counts[key] = counts.get(key, 0) + 1
+    return {k for k, n in counts.items() if n >= PING_PONG_MIN_TRANSFERS}
+
+
+def _anomaly_days(con: sqlite3.Connection) -> set[str]:
+    """UTC dates whose market-wide sale count spikes far above the preceding two weeks."""
+    counts = [
+        (str(r[0]), int(r[1]))
+        for r in con.execute(
+            """SELECT substr(occurred_at_utc, 1, 10) AS d, COUNT(*) FROM sales
+               WHERE reverted_at_utc IS NULL GROUP BY d ORDER BY d"""
+        )
+    ]
+    flagged: set[str] = set()
+    for i, (day, n) in enumerate(counts):
+        history = [c for _, c in counts[max(0, i - ANOMALY_LOOKBACK_DAYS):i]]
+        if not history or n < ANOMALY_MIN_SALES:
+            continue
+        baseline = sorted(history)[len(history) // 2]
+        if n > ANOMALY_DAY_MULTIPLE * max(1, baseline):
+            flagged.add(day)
+    return flagged
 
 
 def _sale_is_credible(sale: sqlite3.Row, price: float, prev_listings: list, sale_filter: str) -> bool:

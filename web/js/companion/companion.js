@@ -490,7 +490,9 @@ function buildFlipFacts(flip) {
 function buildResaleFacts(rec) {
   const est = rec.estimate;
   if (!est) return [];
+  const plan = est.plan === "one_mirror" ? "Exactly 1 mirror (rare, slow buyers)" : "Just under recent sale prices";
   return [
+    ["Plan", plan],
     ["Fair value", formatMirror(est.fairValueMirror)],
     ["List at", formatMirror(est.askPriceMirror)],
     ["If sold", formatPercent(est.returnIfSoldPct)],

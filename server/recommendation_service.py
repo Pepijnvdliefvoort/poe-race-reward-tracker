@@ -21,7 +21,7 @@ from typing import Any
 
 from ML import model as model_mod
 from ML.estimator import Estimate, EstimatorParams, estimate, params_from_config
-from ML.features import Snapshot, market_sale_rate, snapshot
+from ML.features import Snapshot, market_one_mirror_rate, market_sale_rate, snapshot
 from ML.market import Market, load_market
 from server.data_service import _get_image_path
 from server.storage_service import ServerStorage
@@ -268,9 +268,17 @@ def _reasons(snap: Snapshot, est: Estimate, params: EstimatorParams) -> list[str
         )
     else:
         reasons.append(f"No recent sales; fair value falls back to listing floors ({snap.fair_value:.2f} mirrors).")
-    reasons.append(
-        f"Buy at {snap.entry_price:.2f}, list at {est.ask_price:.2f}: {est.return_if_sold * 100:+.1f}% if it sells."
-    )
+    if est.plan == "one_mirror":
+        reasons.append(
+            f"Buy at {snap.entry_price:.2f} and list at exactly 1 mirror: {est.return_if_sold * 100:+.0f}% if a 1-mirror buyer takes it "
+            f"({snap.one_mirror_sales_90d} such sale{'s' if snap.one_mirror_sales_90d != 1 else ''} in 90 days, "
+            f"{est.queue_ahead} other 1-mirror listing{'s' if est.queue_ahead != 1 else ''})."
+        )
+    else:
+        reasons.append(
+            f"Buy at {snap.entry_price:.2f}, list at {est.ask_price:.2f}: {est.return_if_sold * 100:+.1f}% if it sells"
+            + (f" ({est.queue_ahead} cheaper listing{'s' if est.queue_ahead != 1 else ''} ahead of yours)." if est.queue_ahead else ".")
+        )
     reasons.append(
         f"About {est.expected_days:.0f} days to sell at that price "
         f"({est.sell_probability * 100:.0f}% chance within {params.horizon_days:.0f} days)."
@@ -283,6 +291,8 @@ def _reasons(snap: Snapshot, est: Estimate, params: EstimatorParams) -> list[str
 
 def _warnings(snap: Snapshot, est: Estimate, wealth_share: float) -> list[str]:
     warnings: list[str] = []
+    if est.plan == "one_mirror":
+        warnings.append("1-mirror listings sell to buyers who don't compare prices; these sales are rare and slow.")
     if est.confidence == "sparse":
         warnings.append("Very few recent sales, so the sell-time estimate leans on market-wide averages.")
     if snap.entry_age_days > 1:
@@ -420,6 +430,7 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
     latest_rows = _load_latest_poll_rows(storage)
     ladders = _load_latest_listing_ladders(storage, [int(r["item_poll_id"]) for r in latest_rows.values()])
     rate = market_sale_rate(market, now_ts)
+    one_mirror_rate = market_one_mirror_rate(market, now_ts)
     filters = RISK_FILTERS[risk]
 
     skipped = {"unaffordable": 0, "no_price": 0, "not_profitable": 0, "risk_filtered": 0}
@@ -427,7 +438,7 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
     for vid, hist in market.variants.items():
         if vid not in latest_rows:
             continue
-        snap = snapshot(hist, now_ts, market_rate=rate)
+        snap = snapshot(hist, now_ts, market_rate=rate, market_one_mirror=one_mirror_rate)
         if snap is None:
             skipped["no_price"] += 1
             continue
@@ -496,6 +507,9 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
                     "horizonDays": params.horizon_days,
                     "sales90d": snap.sales_90d,
                     "salesAtOrAboveAsk90d": est.sales_at_or_above_ask_90d,
+                    "plan": est.plan,
+                    "queueAhead": est.queue_ahead,
+                    "oneMirrorSales90d": snap.one_mirror_sales_90d,
                 },
                 "modelReturnPerDayPct": _pct(model_scores.get(snap.variant_id), 3) if use_model else None,
                 "trendPct30d": _pct(snap.floor_momentum, 1),

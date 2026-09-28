@@ -9,6 +9,12 @@ larger gain that takes months, and cheap and expensive items compete on the same
 - Slow and thin: some items sell weekly, others sit for months. Listing prices are asks, recorded
   sales (from sale inference) are the only execution evidence.
 - Dormant holders can list at any time, so an item's price can drop without warning.
+- Rolls rarely matter: copies of an item are interchangeable.
+- Some buyers take listings at exactly 1 mirror without comparing prices, even when copies are listed
+  for less in divines. Those sales are real but rare and slow, so 1 mirror is its own sales channel.
+  Buyers pick among equal 1-mirror listings at random (the sold listing's position and age were
+  uniform on the production DB), and the trade site sorts 1 mirror roughly at the market divine rate
+  (after ~1,400-1,500 div, before ~1,800-2,000 div listings in Apr-Sep 2026).
 
 ## How a recommendation is computed
 
@@ -33,24 +39,38 @@ listing counts and their change, new-listing rate, momentum.
 
 Sparse items borrow the market-wide sale rate, so one lucky sale doesn't make a rare item look liquid.
 
-A recorded sale is ignored when, in the poll just before it, another seller listed the **same roll**
-(fingerprint) at least 10% cheaper: a buyer would have taken that copy (`market.sale_filter="roll"`).
-In the Sep 2026 production DB this removed 460 of 2,664 sales, mostly "1 mirror" listings vanishing
-while the same roll sat at ~0.4 mirror. Sales of *different* rolls priced above the floor are kept,
-because better rolls can sell at a premium; whether 1-mirror sales of near-identical rolls are real
-cannot be decided from this data alone (see "Known uncertainty" below).
+Two listing plans are evaluated per item and the better return/day wins:
+- **undercut**: list just under the normal-channel fair value; the queue is every instant listing at
+  or below our ask. For items normally worth under ~0.9 mirror, 1-mirror sales are excluded from the
+  normal channel so they don't inflate its fair value.
+- **one_mirror**: list at exactly 1 mirror; the sale rate comes only from past 1-mirror sales (prior:
+  the pooled 1-mirror rate across items, far below the normal rate) divided by the number of 1-mirror
+  listings + 1. Confidence is based on the number of 1-mirror sales.
+
+### Which recorded sales are used (`market.load_market`)
+
+- **Anomaly days are excluded.** When a day's market-wide sales exceed 4x the median of the previous
+  14 days (min 30), listings vanished en masse rather than sold: 2026-07-21..25 around GGG's search
+  rate-limit change (up to 594 "sales" from 196 sellers in a day, vs ~5-25 normally) and 2026-06-24.
+  That removed 1,277 of 2,664 recorded sales.
+- **Transfer ping-pong is excluded.** When the same two sellers "transfer" a roll to each other more
+  than once, those `confirmed_transfer` sales are traders relisting interchangeable copies (38 of 85).
+- Everything else is kept (`sale_filter="none"`). Alternative filters ("roll": same roll listed
+  cheaper by someone else; "floor_ratio": above 1.5x the cheapest listing) remain available for
+  experiments; with 1-mirror buyers being real, they removed genuine sales.
 
 Listing episodes (each seller + roll + price from first seen to gone) are also built. Using them to
-update the sell rate (`use_listing_evidence`) made sell-chance predictions worse on the production
-DB (predicted ~45% vs ~77% actual: it measures an average listing at that price, while ours is the
-cheapest), so it is off by default; the counts are still model inputs.
+update the sell rate (`use_listing_evidence`) made sell-chance predictions worse (it measures an
+average listing at that price, while ours is the cheapest), so it is off by default; the counts are
+still model inputs.
 
 ## How it is evaluated (`simulate.py`)
 
 A trading simulation on recorded history: every week, a strategy picks its top 5 items; we buy at
-the floor and list at the estimator's ask. A position sells at the first later recorded sale at or
-above the ask (that buyer would have taken our cheaper copy). Otherwise it is marked to market at the
-floor when the horizon ends, never above the purchase price (a risen floor is not a realized gain).
+the cheapest instant listing and list with the estimator's plan. Undercut: our copy sells at the
+(queue + 1)-th later normal-channel sale, if that sale was at or above our ask. 1 mirror: at the
+(N + 1)-th later 1-mirror sale. Otherwise it is marked to market at the floor when the horizon ends,
+never above the purchase price (a risen floor is not a realized gain).
 Only weeks whose full horizon lies inside the data are used, so every outcome is fully observed.
 The headline metric is total % return / total days held.
 
@@ -68,13 +88,16 @@ weeks. On synthetic data with no learnable signal, this gate enabled the model i
 looser 4-week gate enabled it in 3 of 12). Until then, and whenever the model was trained with a
 different scikit-learn version, the transparent estimator ranks.
 
-## Known uncertainty: sales far above the floor
+## Results on the production DB (Sep 2026, 60-day horizon, top 5 per week, 10 weeks)
 
-Some items (e.g. Wurm's Molt, Karui Ward) have many recorded sales at exactly 1 mirror while near-
-identical copies are listed around 0.5 mirror. If those are real, buying at the floor and listing
-near 1 mirror is very profitable; if they are delistings, it is not. On the production DB the top-5
-backtest gives +1.01%/day treating them as real and +0.42%/day treating every sale above 1.5x the
-floor as fake; both beat random picks (about -0.45%/day).
+| | Return/day | Per trade | Sold within 60d |
+|---|---|---|---|
+| Estimator | +0.09% | +3.6% (median +8.1%) | 54% |
+| Random picks (20 seeds) | median -0.21% (best -0.15%) | | |
+
+Sell-chance calibration over all item-weeks: predicted 45%, actual 45%. Earlier, much higher numbers
+(+0.4 to +1.5%/day) came from the July mass-vanish artifact and from mixing 1-mirror sales into
+normal prices; they were not real.
 
 ## Operations
 

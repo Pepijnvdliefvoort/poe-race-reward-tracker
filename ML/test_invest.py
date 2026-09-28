@@ -101,8 +101,8 @@ def _poll_db(root: Path, polls: list[list[tuple[str, str, float, int]]], sales: 
         ts = f"2026-01-{day + 1:02d}T00:00:00+00:00"
         con.execute(
             """INSERT INTO sales(item_poll_id, item_variant_id, occurred_at_utc, recorded_at_utc, rule, fingerprint,
-                   seller, mirror_equiv) VALUES (?, 1, ?, ?, 'likely_instant_sale', ?, ?, ?)""",
-            (poll_ids[day], ts, ts, fp, seller, price),
+                   seller, mirror_equiv, price_amount, price_currency) VALUES (?, 1, ?, ?, 'likely_instant_sale', ?, ?, ?, ?, 'mirror')""",
+            (poll_ids[day], ts, ts, fp, seller, price, price),
         )
     con.commit()
     con.close()
@@ -125,12 +125,43 @@ class MarketLoaderTests(unittest.TestCase):
         day1 = [("B", "R", 0.4, 1)]
         with tempfile.TemporaryDirectory() as tmp:
             db = _poll_db(Path(tmp), [day0, day1, day1], [(1, "A", "R", 1.0), (1, "D", "S", 1.0)])
-            roll = _load(db)
+            roll = _load(db, sale_filter="roll")
             ratio = _load(db, sale_filter="floor_ratio")
+            default = _load(db)
         # A's 1-mirror sale is implausible (same roll R listed at 0.4 by B); D's roll S had no cheaper twin.
         self.assertEqual((roll.sales_dropped_implausible, roll.sales_kept), (1, 1))
         # The blunt floor-ratio filter drops both, because the cheapest listing of any roll was 0.4.
         self.assertEqual((ratio.sales_dropped_implausible, ratio.sales_kept), (2, 0))
+        # Default keeps every sale: 1-mirror sales are a real (slow) channel, not noise.
+        self.assertEqual((default.sales_dropped_implausible, default.sales_kept), (0, 2))
+        hist = next(iter(default.variants.values()))
+        self.assertTrue(all(sale.one_mirror for sale in hist.sales))
+        self.assertEqual(hist.polls[0].one_mirror_listings, 2)
+
+    def test_market_wide_sale_spike_days_are_excluded(self) -> None:
+        polls = [[("A", "R", 2.0, 1)] for _ in range(20)]
+        sales = [(d, f"S{d}_{i}", f"F{d}_{i}", 2.0) for d in range(0, 16) for i in range(3)]
+        sales += [(16, f"X{i}", f"G{i}", 2.0) for i in range(40)]  # mass disappearance day
+        sales += [(17, "Y", "H", 2.0)]
+        with tempfile.TemporaryDirectory() as tmp:
+            market = _load(_poll_db(Path(tmp), polls, sales))
+        self.assertEqual(market.anomaly_days, ("2026-01-17",))
+        self.assertEqual(market.sales_dropped_anomaly_days, 40)
+        self.assertEqual(market.sales_kept, 16 * 3 + 1)
+
+    def test_repeated_transfers_between_same_sellers_are_dropped(self) -> None:
+        polls = [[("A", "R", 2.0, 1)] for _ in range(6)]
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _poll_db(Path(tmp), polls, [(1, "A", "R", 2.0), (2, "B", "R", 2.0), (3, "C", "R", 2.0)])
+            con = sqlite3.connect(db)
+            # A->B, B->A ping-pong; C->D a one-off transfer.
+            for sid, buyer in ((1, "B"), (2, "A"), (3, "D")):
+                con.execute("UPDATE sales SET rule = 'confirmed_transfer', buyer = ? WHERE id = ?", (buyer, sid))
+            con.commit()
+            con.close()
+            market = _load(db)
+        self.assertEqual(market.sales_dropped_ping_pong, 2)
+        self.assertEqual(market.sales_kept, 1)
 
     def test_listing_episodes_track_sold_removed_and_still_listed(self) -> None:
         polls = [
@@ -201,6 +232,34 @@ class EstimatorTests(unittest.TestCase):
         self.assertAlmostEqual(default.sale_rate_per_day, estimate(_snap()).sale_rate_per_day)
         self.assertAlmostEqual(default.similar_listing_days_90d, 80.0)
 
+    def test_one_mirror_plan_used_when_its_channel_is_faster(self) -> None:
+        # Normal channel: bought at 0.5, fair 0.6 with steady sales at 0.6.
+        base = dict(entry_price=0.5, listing_anchor=0.55, sale_anchor=0.6, fair_value=0.6, sales_90d=10,
+                    recent_sale_prices=(0.6,) * 10, one_mirror_premium=True, one_mirror_listings=1)
+        busy = estimate(_snap(**base, one_mirror_sales_90d=60))
+        self.assertEqual(busy.plan, "one_mirror")
+        self.assertAlmostEqual(busy.ask_price, 1.0)
+        self.assertEqual(busy.queue_ahead, 1)
+        quiet = estimate(_snap(**{**base, "one_mirror_listings": 30}, one_mirror_sales_90d=0))
+        self.assertEqual(quiet.plan, "undercut")
+
+    def test_one_mirror_plan_needs_premium_and_cheaper_entry(self) -> None:
+        self.assertEqual(estimate(_snap(one_mirror_premium=False, one_mirror_sales_90d=50)).plan, "undercut")
+        self.assertEqual(
+            estimate(_snap(entry_price=1.2, fair_value=1.5, one_mirror_premium=True, one_mirror_sales_90d=50)).plan,
+            "undercut",
+        )
+
+    def test_premium_one_mirror_sales_leave_normal_fair_value_alone(self) -> None:
+        polls = [(d, 0.5) for d in range(0, 40)]
+        h = _hist(polls, [(d, 0.5) for d in (5, 15, 25)])
+        h.sales += [SalePoint(ts=T0 + d * DAY, price_mirror=1.0, one_mirror=True) for d in (10, 20, 30, 35)]
+        h.finalize()
+        snap = snapshot(h, T0 + 39 * DAY, market_rate=0.01)
+        self.assertTrue(snap.one_mirror_premium)
+        self.assertEqual((snap.sales_90d, snap.one_mirror_sales_90d), (3, 4))
+        self.assertAlmostEqual(snap.fair_value, 0.5)
+
     def test_params_from_config_clamps(self) -> None:
         p = params_from_config({"invest_horizon_days": 5000, "invest_fee_pct": -3, "invest_undercut_pct": "x"})
         self.assertEqual(p.horizon_days, 180.0)
@@ -234,6 +293,25 @@ class SimulationTests(unittest.TestCase):
         out = realize_trade(_hist(polls), _snap(ts=T0), ask=12.0, horizon_days=60, fee_pct=0.0)
         self.assertFalse(out.sold)
         self.assertAlmostEqual(out.ret, 0.0)
+
+    def test_queue_ahead_must_clear_before_our_copy_sells(self) -> None:
+        h = _hist([(d, 10.0) for d in range(0, 80)], [(3, 10.5), (5, 12.5), (8, 12.0), (9, 13.0)])
+        out = realize_trade(h, _snap(ts=T0), ask=12.0, horizon_days=60, fee_pct=0.0, queue=2)
+        self.assertTrue(out.sold)
+        self.assertAlmostEqual(out.days, 8.0)  # 3rd later sale, and it was at our ask
+
+    def test_one_mirror_plan_only_sells_to_one_mirror_buyers(self) -> None:
+        h = _hist([(d, 0.5) for d in range(0, 80)], [(2, 0.6), (4, 0.7)])
+        h.sales += [SalePoint(ts=T0 + d * DAY, price_mirror=1.0, one_mirror=True) for d in (6, 9, 12)]
+        h.finalize()
+        snap = _snap(ts=T0, entry_price=0.5, fair_value=0.6, one_mirror_premium=True)
+        out = realize_trade(h, snap, ask=1.0, horizon_days=60, fee_pct=0.0, queue=1, plan="one_mirror")
+        self.assertTrue(out.sold)
+        self.assertAlmostEqual(out.days, 9.0)  # 2nd later 1-mirror sale
+        self.assertAlmostEqual(out.ret, 1.0)
+        # And undercut listings don't sell to 1-mirror buyers.
+        normal = realize_trade(h, snap, ask=0.9, horizon_days=60, fee_pct=0.0)
+        self.assertFalse(normal.sold)
 
     def test_decision_times_leave_room_for_full_horizon(self) -> None:
         market = Market(variants={}, start_ts=T0, end_ts=T0 + 200 * DAY)
