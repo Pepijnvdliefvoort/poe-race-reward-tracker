@@ -18,7 +18,16 @@
         header Expires "0"
     }
 
-    @static path /assets/* /css/* /js/* /favicon* /robots.txt
+    # JS/CSS URLs are unversioned (native ES modules import each other by plain path), so
+    # browsers must revalidate them (cheap 304 via ETag) or they keep stale code after a deploy.
+    @code path /css/* /js/*
+    handle @code {
+        root * /opt/poe-market-flips/web
+        file_server
+        header Cache-Control "no-cache"
+    }
+
+    @static path /assets/* /favicon* /robots.txt
     handle @static {
         root * /opt/poe-market-flips/web
         file_server

@@ -62,14 +62,14 @@ DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
 PRICE_EPSILON = 1e-6
-CSV_HEADER: list[str] = []  # legacy (no longer written)
 OPS_DISCORD_ROLE_ID = "1503672022163525744"
 
 # Proactive safety margin over the natural allowed request pace.
 RATE_LIMIT_SAFETY = 1.1
 LOW_HEADROOM_THRESHOLD = 0.15
 VERY_LOW_HEADROOM_THRESHOLD = 0.08
-# Keep a reserve budget per window so this script leaves room for manual trade use.
+# Keep a reserve budget per window so this script leaves room for manual trade use from the
+# same IP. Override with POE_RATE_LIMIT_RESERVE_RATIO (e.g. 0 on a server nobody trades from).
 RESERVE_RATIO = 0.20
 
 
@@ -1373,19 +1373,42 @@ class RateWindowState:
     retry_after_seconds: int
 
 
+def load_rate_limit_reserve_ratio() -> float:
+    raw = str(os.getenv("POE_RATE_LIMIT_RESERVE_RATIO", "")).strip()
+    try:
+        value = float(raw) if raw else RESERVE_RATIO
+    except ValueError:
+        value = RESERVE_RATIO
+    if not math.isfinite(value):
+        value = RESERVE_RATIO
+    return max(0.0, min(0.5, value))
+
+
 class AdaptiveRateLimiter:
-    """Tracks live rate-limit headers and adjusts pacing before each request."""
+    """
+    Tracks live rate-limit headers and paces requests before each call.
 
-    def __init__(self) -> None:
-        self._next_allowed_at = 0.0
-        self._windows: list[RateWindowState] = []
+    GGG limits each endpoint policy (search / fetch / exchange) independently, so pacing state
+    is kept per policy: a slow search window must not delay fetches, which have their own budget.
+    Callers pass a `bucket` per endpoint; the actual policy name comes from `X-Rate-Limit-Policy`
+    once seen, so buckets that share a GGG policy also share pacing.
+    """
 
-    def wait_before_request(self) -> None:
+    def __init__(self, reserve_ratio: float = RESERVE_RATIO) -> None:
+        self._reserve_ratio = max(0.0, float(reserve_ratio))
+        self._next_allowed_at: dict[str, float] = {}
+        self._bucket_policy: dict[str, str] = {}
+
+    def _policy_for(self, bucket: str) -> str:
+        return self._bucket_policy.get(bucket, bucket)
+
+    def wait_before_request(self, bucket: str = "default") -> None:
+        next_allowed = self._next_allowed_at.get(self._policy_for(bucket), 0.0)
         now = time.monotonic()
-        if self._next_allowed_at <= now:
+        if next_allowed <= now:
             return
 
-        sleep_for = self._next_allowed_at - now
+        sleep_for = next_allowed - now
         if sleep_for > 0:
             time.sleep(sleep_for)
 
@@ -1394,19 +1417,23 @@ class AdaptiveRateLimiter:
         headers: requests.structures.CaseInsensitiveDict[str],
         status_code: int,
         request_label: str = "",
+        *,
+        bucket: str = "default",
     ) -> None:
+        policy = str(headers.get("x-rate-limit-policy") or "").strip() or self._policy_for(bucket)
+        self._bucket_policy[bucket] = policy
+
         windows = self._parse_windows(headers)
         if not windows:
             return
 
-        self._windows = windows
         observed_at = time.monotonic()
         wait_seconds = self._compute_wait_seconds(
             windows=windows,
             status_code=status_code,
             retry_after_header=self._parse_retry_after(headers.get("retry-after")),
         )
-        self._next_allowed_at = max(self._next_allowed_at, observed_at + wait_seconds)
+        self._next_allowed_at[policy] = max(self._next_allowed_at.get(policy, 0.0), observed_at + wait_seconds)
 
         self._log_live_status(windows, wait_seconds, status_code, request_label=request_label)
 
@@ -1487,14 +1514,15 @@ class AdaptiveRateLimiter:
             if window.max_requests <= 0:
                 continue
 
+            # Pace at the window's sustainable rate plus the safety margin. Slowdowns only kick in
+            # near the limit (reserve / low headroom below); scaling every wait by current usage
+            # made continuous polling settle at ~58% of the allowed budget.
             natural_delay = (window.window_seconds / window.max_requests) * RATE_LIMIT_SAFETY
-            usage_ratio = min(1.0, window.used_requests / window.max_requests)
             remaining = max(0, window.max_requests - window.used_requests)
             headroom_ratio = remaining / window.max_requests
             reserve_budget = self._reserve_budget(window.max_requests)
 
-            adaptive_factor = 1.0 + usage_ratio
-            candidate_wait = natural_delay * adaptive_factor
+            candidate_wait = natural_delay
 
             if remaining <= reserve_budget:
                 # Preemptively slow down when we're close to reserved capacity.
@@ -1532,7 +1560,7 @@ class AdaptiveRateLimiter:
         if max_requests <= 1:
             return 0
 
-        reserve = max(1, math.ceil(max_requests * RESERVE_RATIO))
+        reserve = max(1, math.ceil(max_requests * self._reserve_ratio))
         return min(max_requests - 1, reserve)
 
     def _log_live_status(
@@ -1693,10 +1721,10 @@ def search_item(
         status_option_override=status_option_override,
     )
 
-    rate_limiter.wait_before_request()
+    rate_limiter.wait_before_request("search")
     response = session.post(url, data=json.dumps(payload), timeout=30.0)
     label = "trade.search" if price_currency is None else f"trade.search[{price_currency}]"
-    rate_limiter.update_from_response(response.headers, response.status_code, request_label=label)
+    rate_limiter.update_from_response(response.headers, response.status_code, request_label=label, bucket="search")
     response.raise_for_status()
 
     data = response.json()
@@ -1776,10 +1804,10 @@ def search_trade_by_account(
     if payload is None:
         payload = build_account_search_payload(account_name)
 
-    rate_limiter.wait_before_request()
+    rate_limiter.wait_before_request("search")
     response = session.post(url, data=json.dumps(payload), timeout=30.0)
     rate_limiter.update_from_response(
-        response.headers, response.status_code, request_label="trade.search[account]"
+        response.headers, response.status_code, request_label="trade.search[account]", bucket="search"
     )
     response.raise_for_status()
 
@@ -1934,9 +1962,11 @@ def _fetch_listing_entries_batched(
         batch = ids[i : i + batch_size]
         ids_joined = ",".join(batch)
         url = f"{url_base}{ids_joined}"
-        rate_limiter.wait_before_request()
+        rate_limiter.wait_before_request("fetch")
         response = session.get(url, params={"query": query_id}, timeout=30.0)
-        rate_limiter.update_from_response(response.headers, response.status_code, request_label="trade.fetch")
+        rate_limiter.update_from_response(
+            response.headers, response.status_code, request_label="trade.fetch", bucket="fetch"
+        )
         response.raise_for_status()
 
         data = response.json()
@@ -2663,9 +2693,11 @@ def fetch_mirror_divine_median(
     url = f"{BASE_URL}/exchange/{DEFAULT_LEAGUE}"
     payload = build_mirror_price_payload()
 
-    rate_limiter.wait_before_request()
+    rate_limiter.wait_before_request("exchange")
     response = session.post(url, data=json.dumps(payload), timeout=30.0)
-    rate_limiter.update_from_response(response.headers, response.status_code, request_label="trade.exchange")
+    rate_limiter.update_from_response(
+        response.headers, response.status_code, request_label="trade.exchange", bucket="exchange"
+    )
     response.raise_for_status()
 
     data = response.json()
@@ -2790,84 +2822,6 @@ def item_mode_token(item: ItemSpec) -> str:
     if item.alternate_art is False:
         return "normal"
     return "any"
-
-
-def ensure_csv_header(path: Path) -> None:
-    if path.exists() and path.stat().st_size > 0:
-        with path.open("r", newline="", encoding="utf-8") as handle:
-            reader = csv.reader(handle)
-            current_header = next(reader, None)
-
-        if current_header == CSV_HEADER:
-            return
-
-        backup_path = path.with_name(f"{path.stem}.pre-mirror-schema-{int(time.time())}{path.suffix}")
-        path.rename(backup_path)
-        log_line(
-            "warn",
-            f"Existing CSV header did not match current format. Backed up old file to {backup_path}.",
-        )
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(CSV_HEADER)
-
-
-def append_summary_row(
-    path: Path,
-    timestamp_utc: str,
-    cycle: int,
-    item: ItemSpec,
-    query_id: str,
-    total_results: int,
-    used_results: int,
-    unsupported_price_count: int,
-    mirror_count: int,
-    lowest_mirror: float | None,
-    median_mirror: float | None,
-    highest_mirror: float | None,
-    divine_count: int,
-    lowest_divine: float | None,
-    median_divine: float | None,
-    highest_divine: float | None,
-    inference_confirmed_transfer: int,
-    inference_likely_instant_sale: int,
-    inference_relist_same_seller: int,
-    inference_non_instant_removed: int,
-    inference_reprice_same_seller: int,
-    inference_multi_seller_same_fingerprint: int,
-    inference_new_listing_rows: int,
-) -> None:
-    with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(
-            [
-                timestamp_utc,
-                cycle,
-                item.name,
-                item_mode_token(item),
-                query_id,
-                total_results,
-                used_results,
-                unsupported_price_count,
-                mirror_count,
-                "" if lowest_mirror is None else f"{lowest_mirror:.4f}",
-                "" if median_mirror is None else f"{median_mirror:.4f}",
-                "" if highest_mirror is None else f"{highest_mirror:.4f}",
-                divine_count,
-                "" if lowest_divine is None else f"{lowest_divine:.4f}",
-                "" if median_divine is None else f"{median_divine:.4f}",
-                "" if highest_divine is None else f"{highest_divine:.4f}",
-                str(inference_confirmed_transfer),
-                str(inference_likely_instant_sale),
-                str(inference_relist_same_seller),
-                str(inference_non_instant_removed),
-                str(inference_reprice_same_seller),
-                str(inference_multi_seller_same_fingerprint),
-                str(inference_new_listing_rows),
-            ]
-        )
 
 
 def run_cycle(
@@ -3513,7 +3467,8 @@ def main() -> None:
     items_file = Path(DEFAULT_ITEMS_FILE)
 
     session = build_session()
-    rate_limiter = AdaptiveRateLimiter()
+    rate_limit_reserve_ratio = load_rate_limit_reserve_ratio()
+    rate_limiter = AdaptiveRateLimiter(reserve_ratio=rate_limit_reserve_ratio)
 
     root_dir = Path(__file__).resolve().parents[1]
     storage = StorageService(root_dir=root_dir)
@@ -3569,6 +3524,10 @@ def main() -> None:
         log_line("cycle", f"--only filter active: {[s.name for s in matched]} matched, {len(rest)} item(s) appended after.")
 
     log_line("cycle", f"Loaded {len(item_specs)} item(s) from SQLite (bootstrap file: {items_file}).")
+    log_line(
+        "cycle",
+        f"Rate limiting: per-policy pacing, safety x{RATE_LIMIT_SAFETY}, reserve {rate_limit_reserve_ratio:.0%} per window.",
+    )
     if cfg.poll_interval > 0:
         log_line("cycle", f"Polling every {cfg.poll_interval} seconds (sleep-after-cycle). Press Ctrl+C to stop.")
     else:

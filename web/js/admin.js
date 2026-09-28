@@ -503,7 +503,8 @@ function setupLogConsoleWindowControls() {
     setPollerHint("Restarting poller…");
     try {
       const payload = await fetchJsonWithInit("/api/admin/restart-poller", { method: "POST" });
-      const pid = payload?.start?.pid ?? payload?.pid;
+      // Local/dev (subprocess mode) nests the new process under `managed.start`.
+      const pid = payload?.managed?.start?.pid ?? payload?.start?.pid ?? payload?.pid;
       setPollerHint(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
       return payload;
     } catch (e) {
@@ -1812,11 +1813,11 @@ function setupMlRetrain() {
       ["Log path", status.last_log_path || "—"],
     ];
     const rowsHtml = rows
-      .map(([k, v]) => `<div class="admin-appconfig-row"><span class="admin-appconfig-k">${k}</span><span class="admin-appconfig-v">${v}</span></div>`)
+      .map(([k, v]) => `<div class="admin-appconfig-row"><span class="admin-appconfig-k">${escapeHtml(k)}</span><span class="admin-appconfig-v">${escapeHtml(v)}</span></div>`)
       .join("");
     statusEl.innerHTML = rowsHtml;
     if (status.last_log_tail) {
-      statusEl.innerHTML += `<details style="margin-top:10px"><summary class="admin-muted">Log tail</summary><pre class="admin-console" style="margin-top:6px;max-height:200px;overflow:auto">${status.last_log_tail}</pre></details>`;
+      statusEl.innerHTML += `<details style="margin-top:10px"><summary class="admin-muted">Log tail</summary><pre class="admin-console" style="margin-top:6px;max-height:200px;overflow:auto">${escapeHtml(status.last_log_tail)}</pre></details>`;
     }
   };
 
@@ -2807,7 +2808,7 @@ function setupRestartPoller() {
     setHint("Restarting poller…");
     try {
       const payload = await fetchJsonWithInit("/api/admin/restart-poller", { method: "POST" });
-      const pid = payload?.start?.pid ?? payload?.pid;
+      const pid = payload?.managed?.start?.pid ?? payload?.start?.pid ?? payload?.pid;
       setHint(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Restart poller"), true);

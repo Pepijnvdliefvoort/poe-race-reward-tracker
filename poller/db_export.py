@@ -85,11 +85,30 @@ def _snapshot_sqlite_db(src_db_path: Path, dst_db_path: Path) -> None:
         dst.execute("PRAGMA journal_mode = DELETE;")
         src.backup(dst)
         dst.commit()
+        _scrub_personal_data(dst)
     finally:
         try:
             dst.close()
         finally:
             src.close()
+
+
+# Tables holding visitor IPs / geolocation. Exports leave the VPS (Discord), so they are emptied
+# in the snapshot copy only; the live DB is untouched.
+_PERSONAL_DATA_TABLES = ("visits", "ip_geo_cache")
+
+
+def _scrub_personal_data(con: sqlite3.Connection) -> None:
+    existing = {
+        str(r[0])
+        for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    }
+    for table in _PERSONAL_DATA_TABLES:
+        if table in existing:
+            con.execute(f'DELETE FROM "{table}"')
+    con.commit()
+    # Rewrite the file so deleted rows don't linger in free pages.
+    con.execute("VACUUM")
 
 
 def _compact_sqlite_db(src_db_path: Path, dst_db_path: Path) -> bool:

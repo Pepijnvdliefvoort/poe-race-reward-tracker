@@ -307,3 +307,197 @@ class SaleInferenceEngineNonInstantOnlineGraceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _sig(fp: str, seller: str, price: float, *, instant: bool = True, online: bool = False) -> dict:
+    return {
+        "fingerprint": fp,
+        "seller": seller,
+        "isInstant": instant,
+        "sellerOnline": online,
+        "mirrorEquiv": price,
+        "priceAmount": price,
+        "priceCurrency": "mirror",
+    }
+
+
+def _rules(result) -> list[str]:
+    return [str(ev.get("rule") or "") for ev in result.events]
+
+
+class SaleInferenceEngineSellerSwapTests(unittest.TestCase):
+    """Rule 1: the same roll moves from one sole seller to another."""
+
+    def test_sole_seller_swap_counts_confirmed_transfer(self) -> None:
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0)],
+            curr_signals=[_sig("fp1", "B", 6.0)],
+            pending_instant=[],
+        )
+        self.assertEqual(result.confirmed_transfer, 1)
+        # The seller-A disappearance is part of the transfer, not a separate instant sale.
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertEqual(pending_instant, [])
+        ev = next(e for e in result.events if e["rule"] == "confirmed_transfer")
+        self.assertEqual((ev["from_seller"], ev["to_seller"]), ("A", "B"))
+
+    def test_no_transfer_when_roll_had_multiple_sellers(self) -> None:
+        result, _, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0), _sig("fp1", "C", 5.5)],
+            curr_signals=[_sig("fp1", "B", 6.0)],
+            pending_instant=[],
+        )
+        self.assertEqual(result.confirmed_transfer, 0)
+
+
+class SaleInferenceEngineTruncatedSnapshotTests(unittest.TestCase):
+    """Rules 2a/2b and the truncation cutoff guard."""
+
+    def test_vanish_near_truncation_cutoff_is_ignored(self) -> None:
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0), _sig("fp2", "B", 9.8)],
+            curr_signals=[_sig("fp1", "A", 5.0)],
+            pending_instant=[],
+            snapshot_truncated=True,
+            truncation_cutoff_mirror=10.0,
+        )
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertEqual(pending_instant, [])
+        self.assertEqual(result.events, [])
+
+    def test_mid_ladder_instant_vanish_is_ignored_when_truncated(self) -> None:
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0), _sig("fp2", "B", 8.0)],
+            curr_signals=[_sig("fp1", "A", 5.0)],
+            pending_instant=[],
+            snapshot_truncated=True,
+            truncation_cutoff_mirror=20.0,
+        )
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertEqual(pending_instant, [])
+
+    def test_near_floor_vanish_defers_credit_when_truncated(self) -> None:
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0), _sig("fp2", "B", 5.5)],
+            curr_signals=[_sig("fp2", "B", 5.5)],
+            pending_instant=[],
+            snapshot_truncated=True,
+            truncation_cutoff_mirror=20.0,
+            fetch_jitter_grace_polls=2,
+        )
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertIn("instant_listing_removed_pending", _rules(result))
+        self.assertEqual(len(pending_instant), 1)
+        self.assertFalse(pending_instant[0]["countedImmediate"])
+        self.assertEqual(pending_instant[0]["jitterGracePolls"], 2)
+
+    def _deferred_pending(self) -> list[dict]:
+        return [
+            {
+                "fingerprint": "fp1",
+                "seller": "A",
+                "removed_cycle": 1,
+                "countedImmediate": False,
+                "jitterGracePolls": 2,
+                "mirrorEquiv": 5.0,
+                "priceAmount": 5.0,
+                "priceCurrency": "mirror",
+            }
+        ]
+
+    def test_deferred_instant_stays_pending_within_grace(self) -> None:
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=3,
+            prev_signals=[],
+            curr_signals=[],
+            pending_instant=self._deferred_pending(),
+        )
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertEqual(len(pending_instant), 1)
+
+    def test_deferred_instant_credits_after_grace(self) -> None:
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=4,
+            prev_signals=[],
+            curr_signals=[],
+            pending_instant=self._deferred_pending(),
+        )
+        self.assertEqual(result.likely_instant_sale, 1)
+        self.assertEqual(pending_instant, [])
+
+    def test_deferred_instant_reappearing_is_fetch_jitter(self) -> None:
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[],
+            curr_signals=[_sig("fp1", "A", 5.0)],
+            pending_instant=self._deferred_pending(),
+        )
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertEqual(result.relist_same_seller, 0)
+        self.assertIn("fetch_jitter_relist", _rules(result))
+        self.assertEqual(pending_instant, [])
+
+    def test_count_decrease_rule_skipped_when_truncated(self) -> None:
+        result, _, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0)] * 3,
+            curr_signals=[_sig("fp1", "A", 5.0)] * 2,
+            pending_instant=[],
+            snapshot_truncated=True,
+            truncation_cutoff_mirror=100.0,
+        )
+        self.assertEqual(result.likely_instant_sale, 0)
+
+
+class SaleInferenceEngineGuardTests(unittest.TestCase):
+    def test_instant_vanish_far_above_baseline_is_unlist(self) -> None:
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 20.0), _sig("fp2", "B", 12.0)],
+            curr_signals=[_sig("fp2", "B", 12.0)],
+            pending_instant=[],
+            baseline_mirror=12.0,
+        )
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertEqual(pending_instant, [])
+        self.assertIn("unlisted_above_baseline", _rules(result))
+
+    def test_offline_non_instant_vanish_is_inconclusive(self) -> None:
+        result, _, pending_online, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0, instant=False, online=False)],
+            curr_signals=[],
+            pending_instant=[],
+        )
+        self.assertEqual(result.non_instant_removed, 1)
+        self.assertEqual(result.likely_non_instant_online, 0)
+        self.assertEqual(pending_online, [])
+        self.assertIn("non_instant_removed_inconclusive", _rules(result))
+
+    def test_online_probe_overrides_stale_snapshot_flag(self) -> None:
+        result, _, pending_online, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0, instant=False, online=True)],
+            curr_signals=[],
+            pending_instant=[],
+            seller_online_probe={"A": False},
+        )
+        self.assertEqual(result.non_instant_removed, 1)
+        self.assertEqual(pending_online, [])
