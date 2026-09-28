@@ -62,7 +62,6 @@ DIVINES_PER_MIRROR = 1650.0
 EXALTS_PER_DIVINE = 60.0
 MIN_RESALE_PROFIT_MIRRORS = 1.0
 PRICE_EPSILON = 1e-6
-CSV_HEADER: list[str] = []  # legacy (no longer written)
 OPS_DISCORD_ROLE_ID = "1503672022163525744"
 
 # Proactive safety margin over the natural allowed request pace.
@@ -2790,84 +2789,6 @@ def item_mode_token(item: ItemSpec) -> str:
     if item.alternate_art is False:
         return "normal"
     return "any"
-
-
-def ensure_csv_header(path: Path) -> None:
-    if path.exists() and path.stat().st_size > 0:
-        with path.open("r", newline="", encoding="utf-8") as handle:
-            reader = csv.reader(handle)
-            current_header = next(reader, None)
-
-        if current_header == CSV_HEADER:
-            return
-
-        backup_path = path.with_name(f"{path.stem}.pre-mirror-schema-{int(time.time())}{path.suffix}")
-        path.rename(backup_path)
-        log_line(
-            "warn",
-            f"Existing CSV header did not match current format. Backed up old file to {backup_path}.",
-        )
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(CSV_HEADER)
-
-
-def append_summary_row(
-    path: Path,
-    timestamp_utc: str,
-    cycle: int,
-    item: ItemSpec,
-    query_id: str,
-    total_results: int,
-    used_results: int,
-    unsupported_price_count: int,
-    mirror_count: int,
-    lowest_mirror: float | None,
-    median_mirror: float | None,
-    highest_mirror: float | None,
-    divine_count: int,
-    lowest_divine: float | None,
-    median_divine: float | None,
-    highest_divine: float | None,
-    inference_confirmed_transfer: int,
-    inference_likely_instant_sale: int,
-    inference_relist_same_seller: int,
-    inference_non_instant_removed: int,
-    inference_reprice_same_seller: int,
-    inference_multi_seller_same_fingerprint: int,
-    inference_new_listing_rows: int,
-) -> None:
-    with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(
-            [
-                timestamp_utc,
-                cycle,
-                item.name,
-                item_mode_token(item),
-                query_id,
-                total_results,
-                used_results,
-                unsupported_price_count,
-                mirror_count,
-                "" if lowest_mirror is None else f"{lowest_mirror:.4f}",
-                "" if median_mirror is None else f"{median_mirror:.4f}",
-                "" if highest_mirror is None else f"{highest_mirror:.4f}",
-                divine_count,
-                "" if lowest_divine is None else f"{lowest_divine:.4f}",
-                "" if median_divine is None else f"{median_divine:.4f}",
-                "" if highest_divine is None else f"{highest_divine:.4f}",
-                str(inference_confirmed_transfer),
-                str(inference_likely_instant_sale),
-                str(inference_relist_same_seller),
-                str(inference_non_instant_removed),
-                str(inference_reprice_same_seller),
-                str(inference_multi_seller_same_fingerprint),
-                str(inference_new_listing_rows),
-            ]
-        )
 
 
 def run_cycle(
