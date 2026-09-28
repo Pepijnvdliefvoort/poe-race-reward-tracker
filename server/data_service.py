@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
     # Companion investment ranking (ML.estimator); see ML/README.md.
     "invest_horizon_days": 60,
     "invest_fee_pct": 0.0,
-    "invest_undercut_pct": 2.0,
+    "invest_undercut_pct": 5.0,
 }
 
 

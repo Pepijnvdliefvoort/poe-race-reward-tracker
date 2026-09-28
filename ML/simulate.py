@@ -64,13 +64,16 @@ def realize_trade(hist: VariantHistory, snap: Snapshot, *, ask: float, horizon_d
             days = max(MIN_HOLD_DAYS, (sale.ts - snap.ts) / DAY)
             return TradeOutcome(snap.variant_id, snap.ts, snap.entry_price, ask, True, days, ask * (1 - fee) / snap.entry_price - 1)
 
+    # Unsold: value at the later floor, but never above what we paid. A risen floor is not a
+    # realized gain (often just the cheap listing we bought disappearing), a fallen one is a loss.
     n_polls = hist.polls_upto(end)
     exit_value = snap.entry_price  # no usable later floor: assume flat
     for p in reversed(hist.polls[:n_polls]):
         if p.ts <= snap.ts:
             break
-        if p.floor_mirror is not None and (end - p.ts) / DAY <= MAX_FLOOR_AGE_DAYS:
-            exit_value = p.floor_mirror
+        later_floor = p.instant_floor if p.instant_floor is not None else p.floor_mirror
+        if later_floor is not None and (end - p.ts) / DAY <= MAX_FLOOR_AGE_DAYS:
+            exit_value = min(later_floor, snap.entry_price)
             break
     return TradeOutcome(
         snap.variant_id, snap.ts, snap.entry_price, ask, False, horizon_days, exit_value * (1 - fee) / snap.entry_price - 1

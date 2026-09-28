@@ -23,7 +23,10 @@ T0 = 1_700_000_000.0
 
 def _hist(polls: list[tuple[float, float | None]], sales: list[tuple[float, float]] | None = None, listings: int = 5) -> VariantHistory:
     h = VariantHistory(variant_id=1, base_item_name="X", display_name="X", mode="aa")
-    h.polls = [PollPoint(ts=T0 + d * DAY, floor_mirror=p, total_results=listings, new_listing_rows=0) for d, p in polls]
+    h.polls = [
+        PollPoint(ts=T0 + d * DAY, floor_mirror=p, total_results=listings, new_listing_rows=0, instant_floor=p)
+        for d, p in polls
+    ]
     h.sales = [SalePoint(ts=T0 + d * DAY, price_mirror=p) for d, p in (sales or [])]
     h.finalize()
     return h
@@ -62,6 +65,38 @@ class FeatureTests(unittest.TestCase):
         many_sales = snapshot(_hist(polls, [(d, 20.0) for d in range(10, 29)]), T0 + 29 * DAY, market_rate=0.01)
         self.assertLess(one_sale.fair_value, many_sales.fair_value)
         self.assertGreater(one_sale.fair_value, 10.0)
+
+
+class MarketLoaderTests(unittest.TestCase):
+    def test_implausible_sales_dropped_and_instant_floor_used(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = build_synthetic_db(Path(tmp), variants=2, days=10, poll_hours=24, seed=1)
+            con = __import__("sqlite3").connect(db)
+            poll_id, vid, floor = con.execute(
+                "SELECT id, item_variant_id, lowest_mirror FROM item_polls ORDER BY id LIMIT 1"
+            ).fetchone()
+            for price, fp in ((floor * 3.0, "anchor"), (floor * 1.1, "real")):
+                con.execute(
+                    """INSERT INTO sales(item_poll_id, item_variant_id, occurred_at_utc, recorded_at_utc, rule,
+                           fingerprint, seller, mirror_equiv) VALUES (?, ?, '2026-01-01T00:00:00+00:00',
+                           '2026-01-01T00:00:00+00:00', 'likely_instant_sale', ?, 'S', ?)""",
+                    (poll_id, vid, fp, price),
+                )
+            con.execute("UPDATE listing_snapshots SET is_instant_buyout = 0 WHERE item_poll_id = ?", (poll_id,))
+            con.commit()
+            con.close()
+            con = open_readonly(db)
+            try:
+                market = load_market(con)
+            finally:
+                con.close()
+            self.assertEqual(market.sales_dropped_implausible, 1)
+            prices = [s.price_mirror for s in market.variants[vid].sales]
+            self.assertIn(floor * 1.1, prices)
+            self.assertNotIn(floor * 3.0, prices)
+            first = market.variants[vid].polls[0]
+            self.assertIsNone(first.instant_floor)
+            self.assertEqual(first.floor_mirror, floor)
 
 
 class EstimatorTests(unittest.TestCase):
@@ -119,6 +154,12 @@ class SimulationTests(unittest.TestCase):
         self.assertFalse(out.sold)
         self.assertEqual(out.days, 60)
         self.assertAlmostEqual(out.ret, -0.2)
+
+    def test_unsold_never_marked_above_entry(self) -> None:
+        polls = [(d, 10.0) for d in range(0, 40)] + [(d, 30.0) for d in range(40, 80)]
+        out = realize_trade(_hist(polls), _snap(ts=T0), ask=12.0, horizon_days=60, fee_pct=0.0)
+        self.assertFalse(out.sold)
+        self.assertAlmostEqual(out.ret, 0.0)
 
     def test_decision_times_leave_room_for_full_horizon(self) -> None:
         market = Market(variants={}, start_ts=T0, end_ts=T0 + 200 * DAY)

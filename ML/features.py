@@ -118,13 +118,14 @@ def snapshot(hist: VariantHistory, ts: float, *, market_rate: float) -> Snapshot
         return None
     polls = hist.polls[:n_polls]
 
-    latest_with_floor = next((p for p in reversed(polls) if p.floor_mirror is not None), None)
-    if latest_with_floor is None:
+    # Buy price = cheapest instant-buyout listing: non-instant floors are often unresponsive sellers.
+    latest_buyable = next((p for p in reversed(polls) if p.instant_floor is not None), None)
+    if latest_buyable is None:
         return None
-    entry_age = (ts - latest_with_floor.ts) / DAY
+    entry_age = (ts - latest_buyable.ts) / DAY
     if entry_age > MAX_FLOOR_AGE_DAYS:
         return None
-    entry = float(latest_with_floor.floor_mirror)
+    entry = float(latest_buyable.instant_floor)
 
     def floors_between(lo_days: float, hi_days: float) -> list[float]:
         lo, hi = ts - lo_days * DAY, ts - hi_days * DAY

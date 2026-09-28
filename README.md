@@ -316,7 +316,7 @@ The project can bootstrap this from `config.json` once if no DB config exists.
 - companion investment ranking:
   - `invest_horizon_days` (default `60`)
   - `invest_fee_pct` (default `0`)
-  - `invest_undercut_pct` (default `2`)
+  - `invest_undercut_pct` (default `5`)
 - other:
   - `sales_discord_window_days`
   - `discord_market_watch_users`

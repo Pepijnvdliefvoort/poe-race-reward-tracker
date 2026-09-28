@@ -88,6 +88,11 @@ def build_synthetic_db(
                  low * price_mult, low * 1.2, low * 2, int(sold), new_rows),
             )
             poll_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+            con.execute(
+                """INSERT INTO listing_snapshots(item_poll_id, rank, seller_name, price_text, amount, currency,
+                       is_instant_buyout) VALUES (?, 1, 'seller', 'price', ?, 'mirror', 1)""",
+                (poll_id, low * price_mult),
+            )
             if sold:
                 sale_price = s["price"] * price_mult * rng.uniform(0.95, 1.15)
                 con.execute(

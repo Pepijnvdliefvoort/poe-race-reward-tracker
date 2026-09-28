@@ -25,7 +25,9 @@ from ML.features import SALE_WINDOW_DAYS, Snapshot
 class EstimatorParams:
     horizon_days: float = 60.0
     fee_pct: float = 0.0  # trading cost as % of the sale price
-    undercut_pct: float = 2.0  # list this far below fair value to be the cheapest seller
+    # List this far below fair value. On real data (Sep 2026) 5% beat 2% at both 30d and 60d horizons:
+    # in a thin market, a slightly lower ask sells noticeably faster.
+    undercut_pct: float = 5.0
     prior_exposure_days: float = 60.0  # weight of the market-wide sale rate for sparse items
     listing_lag_days: float = 0.5  # time to list + first buyer to notice
 
