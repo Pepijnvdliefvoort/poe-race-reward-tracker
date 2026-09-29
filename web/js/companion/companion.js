@@ -1,26 +1,23 @@
-const form = document.getElementById("companionForm");
 const widget = document.getElementById("companionWidget");
 const panel = document.getElementById("companionPanel");
 const toggleBtn = document.getElementById("companionToggle");
 const closeBtn = document.getElementById("companionClose");
-const resizeBtn = document.getElementById("companionResize");
-const headerEl = panel?.querySelector(".companion-header");
+const resizeHandle = document.getElementById("companionResize");
+const form = document.getElementById("companionForm");
 const wealthInput = document.getElementById("companionWealth");
 const currencySelect = document.getElementById("companionCurrency");
-const riskSelect = document.getElementById("companionRisk");
-const modeSelect = document.getElementById("companionMode");
 const submitBtn = document.getElementById("companionSubmit");
 const statusEl = document.getElementById("companionStatus");
 const resultsEl = document.getElementById("companionResults");
-const threadEl = panel?.querySelector(".companion-thread");
+const riskHelpEl = document.getElementById("companionRiskHelp");
 
 const PREFERENCES_STORAGE_KEY = "companion.preferences.v1";
-const TYPING_MIN_MS = 240;
-const TYPING_MAX_MS = 620;
-const FIRST_MESSAGE_TYPING_MS = 250;
-const MESSAGE_PAUSE_MS = 250;
+const WIDTH_STORAGE_KEY = "companion.width.v1";
+const MIN_WIDTH = 360;
+const MAX_WIDTH = 760;
 
-let renderSequenceId = 0;
+let requestSequence = 0;
+let hasSearched = false;
 
 const CATEGORY_HELP = {
   "Quick flip": "Expected to resell within about two weeks at the target price.",
@@ -29,682 +26,422 @@ const CATEGORY_HELP = {
   Speculative: "Very few recent sales, so the sell-time estimate leans on market-wide averages.",
 };
 
-const RISK_POLICY = {
-  safe: { deploy: 0.6, position: 0.22 },
-  balanced: { deploy: 0.75, position: 0.3 },
-  speculative: { deploy: 0.85, position: 0.4 },
-};
-
 const RISK_HELP = {
-  safe: "Safe mode only keeps items with at least two recent sales and a 50%+ chance of selling within the horizon.",
-  balanced: "Balanced mode keeps items with at least a 25% chance of selling within the horizon.",
-  speculative: "Speculative mode keeps every item with a positive expected return, including ones with almost no sales history.",
+  safe: "Only items with at least two recent sales and a 50%+ chance of selling within the horizon.",
+  balanced: "Items with at least a 25% chance of selling within the horizon.",
+  speculative: "Every item with a positive expected return, including ones with almost no sales history.",
 };
 
-function formatMirror(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "n/a";
-  return `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} mirror${n === 1 ? "" : "s"}`;
+// ---- small helpers -------------------------------------------------------------------------
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
 }
 
-function formatPercent(value) {
+function num(value) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "n/a";
-  const sign = n > 0 ? "+" : "";
-  return `${sign}${n.toFixed(1)}%`;
+  return Number.isFinite(n) ? n : null;
 }
 
-function formatMirrorDelta(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "n/a";
-  const sign = n > 0 ? "+" : "";
-  return `${sign}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} mirror${Math.abs(n) === 1 ? "" : "s"}`;
+function formatMirror(value, { unit = true } = {}) {
+  const n = num(value);
+  if (n == null) return "n/a";
+  const digits = n >= 10 ? 1 : 2;
+  const text = n.toLocaleString(undefined, { maximumFractionDigits: digits });
+  return unit ? `${text} mirror${n === 1 ? "" : "s"}` : text;
+}
+
+function formatPercent(value, digits = 1) {
+  const n = num(value);
+  if (n == null) return "n/a";
+  return `${n > 0 ? "+" : ""}${n.toFixed(digits)}%`;
+}
+
+function formatDays(value) {
+  const n = num(value);
+  if (n == null) return "n/a";
+  return n < 1.5 ? "~1 day" : `~${Math.round(n)} days`;
+}
+
+function checkedValue(name, fallback) {
+  const input = form?.querySelector(`input[name="${name}"]:checked`);
+  return input ? input.value : fallback;
+}
+
+function setChecked(name, value) {
+  const input = form?.querySelector(`input[name="${name}"][value="${CSS.escape(String(value))}"]`);
+  if (input) input.checked = true;
+}
+
+function tradeSearchUrl(rec) {
+  if (!rec.queryId) return null;
+  const league = encodeURIComponent(rec.league || "Standard");
+  return `https://www.pathofexile.com/trade/search/${league}/${encodeURIComponent(rec.queryId)}`;
 }
 
 function setStatus(message, tone = "") {
   if (!statusEl) return;
-  statusEl.textContent = message;
+  statusEl.textContent = message || "";
   statusEl.dataset.tone = tone;
 }
 
 function setLoading(isLoading) {
-  if (submitBtn) {
-    submitBtn.disabled = isLoading;
-    submitBtn.textContent = isLoading ? "Estimating..." : "Estimate";
-  }
+  if (!submitBtn) return;
+  submitBtn.disabled = isLoading;
+  submitBtn.textContent = isLoading ? "Finding picks..." : "Find picks";
 }
 
-function wait(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+function updateRiskHelp() {
+  if (riskHelpEl) riskHelpEl.textContent = RISK_HELP[checkedValue("companionRisk", "balanced")] || "";
 }
 
-function scrollThreadToBottom() {
-  if (!threadEl) return;
-  if (threadEl.scrollHeight > threadEl.clientHeight) return;
-  threadEl.scrollTop = threadEl.scrollHeight;
-}
+// ---- preferences ---------------------------------------------------------------------------
 
-function createBotMessage(text, extraClass = "") {
-  const message = document.createElement("div");
-  message.className = ["companion-message", "companion-message-bot", extraClass].filter(Boolean).join(" ");
-  message.textContent = text;
-  return message;
-}
-
-function createUserMessage(text) {
-  const message = document.createElement("div");
-  message.className = "companion-message companion-message-user";
-  message.textContent = text;
-  return message;
-}
-
-function formatCompanionChoice(value) {
-  return String(value || "")
-    .trim()
-    .replace(/[-_]+/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function summarizeUserRequest({ wealth, currency, risk, mode }) {
-  const wealthSummary = `${wealthInput?.value || wealth} ${formatCompanionChoice(currency)}`;
-  return `I have ${wealthSummary}, want a ${String(risk || "balanced").toLowerCase()} risk setup, and want ${formatCompanionChoice(mode)}.`;
-}
-
-function startConversationTurn(summary) {
-  if (!resultsEl) return;
-  resultsEl.replaceChildren(createUserMessage(summary));
-  resultsEl.hidden = false;
-  scrollThreadToBottom();
-}
-
-function createTypingMessage() {
-  const message = document.createElement("div");
-  message.className = "companion-message companion-message-bot companion-message-typing";
-  message.setAttribute("aria-hidden", "true");
-
-  for (let i = 0; i < 3; i += 1) {
-    const dot = document.createElement("span");
-    dot.className = "companion-typing-dot";
-    message.appendChild(dot);
-  }
-  return message;
-}
-
-function typingDelayForMessage(text, messageIndex = 0) {
-  const rawText = String(text || "");
-  const punctuationCount = (rawText.match(/[,:;]/g) || []).length;
-  const charDelay = Math.max(0, Math.min(rawText.length * 2, 130));
-  const punctuationDelay = Math.min(punctuationCount * 18, 54);
-  const jitter = Math.floor(Math.random() * 70);
-  const baseDelay = messageIndex === 0 ? FIRST_MESSAGE_TYPING_MS : TYPING_MIN_MS;
-  return Math.min(TYPING_MAX_MS, baseDelay + charDelay + punctuationDelay + jitter);
-}
-
-async function appendBotMessageWithTyping(text, sequenceId, extraClass = "", messageIndex = 0) {
-  if (!resultsEl) return false;
-
-  const typingMessage = createTypingMessage();
-  resultsEl.appendChild(typingMessage);
-  scrollThreadToBottom();
-
-  await wait(typingDelayForMessage(text, messageIndex));
-  if (sequenceId !== renderSequenceId) {
-    typingMessage.remove();
-    return false;
-  }
-
-  typingMessage.replaceWith(createBotMessage(text, extraClass));
-  scrollThreadToBottom();
-  await wait(MESSAGE_PAUSE_MS);
-  return sequenceId === renderSequenceId;
-}
-
-async function appendBotTopicMessages(messages, sequenceId) {
-  for (const [messageIndex, message] of messages.entries()) {
-    if (!message) continue;
-    const appended = await appendBotMessageWithTyping(message, sequenceId, "", messageIndex);
-    if (!appended) return false;
-  }
-  return sequenceId === renderSequenceId;
-}
-
-function selectHasValue(select, value) {
-  return Array.from(select.options).some((option) => option.value === value);
-}
-
-function readStoredPreferences() {
+function readJson(key) {
   try {
-    const raw = window.localStorage.getItem(PREFERENCES_STORAGE_KEY);
+    const raw = window.localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 
-function storePreferences() {
-  if (!wealthInput || !currencySelect || !riskSelect || !modeSelect) return;
-
+function writeJson(key, value) {
   try {
-    window.localStorage.setItem(
-      PREFERENCES_STORAGE_KEY,
-      JSON.stringify({
-        wealth: wealthInput.value,
-        currency: currencySelect.value,
-        risk: riskSelect.value,
-        mode: modeSelect.value,
-      }),
-    );
+    window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // Storage may be disabled; preferences are a convenience only.
+    // Storage can be unavailable; preferences are a convenience only.
   }
+}
+
+function storePreferences() {
+  writeJson(PREFERENCES_STORAGE_KEY, {
+    wealth: wealthInput?.value ?? "",
+    currency: currencySelect?.value ?? "mirror",
+    risk: checkedValue("companionRisk", "balanced"),
+    mode: checkedValue("companionMode", "ranked"),
+  });
 }
 
 function restorePreferences() {
-  if (!wealthInput || !currencySelect || !riskSelect || !modeSelect) return;
-
-  const preferences = readStoredPreferences();
-  if (!preferences || typeof preferences !== "object") return;
-
-  if (typeof preferences.wealth === "string" && preferences.wealth.trim() !== "") {
-    wealthInput.value = preferences.wealth;
+  const prefs = readJson(PREFERENCES_STORAGE_KEY);
+  if (!prefs || typeof prefs !== "object") return;
+  if (typeof prefs.wealth === "string" && prefs.wealth.trim() && wealthInput) wealthInput.value = prefs.wealth;
+  if (typeof prefs.currency === "string" && currencySelect) {
+    if (Array.from(currencySelect.options).some((o) => o.value === prefs.currency)) currencySelect.value = prefs.currency;
   }
-  if (typeof preferences.currency === "string" && selectHasValue(currencySelect, preferences.currency)) {
-    currencySelect.value = preferences.currency;
-  }
-  if (typeof preferences.risk === "string" && selectHasValue(riskSelect, preferences.risk)) {
-    riskSelect.value = preferences.risk;
-  }
-  if (typeof preferences.mode === "string" && selectHasValue(modeSelect, preferences.mode)) {
-    modeSelect.value = preferences.mode;
-  }
+  if (typeof prefs.risk === "string") setChecked("companionRisk", prefs.risk);
+  if (typeof prefs.mode === "string") setChecked("companionMode", prefs.mode);
 }
 
-function initPreferenceStorage() {
-  restorePreferences();
-  wealthInput?.addEventListener("input", storePreferences);
-  currencySelect?.addEventListener("change", storePreferences);
-  riskSelect?.addEventListener("change", storePreferences);
-  modeSelect?.addEventListener("change", storePreferences);
+// ---- drawer open / close / resize ------------------------------------------------------------
+
+function applyWidth(width) {
+  const max = Math.min(MAX_WIDTH, window.innerWidth - 40);
+  const clamped = Math.round(Math.max(MIN_WIDTH, Math.min(max, width)));
+  widget?.style.setProperty("--cp-width", `${clamped}px`);
+  return clamped;
 }
 
 function openCompanion() {
   if (!widget || !panel || !toggleBtn) return;
-  widget.classList.remove("companion-widget-collapsed");
   panel.hidden = false;
+  widget.classList.add("is-open");
   toggleBtn.setAttribute("aria-expanded", "true");
   window.requestAnimationFrame(() => wealthInput?.focus());
 }
 
 function closeCompanion() {
   if (!widget || !panel || !toggleBtn) return;
-  widget.classList.add("companion-widget-collapsed");
   panel.hidden = true;
+  widget.classList.remove("is-open");
   toggleBtn.setAttribute("aria-expanded", "false");
   toggleBtn.focus();
 }
 
-function toggleCompanion() {
-  if (!panel || panel.hidden) {
-    openCompanion();
-  } else {
-    closeCompanion();
-  }
-}
+function initResize() {
+  if (!resizeHandle || !widget) return;
+  const saved = num(readJson(WIDTH_STORAGE_KEY));
+  if (saved) applyWidth(saved);
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function initCompanionResize() {
-  if (!panel || !resizeBtn) return;
-
-  const minWidth = 320;
-  const minHeight = 360;
-  const viewportMargin = 28;
-
-  resizeBtn.addEventListener("pointerdown", (event) => {
+  resizeHandle.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    const startRect = panel.getBoundingClientRect();
-    const startX = event.clientX;
-    const startY = event.clientY;
-
-    resizeBtn.setPointerCapture?.(event.pointerId);
+    resizeHandle.setPointerCapture?.(event.pointerId);
     document.body.classList.add("companion-resizing");
-
-    const onPointerMove = (moveEvent) => {
-      const maxWidth = Math.max(minWidth, window.innerWidth - viewportMargin);
-      const maxHeight = Math.max(minHeight, window.innerHeight - viewportMargin);
-      const nextWidth = clamp(startRect.width - (moveEvent.clientX - startX), minWidth, maxWidth);
-      const nextHeight = clamp(startRect.height - (moveEvent.clientY - startY), minHeight, maxHeight);
-      panel.style.width = `${Math.round(nextWidth)}px`;
-      panel.style.height = `${Math.round(nextHeight)}px`;
-      panel.style.maxHeight = `${Math.round(maxHeight)}px`;
+    let width = null;
+    const onMove = (moveEvent) => {
+      width = applyWidth(window.innerWidth - moveEvent.clientX);
     };
-
-    const onPointerUp = () => {
+    const onUp = () => {
       document.body.classList.remove("companion-resizing");
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (width) writeJson(WIDTH_STORAGE_KEY, width);
     };
-
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   });
 
-  resizeBtn.addEventListener("dblclick", () => {
-    panel.style.width = "";
-    panel.style.height = "";
-    panel.style.maxHeight = "";
-  });
-}
-
-async function companionAuthenticated() {
-  try {
-    const response = await fetch("/api/companion/auth", { cache: "no-store" });
-    if (!response.ok) {
-      return false;
+  resizeHandle.addEventListener("dblclick", () => {
+    widget.style.removeProperty("--cp-width");
+    try {
+      window.localStorage.removeItem(WIDTH_STORAGE_KEY);
+    } catch {
+      // ignore
     }
-    const payload = await response.json();
-    return Boolean(payload.authenticated);
-  } catch {
-    return false;
-  }
+  });
 }
 
-function createMetric(label, value) {
-  const metric = document.createElement("span");
-  metric.className = "companion-metric";
+// ---- rendering -------------------------------------------------------------------------------
 
-  const metricLabel = document.createElement("span");
-  metricLabel.className = "companion-metric-label";
-  metricLabel.textContent = label;
-
-  const metricValue = document.createElement("strong");
-  metricValue.textContent = value;
-
-  metric.append(metricLabel, metricValue);
-  return metric;
+function renderSkeleton() {
+  const wrap = el("div", "companion-results");
+  for (let i = 0; i < 4; i += 1) wrap.appendChild(el("div", "companion-skeleton"));
+  resultsEl?.replaceChildren(...wrap.childNodes);
 }
 
-function createLabelHelp() {
-  const details = document.createElement("details");
-  details.className = "companion-label-help";
+function renderMessage(title, text) {
+  const box = el("div", "companion-empty");
+  box.append(el("p", "companion-empty-title", title), el("p", "", text));
+  resultsEl?.replaceChildren(box);
+}
 
-  const summary = document.createElement("summary");
-  summary.textContent = "What do the labels mean?";
+function tile(label, value, title = "") {
+  const node = el("div", "companion-tile");
+  if (title) node.title = title;
+  node.append(el("span", "companion-tile-label", label), el("span", "companion-tile-value", value));
+  return node;
+}
 
-  const list = document.createElement("dl");
-  for (const [label, description] of Object.entries(CATEGORY_HELP)) {
-    const term = document.createElement("dt");
-    term.textContent = label;
-    const detail = document.createElement("dd");
-    detail.textContent = description;
-    list.append(term, detail);
+function legend() {
+  const details = el("details", "companion-legend");
+  details.appendChild(el("summary", "", "Labels"));
+  const list = el("dl");
+  for (const [label, text] of Object.entries(CATEGORY_HELP)) {
+    const dt = el("dt");
+    dt.appendChild(tagEl(label));
+    list.append(dt, el("dd", "", text));
   }
-
-  details.append(summary, list);
+  details.appendChild(list);
   return details;
 }
 
-function createOutlookBlock(title, lines, tone = "") {
-  const block = document.createElement("div");
-  block.className = tone ? `companion-outlook companion-outlook-${tone}` : "companion-outlook";
-
-  const heading = document.createElement("strong");
-  heading.className = "companion-outlook-title";
-  heading.textContent = title;
-
-  const text = document.createElement("p");
-  text.textContent = lines.filter(Boolean).join(" ");
-
-  block.append(heading, text);
-  return block;
+function methodText(payload) {
+  const ranking = payload.ranking || {};
+  const horizon = num(ranking.horizonDays);
+  const span = horizon ? `${Math.round(horizon)}-day` : "horizon";
+  const who = ranking.modelEnabled ? "a trained model that beat the formula on past data" : "the transparent formula";
+  return `Ranked by ${who}: expected gain divided by expected days to sell, with a ${span} window.`;
 }
 
-function formatPercentWhole(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "n/a";
-  return `${Math.round(n)}%`;
-}
+function renderSummary(payload, picks) {
+  const section = el("section", "companion-summary");
+  const tiles = el("div", "companion-tiles");
+  const isPortfolio = payload.mode === "portfolio" && payload.portfolio;
 
-function buildRankingMethodSummary(payload) {
-  const ranking = payload?.ranking || {};
-  const horizon = Number(ranking.horizonDays);
-  const horizonText = Number.isFinite(horizon) ? `${Math.round(horizon)} days` : "the horizon";
-  if (ranking.modelEnabled) {
-    return `Ranked by a trained model's expected % return per day, which beat the formula on past data. Sell chances use a ${horizonText} window.`;
-  }
-  return `Ranked by expected % return per day: buy at the cheapest listing, list just under recent sale prices, and divide the expected gain by the expected days to sell (within ${horizonText}).`;
-}
+  if (isPortfolio) {
+    const plan = payload.portfolio;
+    const wealth = num(payload.wealthMirror) || 0;
+    const deployed = num(plan.deployedMirror) || 0;
+    tiles.append(
+      tile("Deployed", formatMirror(deployed, { unit: false }), `${formatMirror(deployed)} of ${formatMirror(wealth)}`),
+      tile("Cash left", formatMirror(plan.cashReserveMirror, { unit: false })),
+      tile("Positions", String(picks.length)),
+    );
+    section.appendChild(tiles);
 
-function buildRankingValueSummary(payload) {
-  const ranking = payload?.ranking || {};
-  const fee = Number(ranking.feePct);
-  const feeText = Number.isFinite(fee) && fee > 0 ? ` after a ${fee}% trading cost` : "";
-  return `A quick small gain ranks above a larger gain that takes months${feeText}.`;
-}
-
-function buildPortfolioDeploymentSummary(payload) {
-  const portfolio = payload?.portfolio || {};
-  const positions = Array.isArray(portfolio.positions) ? portfolio.positions : [];
-  const risk = String(payload?.risk || "balanced").toLowerCase();
-  const policy = RISK_POLICY[risk] || RISK_POLICY.balanced;
-  const wealthMirror = Number(payload?.wealthMirror ?? 0);
-  const targetDeploy = Number(portfolio.targetDeployedMirror ?? wealthMirror * policy.deploy);
-  const deployedMirror = Number(portfolio.deployedMirror ?? 0);
-  const cashReserveMirror = Number(portfolio.cashReserveMirror ?? 0);
-
-  let message = `I built a portfolio plan for ${formatMirror(wealthMirror)}. It deploys ${formatMirror(deployedMirror)} across ${positions.length} position${positions.length === 1 ? "" : "s"} and keeps ${formatMirror(cashReserveMirror)} liquid.`;
-
-  if (Number.isFinite(targetDeploy) && deployedMirror < targetDeploy) {
-    message += ` Target was ${formatMirror(targetDeploy)}, but more names did not clear the filters.`;
+    const deploy = el("div", "companion-deploy");
+    const bar = el("div", "companion-deploy-bar");
+    const fill = el("span");
+    fill.style.width = `${wealth > 0 ? Math.min(100, (deployed / wealth) * 100) : 0}%`;
+    bar.appendChild(fill);
+    const labels = el("div", "companion-deploy-labels");
+    labels.append(
+      el("span", "", `${Math.round((num(plan.deploymentPct) || 0) * 100)}% deployed`),
+      el("span", "", `target ${formatMirror(plan.targetDeployedMirror, { unit: false })}`),
+    );
+    deploy.append(bar, labels);
+    section.appendChild(deploy);
+  } else {
+    const best = picks.length ? num(picks[0].estimate?.returnPerDayPct) : null;
+    tiles.append(
+      tile("Picks", String(picks.length)),
+      tile("Best / day", best == null ? "n/a" : formatPercent(best, 2)),
+      tile("Budget", formatMirror(payload.wealthMirror, { unit: false }), formatMirror(payload.wealthMirror)),
+    );
+    section.appendChild(tiles);
   }
 
-  return message;
+  const method = el("div", "companion-method");
+  method.append(el("p", "", methodText(payload)), legend());
+  section.appendChild(method);
+  return section;
 }
 
-function buildPortfolioNotes(payload) {
-  const portfolio = payload?.portfolio || {};
-  const risk = String(payload?.risk || "balanced").toLowerCase();
-  const policy = RISK_POLICY[risk] || RISK_POLICY.balanced;
-  const notes = [
-    `${formatCompanionChoice(risk)} targets about ${formatPercentWhole(policy.deploy * 100)} deployed with positions capped near ${formatPercentWhole(policy.position * 100)}.`,
-  ];
-
-  const targetDeploy = Number(portfolio.targetDeployedMirror ?? 0);
-  const deployedMirror = Number(portfolio.deployedMirror ?? 0);
-  if (Number.isFinite(targetDeploy) && Number.isFinite(deployedMirror) && deployedMirror < targetDeploy) {
-    notes.push("Unused cash stays liquid because the remaining names were weaker, thinner, or too large.");
-  }
-
-  return notes;
+function tagEl(kind, text = kind) {
+  const tag = el("span", "companion-tag", text);
+  tag.dataset.kind = kind;
+  if (CATEGORY_HELP[kind]) tag.title = CATEGORY_HELP[kind];
+  return tag;
 }
 
-function createFactList(items) {
-  const facts = document.createElement("dl");
-  facts.className = "companion-facts";
+function meterEl(probability) {
+  const p = num(probability);
+  const pct = p == null ? 0 : Math.round(p * 100);
+  const meter = el("div", "companion-meter");
+  meter.dataset.level = pct >= 70 ? "high" : pct < 40 ? "low" : "mid";
+  const track = el("div", "companion-meter-track");
+  track.setAttribute("role", "img");
+  track.setAttribute("aria-label", `${pct}% chance to sell`);
+  const fill = el("span");
+  fill.style.width = `${pct}%`;
+  track.appendChild(fill);
+  meter.append(track, el("span", "", `${pct}% sells`));
+  return meter;
+}
 
-  for (const [label, value] of items) {
+function factsEl(items) {
+  const dl = el("dl", "companion-facts");
+  for (const [label, value, isText = false] of items) {
     if (!value) continue;
-    const term = document.createElement("dt");
-    term.textContent = label;
-    const detail = document.createElement("dd");
-    detail.textContent = value;
-    facts.append(term, detail);
+    const row = el("div");
+    row.append(el("dt", "", label), el("dd", isText ? "is-text" : "", value));
+    dl.appendChild(row);
   }
-
-  return facts;
+  return dl;
 }
 
-function formatPerDay(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "n/a";
-  const sign = n > 0 ? "+" : "";
-  return `${sign}${n.toFixed(2)}%/day`;
+function callout(tone, title, text) {
+  const box = el("div", `companion-callout companion-callout-${tone}`);
+  box.append(el("strong", "", title), el("span", "", text));
+  return box;
 }
 
-function formatDays(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "n/a";
-  return n < 1.5 ? "~1 day" : `~${Math.round(n)} days`;
-}
-
-function summarizeWhyPicked(rec) {
+function renderPick(rec, rank, { portfolio = false } = {}) {
   const est = rec.estimate || {};
-  const parts = [];
-  const days = Number(est.expectedDays);
-  const sold = Number(est.returnIfSoldPct);
-  const chance = Number(est.sellProbability);
+  const item = el("li");
+  const details = el("details", "companion-pick");
+  const summary = el("summary");
 
-  if (Number.isFinite(sold) && Number.isFinite(days)) {
-    parts.push(`Buy at ${formatMirror(rec.priceMirror)} and list at ${formatMirror(est.askPriceMirror)}: ${formatPercent(sold)} if it sells, expected in ${formatDays(days)}.`);
+  const img = el("div", "companion-pick-img");
+  if (rec.imagePath) {
+    const image = el("img");
+    image.src = rec.imagePath;
+    image.alt = "";
+    image.loading = "lazy";
+    img.appendChild(image);
   }
-  if (Number.isFinite(chance)) {
-    const sales = Number(est.sales90d ?? 0);
-    parts.push(`${Math.round(chance * 100)}% chance to sell within ${Math.round(Number(est.horizonDays) || 0)} days, based on ${sales} sale${sales === 1 ? "" : "s"} in 90 days.`);
+
+  const name = el("div", "companion-pick-name");
+  name.append(el("strong", "", rec.itemName || "Unknown item"), tagEl(rec.category || "Speculative"));
+  const wholeMirrors = est.plan === "mirror" ? num(est.askWholeMirrors) : null;
+  if (wholeMirrors) name.appendChild(tagEl("plan", `${wholeMirrors} mirror${wholeMirrors === 1 ? "" : "s"}`));
+
+  const rpdValue = num(est.returnPerDayPct);
+  const rpd = el("div", "companion-rpd", formatPercent(rpdValue, 2));
+  rpd.dataset.sign = rpdValue == null ? "" : rpdValue >= 0 ? "up" : "down";
+  rpd.appendChild(el("small", "", "per day"));
+
+  const line = el("div", "companion-pick-line");
+  const priceSpan = el("span");
+  priceSpan.append(el("b", "", formatMirror(rec.priceMirror, { unit: false })), document.createTextNode(" → "),
+    el("b", "", formatMirror(est.askPriceMirror, { unit: false })));
+  line.append(priceSpan, el("span", "", formatPercent(est.returnIfSoldPct)), el("span", "", formatDays(est.expectedDays)));
+  if (portfolio) {
+    line.appendChild(el("span", "", `×${rec.portfolioUnits ?? 1} = ${formatMirror(rec.portfolioAllocationMirror, { unit: false })}`));
+  }
+
+  summary.append(el("span", "companion-rank", String(rank)), img, name, rpd, line, meterEl(est.sellProbability));
+  details.appendChild(summary);
+
+  const body = el("div", "companion-details");
+  const askDivines = num(est.askDivines);
+  const planLabel = wholeMirrors
+    ? `List at exactly ${wholeMirrors} mirror${wholeMirrors === 1 ? "" : "s"}`
+    : `List in divines${askDivines ? ` at ${askDivines.toLocaleString()} div` : ""}`;
+  body.appendChild(
+    factsEl([
+      ["Plan", planLabel, true],
+      ["Fair value", formatMirror(est.fairValueMirror)],
+      ["If it sells", formatPercent(est.returnIfSoldPct)],
+      ["Expected", `${formatPercent(est.expectedReturnPct)} · ${formatDays(est.expectedDays)}`],
+      ["Queue ahead", est.queueAhead != null ? `${est.queueAhead} listing${est.queueAhead === 1 ? "" : "s"}` : null],
+      [
+        portfolio ? "Position" : "Suggested",
+        portfolio
+          ? `${rec.portfolioUnits ?? 1} × ${formatMirror(rec.priceMirror)} (${Math.round((num(rec.portfolioShare) || 0) * 100)}%)`
+          : `${rec.suggestedUnits ?? 1} unit${rec.suggestedUnits === 1 ? "" : "s"} (max ${rec.maxUnits ?? 1})`,
+      ],
+    ]),
+  );
+
+  if (Array.isArray(rec.reasons) && rec.reasons.length) {
+    const list = el("ul", "companion-reasons");
+    for (const reason of rec.reasons) list.appendChild(el("li", "", reason));
+    body.appendChild(list);
   }
   if (rec.flip?.viable) {
-    parts.push(`The ladder also has an immediate gap of ${formatMirrorDelta(rec.flip.expectedProfitMirror)}.`);
-  }
-  return parts.join(" ");
-}
-
-function buildFlipFacts(flip) {
-  if (!flip) return [];
-  if (flip.viable) {
-    return [
-      ["Buy", formatMirror(flip.buyPriceMirror)],
-      ["Relist", formatMirror(flip.relistPriceMirror)],
-      ["Gross edge", `${formatMirrorDelta(flip.expectedProfitMirror)} (${formatPercent(flip.expectedProfitPct)})`],
-      ["Setup", flip.sellCondition || flip.reason],
-    ];
-  }
-  return [
-    ["Status", flip.reason || "No clean immediate flip gap in the latest ladder."],
-    ["Next listing", flip.nextMarketPriceMirror ? formatMirror(flip.nextMarketPriceMirror) : "n/a"],
-  ];
-}
-
-function buildResaleFacts(rec) {
-  const est = rec.estimate;
-  if (!est) return [];
-  const plan = est.plan === "one_mirror" ? "Exactly 1 mirror (rare, slow buyers)" : "Just under recent sale prices";
-  return [
-    ["Plan", plan],
-    ["Fair value", formatMirror(est.fairValueMirror)],
-    ["List at", formatMirror(est.askPriceMirror)],
-    ["If sold", formatPercent(est.returnIfSoldPct)],
-    ["Expected", `${formatPercent(est.expectedReturnPct)} over ${formatDays(est.expectedDays)}`],
-  ];
-}
-
-function renderRecommendation(rec, options = {}) {
-  const { portfolio = false } = options;
-  const card = document.createElement("article");
-  card.className = portfolio ? "companion-card companion-card-portfolio" : "companion-card";
-
-  const media = document.createElement("div");
-  media.className = "companion-card-media";
-  if (rec.imagePath) {
-    const img = document.createElement("img");
-    img.src = rec.imagePath;
-    img.alt = `${rec.itemName} art`;
-    img.loading = "lazy";
-    media.appendChild(img);
-  }
-
-  const body = document.createElement("div");
-  body.className = "companion-card-body";
-
-  const headingRow = document.createElement("div");
-  headingRow.className = "companion-card-heading";
-
-  const title = document.createElement("h3");
-  title.textContent = rec.itemName || "Unknown item";
-
-  const badge = document.createElement("span");
-  badge.className = "companion-badge";
-  badge.textContent = rec.category || "Speculative";
-  badge.title = CATEGORY_HELP[badge.textContent] || "";
-
-  headingRow.append(title, badge);
-
-  const metrics = document.createElement("div");
-  metrics.className = "companion-metrics";
-  const est = rec.estimate || {};
-  const chance = Number(est.sellProbability);
-  if (portfolio) {
-    metrics.append(
-      createMetric("Units", `${rec.portfolioUnits ?? rec.suggestedUnits ?? 1}`),
-      createMetric("Position", formatMirror(rec.portfolioAllocationMirror)),
-      createMetric("Share", rec.portfolioShare == null ? "n/a" : `${Math.round(Number(rec.portfolioShare) * 100)}%`),
-      createMetric("Return/day", formatPerDay(est.returnPerDayPct)),
-      createMetric("Entry", formatMirror(rec.priceMirror)),
-    );
-  } else {
-    metrics.append(
-      createMetric("Return/day", formatPerDay(est.returnPerDayPct)),
-      createMetric("Entry", formatMirror(rec.priceMirror)),
-      createMetric("Sell in", formatDays(est.expectedDays)),
-      createMetric("Sell chance", Number.isFinite(chance) ? `${Math.round(chance * 100)}%` : "n/a"),
-      createMetric("Units", `${rec.suggestedUnits ?? 1}`),
+    body.appendChild(
+      callout("good", "Immediate ladder gap", `${rec.flip.sellCondition || rec.flip.reason} Gross ${formatPercent(rec.flip.expectedProfitPct)}.`),
     );
   }
-
-  const summary = document.createElement("p");
-  summary.className = "companion-pick-summary";
-  summary.textContent = summarizeWhyPicked(rec);
-
-  body.append(headingRow, metrics, summary);
-
-  if (rec.flip) {
-    const flip = rec.flip;
-    const block = document.createElement("div");
-    block.className = flip.viable ? "companion-outlook companion-outlook-good" : "companion-outlook companion-outlook-muted";
-
-    const heading = document.createElement("strong");
-    heading.className = "companion-outlook-title";
-    heading.textContent = flip.viable ? "Immediate flip" : "Flip setup";
-
-    block.append(heading, createFactList(buildFlipFacts(flip)));
-    body.appendChild(block);
-  }
-
-  if (rec.estimate) {
-    const block = document.createElement("div");
-    block.className = Number(rec.estimate.expectedReturnPct) > 0 ? "companion-outlook companion-outlook-good" : "companion-outlook companion-outlook-muted";
-
-    const heading = document.createElement("strong");
-    heading.className = "companion-outlook-title";
-    heading.textContent = "Resale plan";
-
-    block.append(heading, createFactList(buildResaleFacts(rec)));
-
-    if (Array.isArray(rec.reasons) && rec.reasons.length) {
-      const note = document.createElement("p");
-      note.className = "companion-outlook-note";
-      note.textContent = rec.reasons.join(" ");
-      block.appendChild(note);
-    }
-
-    body.appendChild(block);
-  }
-
-  if (portfolio && rec.portfolioReason) {
-    const portfolioReason = document.createElement("p");
-    portfolioReason.className = "companion-portfolio-reason";
-    portfolioReason.textContent = rec.portfolioReason;
-    body.appendChild(portfolioReason);
-  }
-
   if (Array.isArray(rec.warnings) && rec.warnings.length) {
-    const warnings = document.createElement("p");
-    warnings.className = "companion-warning";
-    warnings.textContent = rec.warnings.join(" ");
-    body.appendChild(warnings);
+    body.appendChild(callout("warn", "Heads up", rec.warnings.join(" ")));
+  }
+  const url = tradeSearchUrl(rec);
+  if (url) {
+    const link = el("a", "companion-trade-link", "Open trade search ↗");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    body.appendChild(link);
   }
 
-  card.append(media, body);
-  return card;
+  details.appendChild(body);
+  item.appendChild(details);
+  return item;
 }
 
-async function renderPortfolio(payload, sequenceId) {
-  if (!resultsEl) return false;
-  const portfolio = payload.portfolio;
-  const positions = Array.isArray(portfolio?.positions) ? portfolio.positions : [];
-  if (!portfolio || !positions.length) {
-    return false;
-  }
-
-  const topics = [
-    buildPortfolioDeploymentSummary(payload),
-    buildRankingMethodSummary(payload),
-    buildRankingValueSummary(payload),
-    RISK_HELP[payload.risk] || RISK_HELP.balanced,
-  ];
-  const portfolioNotes = buildPortfolioNotes(payload);
-  if (portfolioNotes.length) {
-    topics.push(portfolioNotes.join(" "));
-  }
-
-  const renderedTopics = await appendBotTopicMessages(topics, sequenceId);
-  if (!renderedTopics) {
-    return false;
-  }
-
-  resultsEl.appendChild(createLabelHelp());
-
-  for (const rec of positions) {
-    resultsEl.appendChild(renderRecommendation(rec, { portfolio: true }));
-  }
-  scrollThreadToBottom();
-  return true;
-}
-
-async function renderResults(payload, sequenceId) {
-  if (!resultsEl) return;
-
-  const recommendations = Array.isArray(payload.recommendations) ? payload.recommendations : [];
-  if (payload.mode === "portfolio" && (await renderPortfolio(payload, sequenceId))) {
-    resultsEl.hidden = false;
+function renderResults(payload) {
+  const isPortfolio = payload.mode === "portfolio";
+  const picks = isPortfolio ? payload.portfolio?.positions || [] : payload.recommendations || [];
+  if (!picks.length) {
+    const skipped = payload.skipped || {};
+    const hint = skipped.unaffordable
+      ? " Several items are above your budget; try a larger budget."
+      : skipped.risk_filtered
+        ? " Some items were filtered by the risk setting; try Speculative."
+        : "";
+    renderMessage("No picks right now", `Nothing affordable has a positive expected return at the moment.${hint}`);
     return;
   }
 
-  if (!recommendations.length) {
-    await appendBotMessageWithTyping(
-      "No affordable opportunities matched the current data. Try a larger wealth value or a different risk profile.",
-      sequenceId,
-      "companion-empty",
-    );
-    resultsEl.hidden = false;
-    return;
-  }
-
-  const topics = [
-    `I found ${recommendations.length} ranked estimate${recommendations.length === 1 ? "" : "s"} for a ${formatMirror(payload.wealthMirror)} budget.`,
-    buildRankingMethodSummary(payload),
-    buildRankingValueSummary(payload),
-    RISK_HELP[payload.risk] || RISK_HELP.balanced,
-  ];
-  const renderedTopics = await appendBotTopicMessages(topics, sequenceId);
-  if (!renderedTopics) {
-    return;
-  }
-
-  resultsEl.appendChild(createLabelHelp());
-
-  for (const rec of recommendations) {
-    resultsEl.appendChild(renderRecommendation(rec));
-  }
-  resultsEl.hidden = false;
-  scrollThreadToBottom();
+  const list = el("ol", "companion-picks");
+  picks.forEach((rec, index) => list.appendChild(renderPick(rec, index + 1, { portfolio: isPortfolio })));
+  resultsEl?.replaceChildren(renderSummary(payload, picks), list);
 }
 
-async function submitCompanion(event) {
-  event.preventDefault();
-  if (!wealthInput || !currencySelect || !riskSelect || !modeSelect) return;
+// ---- requests --------------------------------------------------------------------------------
 
-  const wealth = Number(wealthInput.value);
+async function runSearch() {
+  const wealth = Number(wealthInput?.value);
   if (!Number.isFinite(wealth) || wealth <= 0) {
-    setStatus("Enter a positive wealth value.", "error");
-    wealthInput.focus();
+    setStatus("Enter a budget above zero.", "error");
+    wealthInput?.focus();
     return;
   }
   storePreferences();
+  hasSearched = true;
 
-  const requestSummary = summarizeUserRequest({
-    wealth,
-    currency: currencySelect.value,
-    risk: riskSelect.value,
-    mode: modeSelect.value,
-  });
-  startConversationTurn(requestSummary);
-
+  const sequence = ++requestSequence;
   setLoading(true);
-  setStatus("Checking market data...", "");
-  const sequenceId = ++renderSequenceId;
+  setStatus("");
+  renderSkeleton();
 
   try {
     const response = await fetch("/api/companion/recommend", {
@@ -713,46 +450,63 @@ async function submitCompanion(event) {
       cache: "no-store",
       body: JSON.stringify({
         wealth,
-        currency: currencySelect.value,
-        risk: riskSelect.value,
-        mode: modeSelect.value,
+        currency: currencySelect?.value || "mirror",
+        risk: checkedValue("companionRisk", "balanced"),
+        mode: checkedValue("companionMode", "ranked"),
       }),
     });
-    const payload = await response.json();
+    const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload.ok === false) {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
-    if (sequenceId !== renderSequenceId) return;
-    await renderResults(payload, sequenceId);
-    if (sequenceId !== renderSequenceId) return;
-    setStatus(payload.disclaimer || "Results are estimates from inferred market data.", "ok");
+    if (sequence !== requestSequence) return;
+    renderResults(payload);
   } catch (error) {
-    if (sequenceId !== renderSequenceId) return;
-    if (resultsEl) {
-      resultsEl.hidden = true;
-      resultsEl.replaceChildren();
-    }
-    setStatus(`Companion error: ${error.message}`, "error");
+    if (sequence !== requestSequence) return;
+    renderMessage("Could not load picks", String(error?.message || error));
+    setStatus("The companion request failed.", "error");
   } finally {
-    if (sequenceId === renderSequenceId) {
-      setLoading(false);
-    }
+    if (sequence === requestSequence) setLoading(false);
+  }
+}
+
+async function companionAuthenticated() {
+  try {
+    const response = await fetch("/api/companion/auth", { cache: "no-store" });
+    if (!response.ok) return false;
+    const payload = await response.json();
+    return Boolean(payload.authenticated);
+  } catch {
+    return false;
   }
 }
 
 export function initCompanion() {
-  if (!form || !widget) return;
-  initPreferenceStorage();
-  form.addEventListener("submit", submitCompanion);
-  toggleBtn?.addEventListener("click", toggleCompanion);
-  closeBtn?.addEventListener("click", closeCompanion);
-  headerEl?.addEventListener("click", closeCompanion);
-  initCompanionResize();
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && panel && !panel.hidden) {
-      closeCompanion();
-    }
+  if (!form || !widget || !panel) return;
+  restorePreferences();
+  updateRiskHelp();
+  initResize();
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    runSearch();
   });
+  wealthInput?.addEventListener("input", storePreferences);
+  currencySelect?.addEventListener("change", storePreferences);
+  form.querySelectorAll('input[type="radio"]').forEach((input) =>
+    input.addEventListener("change", () => {
+      updateRiskHelp();
+      storePreferences();
+      if (hasSearched) runSearch(); // re-run with the new risk / view once results are on screen
+    }),
+  );
+
+  toggleBtn?.addEventListener("click", () => (panel.hidden ? openCompanion() : closeCompanion()));
+  closeBtn?.addEventListener("click", closeCompanion);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !panel.hidden) closeCompanion();
+  });
+
   companionAuthenticated().then((authenticated) => {
     if (!authenticated) return;
     widget.hidden = false;
