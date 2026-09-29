@@ -1,0 +1,185 @@
+/* Admin taskbar + app windows on the public pages (loaded by web/js/adminDock.js for admins only). */
+
+.adock {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  z-index: 2600;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 7px 10px 9px;
+  border-radius: 18px;
+  background: rgba(30, 32, 40, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: saturate(180%) blur(22px);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, 150%);
+  transition: transform 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+.adock--shown {
+  transform: translate(-50%, 0);
+}
+
+:root.light-theme .adock {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 12px 34px rgba(30, 30, 60, 0.18);
+}
+
+.adock-item {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.adock-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35), inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+  transition: transform 0.18s ease;
+}
+
+.adock-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.adock-icon--admin {
+  background: #2b2b2e;
+}
+
+.adock-icon--db {
+  background: linear-gradient(#4fd1d9, #1a9fb0);
+}
+
+.adock-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.adock-item:hover .adock-icon,
+.adock-item:focus-visible .adock-icon {
+  transform: translateY(-7px) scale(1.14);
+}
+
+.adock-item:focus-visible {
+  outline: none;
+}
+
+.adock-item:focus-visible .adock-icon {
+  box-shadow: 0 0 0 3px rgba(255, 122, 47, 0.6), 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.adock-label {
+  position: absolute;
+  bottom: calc(100% + 16px);
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(30, 30, 32, 0.92);
+  color: #fff;
+  font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.adock-item:hover .adock-label,
+.adock-item:focus-visible .adock-label {
+  opacity: 1;
+}
+
+/* Running indicator (window open or minimized) */
+.adock-dot {
+  position: absolute;
+  bottom: -6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.adock-item--running .adock-dot {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+:root.light-theme .adock-item--running .adock-dot {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+/* App window: the admin page in an iframe, floating over the current page */
+.adock-window {
+  position: fixed;
+  inset: calc(26px + var(--cascade, 0px)) 26px 92px calc(26px + var(--cascade, 0px));
+  z-index: 2400;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #1e1e20;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  transition:
+    inset 0.28s ease,
+    border-radius 0.28s ease,
+    transform 0.36s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.3s ease;
+}
+
+.adock-window[hidden] {
+  display: none;
+}
+
+.adock-window--zoomed {
+  inset: 0 0 80px;
+  border-radius: 0 0 14px 14px;
+}
+
+.adock-window--minimized {
+  transform: scale(0.04);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.38s cubic-bezier(0.55, 0, 0.75, 0),
+    opacity 0.34s ease-in;
+}
+
+.adock-window--closing {
+  transform: scale(0.94);
+  opacity: 0;
+  pointer-events: none;
+  transition-duration: 0.2s;
+}
+
+.adock-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adock,
+  .adock-window,
+  .adock-icon {
+    transition: none;
+  }
+}
+
+/* Phones: no desktop metaphor; the admin pages are still reachable directly. */
+@media (max-width: 760px) {
+  .adock,
+  .adock-window {
+    display: none;
+  }
+}

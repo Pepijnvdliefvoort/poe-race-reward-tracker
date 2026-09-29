@@ -1,41 +1,98 @@
 /**
- * macOS-style window chrome shared by the admin pages (admin.html, db.html):
- * - red: close the window (animates out, then opens the dashboard)
- * - yellow: minimize to a dock at the bottom; click the dock icon to restore
+ * macOS-style window chrome shared by the admin pages (admin.html, db.html).
+ *
+ * Standalone (opened directly at /admin or /admin/db):
+ * - red: close (animates out, then opens the dashboard)
+ * - yellow: minimize to the dashboard's admin dock (web/js/adminDock.js restores it there)
  * - green: zoom between a floating window and the full browser window (remembered);
  *   double-clicking the sidebar header does the same, like a macOS title bar
- * - the Appearance button toggles light/dark, shared with the dashboard's setting
+ *
+ * Embedded (inside a dock window on a public page, `?embedded=1`): the buttons ask the
+ * dock to close / minimize / zoom this window via postMessage, links to the other admin
+ * app open that app's window, public links navigate the whole page, and the dock tells
+ * the page when it is minimized so polling can pause.
+ *
+ * The Appearance button toggles light/dark, shared with the dashboard's setting.
  */
 
 const ZOOM_KEY = "admin.window.zoomed.v1";
 const THEME_KEY = "poe-market-theme";
-const CLOSE_TO = "/";
+const DOCK_STATE_KEY = "admin.dock.windows.v1"; // read by adminDock.js
+const MSG_TO_DOCK = "mac-window";
+const MSG_FROM_DOCK = "mac-window-state";
+const DASHBOARD = "/";
 
 function reducedMotion() {
   return !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
 }
 
-function store(key, value) {
+function store(storage, key, value) {
   try {
-    window.localStorage.setItem(key, value);
+    storage.setItem(key, value);
   } catch {
     // storage unavailable (private mode / blocked)
   }
 }
 
-export function setupMacWindow({ appName = "Admin", iconSrc = "/assets/icons/FairgravesTricorneAlt.png", onMinimizedChange } = {}) {
+function appIdForPath(pathname) {
+  return pathname.replace(/\/+$/, "") === "/admin/db" ? "db" : "admin";
+}
+
+export function setupMacWindow({ onMinimizedChange } = {}) {
   const app = document.querySelector(".mac-app");
   const root = document.documentElement;
-  let minimized = false;
-  if (!app) return { isMinimized: () => false };
+  if (!app) return;
 
+  const embedded = window.parent !== window && new URLSearchParams(window.location.search).has("embedded");
+  const thisApp = appIdForPath(window.location.pathname);
   const buttons = {
     close: app.querySelector('[data-window="close"]'),
     minimize: app.querySelector('[data-window="minimize"]'),
     zoom: app.querySelector('[data-window="zoom"]'),
   };
+  const toDock = (msg) => window.parent.postMessage({ type: MSG_TO_DOCK, ...msg }, window.location.origin);
 
-  // ---- zoom ----
+  // ---- appearance ----
+  document.getElementById("adminThemeToggle")?.addEventListener("click", () => {
+    const light = root.classList.toggle("light-theme");
+    store(window.localStorage, THEME_KEY, light ? "light" : "dark");
+  });
+
+  if (embedded) {
+    root.classList.add("mac-embedded");
+    root.classList.remove("mac-zoomed"); // the dock window owns its size
+    buttons.close?.addEventListener("click", () => toDock({ action: "close" }));
+    buttons.minimize?.addEventListener("click", () => toDock({ action: "minimize" }));
+    buttons.zoom?.addEventListener("click", () => toDock({ action: "zoom" }));
+    app.querySelector(".mac-sidebar-head")?.addEventListener("dblclick", () => toDock({ action: "zoom" }));
+    if (buttons.close) buttons.close.title = "Close window";
+    if (buttons.minimize) buttons.minimize.title = "Minimize to the dock";
+    if (buttons.zoom) buttons.zoom.title = "Zoom";
+
+    // Links: stay inside this window for this app, hand everything else to the dock.
+    app.addEventListener("click", (ev) => {
+      const a = ev.target?.closest?.("a[href]");
+      if (!a || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+      const url = new URL(a.getAttribute("href"), window.location.href);
+      if (url.origin !== window.location.origin) return;
+      ev.preventDefault();
+      if (url.pathname.startsWith("/admin")) {
+        const target = appIdForPath(url.pathname);
+        if (target === thisApp) window.location.hash = url.hash;
+        else toDock({ action: "open", app: target, hash: url.hash });
+      } else {
+        toDock({ action: "navigate", href: url.href });
+      }
+    });
+
+    window.addEventListener("message", (ev) => {
+      if (ev.origin !== window.location.origin || ev.source !== window.parent) return;
+      if (ev.data?.type === MSG_FROM_DOCK) onMinimizedChange?.(!!ev.data.minimized);
+    });
+    return;
+  }
+
+  // ---- standalone: zoom ----
   const syncZoomLabel = () => {
     const zoomed = root.classList.contains("mac-zoomed");
     buttons.zoom?.setAttribute("aria-pressed", zoomed ? "true" : "false");
@@ -43,7 +100,7 @@ export function setupMacWindow({ appName = "Admin", iconSrc = "/assets/icons/Fai
   };
   const toggleZoom = () => {
     const zoomed = root.classList.toggle("mac-zoomed");
-    store(ZOOM_KEY, zoomed ? "1" : "0");
+    store(window.localStorage, ZOOM_KEY, zoomed ? "1" : "0");
     syncZoomLabel();
     // Content that measures itself (maps, editors) needs a resize after the size change.
     window.setTimeout(() => window.dispatchEvent(new Event("resize")), 320);
@@ -52,68 +109,28 @@ export function setupMacWindow({ appName = "Admin", iconSrc = "/assets/icons/Fai
   buttons.zoom?.addEventListener("click", toggleZoom);
   app.querySelector(".mac-sidebar-head")?.addEventListener("dblclick", toggleZoom);
 
-  // ---- close ----
-  buttons.close?.addEventListener("click", () => {
-    const go = () => window.location.assign(CLOSE_TO);
+  // ---- standalone: close / minimize both lead to the dashboard ----
+  const leave = (cls, afterAnimation) => {
     if (reducedMotion()) {
-      go();
+      afterAnimation();
       return;
     }
-    app.classList.add("mac-app--closing");
-    window.setTimeout(go, 200);
-  });
-
-  // ---- minimize to dock ----
-  const dock = document.createElement("div");
-  dock.className = "mac-dock";
-  dock.hidden = true;
-  const dockBtn = document.createElement("button");
-  dockBtn.type = "button";
-  dockBtn.className = "mac-dock-item";
-  dockBtn.setAttribute("aria-label", `Restore the ${appName} window`);
-  dockBtn.title = `Restore ${appName}`;
-  const img = document.createElement("img");
-  img.src = iconSrc;
-  img.alt = "";
-  const label = document.createElement("span");
-  label.className = "mac-dock-label";
-  label.textContent = appName;
-  const dot = document.createElement("span");
-  dot.className = "mac-dock-dot";
-  dockBtn.append(img, label, dot);
-  dock.appendChild(dockBtn);
-  document.body.appendChild(dock);
-
-  const setMinimized = (on) => {
-    if (on === minimized) return;
-    minimized = on;
-    if (on) {
-      app.classList.add("mac-app--minimized");
-      app.setAttribute("aria-hidden", "true");
-      app.inert = true;
-      dock.hidden = false;
-      requestAnimationFrame(() => dock.classList.add("mac-dock--shown"));
-      dockBtn.focus({ preventScroll: true });
-    } else {
-      app.classList.remove("mac-app--minimized");
-      app.removeAttribute("aria-hidden");
-      app.inert = false;
-      dock.classList.remove("mac-dock--shown");
-      window.setTimeout(() => {
-        if (!minimized) dock.hidden = true;
-      }, 250);
-      buttons.minimize?.focus({ preventScroll: true });
-    }
-    onMinimizedChange?.(on);
+    app.classList.add(cls);
+    window.setTimeout(afterAnimation, cls === "mac-app--minimized" ? 380 : 200);
   };
-  buttons.minimize?.addEventListener("click", () => setMinimized(true));
-  dockBtn.addEventListener("click", () => setMinimized(false));
-
-  // ---- appearance ----
-  document.getElementById("adminThemeToggle")?.addEventListener("click", () => {
-    const light = root.classList.toggle("light-theme");
-    store(THEME_KEY, light ? "light" : "dark");
-  });
-
-  return { isMinimized: () => minimized };
+  buttons.close?.addEventListener("click", () => leave("mac-app--closing", () => window.location.assign(DASHBOARD)));
+  buttons.minimize?.addEventListener("click", () =>
+    leave("mac-app--minimized", () => {
+      // The dashboard's dock picks this up and shows the app minimized, ready to restore.
+      let saved = [];
+      try {
+        saved = JSON.parse(window.sessionStorage.getItem(DOCK_STATE_KEY) || "[]");
+      } catch {
+        saved = [];
+      }
+      const others = Array.isArray(saved) ? saved.filter((w) => w?.app !== thisApp) : [];
+      store(window.sessionStorage, DOCK_STATE_KEY, JSON.stringify([...others, { app: thisApp, hash: window.location.hash }]));
+      window.location.assign(DASHBOARD);
+    }),
+  );
 }

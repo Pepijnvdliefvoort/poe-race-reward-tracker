@@ -2038,7 +2038,6 @@ function setupMapResize() {
 
 function main() {
   setupMacWindow({
-    appName: "Admin",
     onMinimizedChange: (minimized) => {
       windowMinimized = minimized;
       if (!minimized && activePane) onPaneShown(activePane); // catch up on what changed

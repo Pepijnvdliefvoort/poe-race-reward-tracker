@@ -1,6 +1,6 @@
 import { setupMacWindow } from "./core/macWindow.js";
 
-setupMacWindow({ appName: "DB explorer" });
+setupMacWindow();
 
 const fetchOpts = { credentials: "same-origin" };
 

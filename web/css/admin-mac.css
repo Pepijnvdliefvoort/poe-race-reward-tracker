@@ -420,85 +420,13 @@ a.mac-nav-item[aria-current="page"] {
   background: transparent;
 }
 
-.mac-dock {
-  position: fixed;
-  left: 50%;
-  bottom: 14px;
-  z-index: 2000;
-  padding: 7px 9px 9px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  backdrop-filter: saturate(180%) blur(24px);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
-  transform: translate(-50%, 140%);
-  transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
-}
-
-.mac-dock--shown {
-  transform: translate(-50%, 0);
-}
-
-.mac-dock-item {
-  position: relative;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-
-.mac-dock-item img {
-  width: 54px;
-  height: 54px;
-  border-radius: 13px;
-  object-fit: cover;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-  transition: transform 0.18s ease;
-}
-
-.mac-dock-item:hover img,
-.mac-dock-item:focus-visible img {
-  transform: translateY(-6px) scale(1.12);
-}
-
-.mac-dock-label {
-  position: absolute;
-  bottom: calc(100% + 14px);
-  padding: 3px 9px;
-  border-radius: 6px;
-  background: rgba(30, 30, 32, 0.9);
-  color: #fff;
-  font-size: 12px;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s;
-}
-
-.mac-dock-item:hover .mac-dock-label,
-.mac-dock-item:focus-visible .mac-dock-label {
-  opacity: 1;
-}
-
-.mac-dock-dot {
-  position: absolute;
-  bottom: -6px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85);
-}
-
-:root.light-theme .mac-dock {
-  background: rgba(255, 255, 255, 0.5);
-  border-color: rgba(255, 255, 255, 0.7);
-}
-
-:root.light-theme .mac-dock-dot {
-  background: rgba(0, 0, 0, 0.6);
+/* Embedded in a dock window on a public page: the dock window provides frame and size. */
+:root.mac-embedded .mac-app {
+  height: 100vh;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+  transition: none;
 }
 
 .mac-banner {
@@ -1267,8 +1195,7 @@ th[aria-sort="descending"] .admin-table-sort::after { content: " ▼"; font-size
 /* ---------- small screens: sidebar becomes a top bar ---------- */
 
 @media (prefers-reduced-motion: reduce) {
-  .mac-app,
-  .mac-dock {
+  .mac-app {
     transition: none;
   }
 }
@@ -1285,8 +1212,7 @@ th[aria-sort="descending"] .admin-table-sort::after { content: " ▼"; font-size
     box-shadow: none;
   }
 
-  .mac-traffic-lights,
-  .mac-dock {
+  .mac-traffic-lights {
     display: none;
   }
 
