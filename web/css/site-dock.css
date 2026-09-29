@@ -53,14 +53,19 @@ body.has-site-dock {
   cursor: pointer;
 }
 
-.adock-icon--dashboard { background: linear-gradient(#ffa15c, #ff7a2f); }
-.adock-icon--compare { background: linear-gradient(#3b9bff, #0a6cff); }
-.adock-icon--aa-ladder { background: linear-gradient(#c17dff, #8e44ec); }
-.adock-icon--alt-arts { background: linear-gradient(#ff6fa0, #e63d76); }
+/* App icons are full-tile images (web/assets/apps/*.svg); the dark fill only shows while loading. */
+.adock-icon--dashboard,
+.adock-icon--compare,
+.adock-icon--aa-ladder,
+.adock-icon--alt-arts,
+.adock-icon--admin,
+.adock-icon--db {
+  background: #120e0b;
+}
 
 /* Current page: lit icon + accent dot (the running dot is reused for admin apps). */
 .adock-item--page[aria-current="page"] .adock-icon {
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 4px 14px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 2px rgba(255, 196, 110, 0.9), 0 0 14px rgba(255, 150, 60, 0.45), 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
 .adock-item--page[aria-current="page"] .adock-dot {
@@ -69,7 +74,7 @@ body.has-site-dock {
 }
 
 .adock-item--page:not([aria-current="page"]) .adock-icon {
-  filter: saturate(0.85) brightness(0.95);
+  filter: saturate(0.8) brightness(0.9);
 }
 
 /* Utility: the page's theme toggle, adopted into the dock. */
@@ -90,14 +95,12 @@ body.has-site-dock {
   transform: none;
 }
 
+/* Same stone-and-gold tile as the app icons. */
 .adock-icon--theme {
   font-size: 22px;
   line-height: 1;
-  background: linear-gradient(#5a5f73, #2f3342);
-}
-
-:root.light-theme .adock-icon--theme {
-  background: linear-gradient(#fff3d6, #ffd98a);
+  background: radial-gradient(circle at 50% 38%, #3b2f27, #17120f 55%, #080605);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 0 0 1.5px rgba(212, 162, 74, 0.85);
 }
 
 /* Admin section: divider + tinted group, only rendered for an authenticated admin. */
@@ -151,7 +154,7 @@ body.has-site-dock {
   height: 48px;
   overflow: hidden;
   border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35), inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   transition: transform 0.18s ease;
 }
 
@@ -159,14 +162,6 @@ body.has-site-dock {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-
-.adock-icon--admin {
-  background: #2b2b2e;
-}
-
-.adock-icon--db {
-  background: linear-gradient(#4fd1d9, #1a9fb0);
 }
 
 .adock-icon svg {

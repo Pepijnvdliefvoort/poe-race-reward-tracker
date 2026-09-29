@@ -17,32 +17,13 @@ const MSG_TO_APP = "mac-window-state";
 
 const svg = (paths) => `<svg viewBox="0 0 20 20" aria-hidden="true">${paths}</svg>`;
 
-// Public pages (links); icons drawn white on a coloured tile.
+// Public pages (links). Icons: web/assets/apps/*.svg (PoE-style tiles, one per app).
+const ICON_DIR = "/assets/apps";
 const PAGES = [
-  {
-    id: "dashboard",
-    name: "Dashboard",
-    href: "/",
-    svg: svg('<rect x="3" y="3" width="6" height="6" rx="1.3" fill="#fff"/><rect x="11" y="3" width="6" height="6" rx="1.3" fill="#fff"/><rect x="3" y="11" width="6" height="6" rx="1.3" fill="#fff"/><rect x="11" y="11" width="6" height="6" rx="1.3" fill="#fff"/>'),
-  },
-  {
-    id: "compare",
-    name: "Compare",
-    href: "/compare",
-    svg: svg('<path d="M4 16V9M8 16V4M12 16v-6M16 16V7" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>'),
-  },
-  {
-    id: "aa-ladder",
-    name: "AA ladder",
-    href: "/aa-ladder",
-    svg: svg('<path d="M3 17h4v-4h4V9h4V5h2" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
-  },
-  {
-    id: "alt-arts",
-    name: "Alt arts",
-    href: "/alt-arts",
-    svg: svg('<rect x="3" y="4" width="14" height="12" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/><circle cx="8" cy="8.5" r="1.6" fill="#fff"/><path d="M4 15l4-4 3 3 2-2 3 3" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>'),
-  },
+  { id: "dashboard", name: "Dashboard", href: "/" },
+  { id: "compare", name: "Compare", href: "/compare" },
+  { id: "aa-ladder", name: "AA ladder", href: "/aa-ladder" },
+  { id: "alt-arts", name: "Alt arts", href: "/alt-arts" },
 ];
 
 function currentPageId() {
@@ -56,13 +37,8 @@ function isPhone() {
 }
 
 const APPS = [
-  { id: "admin", name: "Admin", path: "/admin", img: "/assets/icons/FairgravesTricorneAlt.png" },
-  {
-    id: "db",
-    name: "DB explorer",
-    path: "/admin/db",
-    svg: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M3 8h14M8 8v8" fill="none" stroke="#fff" stroke-width="1.6"/></svg>',
-  },
+  { id: "admin", name: "Admin", path: "/admin" },
+  { id: "db", name: "DB explorer", path: "/admin/db" },
 ];
 
 const windows = new Map(); // app id -> { el, frame, state: "open" | "minimized", zoomed, hash }
@@ -264,19 +240,16 @@ function onAppMessage(ev) {
   }
 }
 
-function dockItem({ tag, className, label, iconClass, img, svgMarkup }) {
+function dockItem({ tag, className, label, iconClass, img }) {
   const item = document.createElement(tag);
   item.className = className;
   const icon = document.createElement("span");
   icon.className = `adock-icon ${iconClass}`;
-  if (img) {
-    const image = document.createElement("img");
-    image.src = img;
-    image.alt = "";
-    icon.appendChild(image);
-  } else {
-    icon.innerHTML = svgMarkup;
-  }
+  const image = document.createElement("img");
+  image.src = img;
+  image.alt = "";
+  image.draggable = false;
+  icon.appendChild(image);
   const text = document.createElement("span");
   text.className = "adock-label";
   text.textContent = label;
@@ -297,7 +270,7 @@ function renderDock() {
       className: "adock-item adock-item--page",
       label: page.name,
       iconClass: `adock-icon--${page.id}`,
-      svgMarkup: page.svg,
+      img: `${ICON_DIR}/${page.id}.svg`,
     });
     link.href = page.href;
     if (page.id === current) link.setAttribute("aria-current", "page");
@@ -354,8 +327,7 @@ function renderAdminSection() {
       className: "adock-item",
       label: app.name,
       iconClass: `adock-icon--${app.id}`,
-      img: app.img,
-      svgMarkup: app.svg,
+      img: `${ICON_DIR}/${app.id}.svg`,
     });
     btn.type = "button";
     btn.dataset.app = app.id;

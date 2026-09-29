@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs>
+<radialGradient id="bg" cx="50%" cy="38%" r="78%"><stop offset="0" stop-color="#3b2f27"/><stop offset=".55" stop-color="#17120f"/><stop offset="1" stop-color="#080605"/></radialGradient>
+<radialGradient id="glow" cx="50%" cy="52%" r="46%"><stop offset="0" stop-color="#ff6a2b" stop-opacity=".62"/><stop offset=".6" stop-color="#ff6a2b" stop-opacity=".16"/><stop offset="1" stop-color="#ff6a2b" stop-opacity="0"/></radialGradient>
+<linearGradient id="gold" gradientUnits="userSpaceOnUse" x1="0" y1="6" x2="0" y2="58"><stop offset="0" stop-color="#fbe6a6"/><stop offset=".45" stop-color="#d4a24a"/><stop offset="1" stop-color="#7a5220"/></linearGradient>
+<linearGradient id="goldh" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fbe6a6"/><stop offset=".45" stop-color="#d4a24a"/><stop offset="1" stop-color="#7a5220"/></linearGradient>
+<pattern id="grain" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><path d="M0 0h4" stroke="#fff" stroke-opacity=".035" stroke-width="1"/></pattern>
+<radialGradient id="ember" cx="40%" cy="35%" r="70%"><stop offset="0" stop-color="#fff1c2"/><stop offset=".45" stop-color="#ff7a2f"/><stop offset="1" stop-color="#9c1d08"/></radialGradient>
+</defs>
+<rect width="64" height="64" rx="14" fill="url(#bg)"/>
+<rect width="64" height="64" rx="14" fill="url(#grain)"/>
+<rect width="64" height="64" rx="14" fill="url(#glow)"/>
+<rect x="3.5" y="3.5" width="57" height="57" rx="11" fill="none" stroke="url(#gold)" stroke-width="1.6"/>
+<rect x="6.2" y="6.2" width="51.6" height="51.6" rx="8.6" fill="none" stroke="#f0cf86" stroke-opacity=".2" stroke-width=".8"/>
+<path d="M32 1.2l2.6 2.3-2.6 2.3-2.6-2.3zM32 58.2l2.6 2.3-2.6 2.3-2.6-2.3zM1.2 32l2.3-2.6 2.3 2.6-2.3 2.6zM58.2 32l2.3-2.6 2.3 2.6-2.3 2.6z" fill="url(#gold)"/>
+
+<g transform="rotate(-45 32 32)">
+<circle cx="17" cy="32" r="8.4" fill="none" stroke="url(#gold)" stroke-width="3.8"/>
+<circle cx="17" cy="32" r="4" fill="url(#ember)"/>
+<path d="M25.6 32H52" stroke="url(#gold)" stroke-width="4.2" stroke-linecap="round"/>
+<path d="M29 27.8v8.4M32.4 28.8v6.4" stroke="url(#gold)" stroke-width="1.8"/>
+<path d="M41.5 33.5h3.8v8h-3.8zM47.8 33.5h3.8v5.6h-3.8z" fill="url(#gold)"/>
+</g>
+
+</svg>

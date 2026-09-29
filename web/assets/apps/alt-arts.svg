@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs>
+<radialGradient id="bg" cx="50%" cy="38%" r="78%"><stop offset="0" stop-color="#3b2f27"/><stop offset=".55" stop-color="#17120f"/><stop offset="1" stop-color="#080605"/></radialGradient>
+<radialGradient id="glow" cx="50%" cy="52%" r="46%"><stop offset="0" stop-color="#ff6fb0" stop-opacity=".62"/><stop offset=".6" stop-color="#ff6fb0" stop-opacity=".16"/><stop offset="1" stop-color="#ff6fb0" stop-opacity="0"/></radialGradient>
+<linearGradient id="gold" gradientUnits="userSpaceOnUse" x1="0" y1="6" x2="0" y2="58"><stop offset="0" stop-color="#fbe6a6"/><stop offset=".45" stop-color="#d4a24a"/><stop offset="1" stop-color="#7a5220"/></linearGradient>
+<linearGradient id="goldh" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fbe6a6"/><stop offset=".45" stop-color="#d4a24a"/><stop offset="1" stop-color="#7a5220"/></linearGradient>
+<pattern id="grain" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><path d="M0 0h4" stroke="#fff" stroke-opacity=".035" stroke-width="1"/></pattern>
+<linearGradient id="art" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5fa2"/><stop offset=".5" stop-color="#8a5cff"/><stop offset="1" stop-color="#3fd6ff"/></linearGradient>
+</defs>
+<rect width="64" height="64" rx="14" fill="url(#bg)"/>
+<rect width="64" height="64" rx="14" fill="url(#grain)"/>
+<rect width="64" height="64" rx="14" fill="url(#glow)"/>
+<rect x="3.5" y="3.5" width="57" height="57" rx="11" fill="none" stroke="url(#gold)" stroke-width="1.6"/>
+<rect x="6.2" y="6.2" width="51.6" height="51.6" rx="8.6" fill="none" stroke="#f0cf86" stroke-opacity=".2" stroke-width=".8"/>
+<path d="M32 1.2l2.6 2.3-2.6 2.3-2.6-2.3zM32 58.2l2.6 2.3-2.6 2.3-2.6-2.3zM1.2 32l2.3-2.6 2.3 2.6-2.3 2.6zM58.2 32l2.3-2.6 2.3 2.6-2.3 2.6z" fill="url(#gold)"/>
+
+<rect x="15.5" y="15.5" width="33" height="35" rx="2" fill="url(#art)" stroke="url(#gold)" stroke-width="3.2"/>
+<path d="M18 44l8.5-10 5.5 6 4-4.5L46 46v2.8H18z" fill="#1a0f1f" fill-opacity=".45"/>
+<path d="M32 21.5l1.6 4.3 4.4 1.6-4.4 1.6-1.6 4.3-1.6-4.3-4.4-1.6 4.4-1.6z" fill="#fff"/>
+<path d="M50 9.5l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z" fill="#ffe6a8"/>
+<path d="M20 45L44 19" stroke="#fff" stroke-opacity=".22" stroke-width="3"/>
+
+</svg>
