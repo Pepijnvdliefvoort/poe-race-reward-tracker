@@ -368,6 +368,13 @@ function showPane(name, { updateHash = true } = {}) {
 function setupPanes() {
   document.querySelectorAll(".mac-nav-item").forEach((btn) => {
     btn.addEventListener("click", () => showPane(btn.dataset.pane));
+    const head = document.querySelector(`.mac-pane[data-pane="${btn.dataset.pane}"] .mac-pane-head`);
+    const icon = btn.querySelector(".mac-nav-icon");
+    if (head && icon && !head.querySelector(".mac-pane-icon")) {
+      const big = icon.cloneNode(true);
+      big.classList.add("mac-pane-icon");
+      head.prepend(big);
+    }
   });
   window.addEventListener("hashchange", () => showPane(paneFromLocation(), { updateHash: false }));
   document.addEventListener("visibilitychange", () => {
@@ -799,13 +806,32 @@ function renderStatsCards(payload) {
   const swap = payload?.system?.swap || {};
   const net = payload?.system?.net || {};
 
+  // Percent tiles get a meter: green below 60%, orange below 85%, red above.
+  const meter = (pct) => {
+    if (!Number.isFinite(pct)) return "";
+    const level = pct >= 85 ? "high" : pct >= 60 ? "mid" : "low";
+    const width = Math.max(2, Math.min(100, pct));
+    return `<span class="mac-meter" data-level="${level}"><i style="width:${width.toFixed(1)}%"></i></span>`;
+  };
   const cards = [
-    { key: "cpu", k: "CPU", v: `${formatPercent(cpu.percent)}` },
-    { key: "uptime", k: "Uptime", v: formatUptimeFromBootMs(payload?.system?.bootTimeMs) },
-    { key: "ram", k: "RAM", v: `${formatPercent(mem.usedPercent)} · ${formatBytesMb(mem.usedMb)} / ${formatBytesMb(mem.totalMb)}` },
-    { key: "sinceDeploy", k: "Since deploy", v: formatSinceDeployFromDeployTimeMs(payload?.app?.deployTimeMs) },
-    { key: "swap", k: "Swap", v: `${formatPercent(swap.usedPercent)} · ${formatBytesMb(swap.usedMb)} / ${formatBytesMb(swap.totalMb)}` },
-    { key: "net", k: "Network I/O", v: `${formatBytesMb(net.rxMb)} ↓ / ${formatBytesMb(net.txMb)} ↑` },
+    { key: "cpu", k: "CPU", v: formatPercent(cpu.percent), sub: "Processor load", pct: cpu.percent },
+    {
+      key: "ram",
+      k: "Memory",
+      v: formatPercent(mem.usedPercent),
+      sub: `${formatBytesMb(mem.usedMb)} of ${formatBytesMb(mem.totalMb)}`,
+      pct: mem.usedPercent,
+    },
+    {
+      key: "swap",
+      k: "Swap",
+      v: formatPercent(swap.usedPercent),
+      sub: `${formatBytesMb(swap.usedMb)} of ${formatBytesMb(swap.totalMb)}`,
+      pct: swap.usedPercent,
+    },
+    { key: "uptime", k: "Uptime", v: formatUptimeFromBootMs(payload?.system?.bootTimeMs), sub: "Since the server booted" },
+    { key: "sinceDeploy", k: "Last deploy", v: formatSinceDeployFromDeployTimeMs(payload?.app?.deployTimeMs), sub: "Time since the app started" },
+    { key: "net", k: "Network", v: `${formatBytesMb(net.rxMb)} ↓`, sub: `${formatBytesMb(net.txMb)} ↑ sent` },
   ];
 
   grid.innerHTML = cards
@@ -813,11 +839,12 @@ function renderStatsCards(payload) {
       (c) => `
     <div class="admin-stats-card admin-stats-card--${escapeHtml(c.key)}">
       <p class="admin-stats-k">${escapeHtml(c.k)}</p>
-      <p class="admin-stats-v"><strong>${escapeHtml(c.v)}</strong></p>
+      <p class="admin-stats-v">${escapeHtml(c.v)}</p>
+      <p class="admin-stats-sub">${escapeHtml(c.sub || "")}</p>
+      ${meter(c.pct)}
     </div>`,
     )
     .join("");
-
 }
 
 async function refreshStats() {

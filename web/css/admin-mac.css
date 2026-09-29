@@ -4,8 +4,13 @@
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
 
-  --bg: #1e1e20;
-  --sidebar: rgba(44, 44, 47, 0.78);
+  --wallpaper:
+    radial-gradient(60% 70% at 12% 8%, rgba(255, 122, 47, 0.42), transparent 60%),
+    radial-gradient(55% 60% at 92% 90%, rgba(42, 183, 191, 0.38), transparent 62%),
+    radial-gradient(50% 55% at 70% 18%, rgba(124, 77, 255, 0.3), transparent 60%),
+    linear-gradient(160deg, #141722, #0b0d12);
+  --bg: rgba(30, 30, 33, 0.9);
+  --sidebar: rgba(40, 40, 44, 0.62);
   --group: #2b2b2e;
   --group-hover: #333337;
   --sep: rgba(255, 255, 255, 0.08);
@@ -13,7 +18,7 @@
   --ink: #f5f5f7;
   --ink-soft: #a1a1a6;
   --ink-faint: #6e6e73;
-  --accent: #0a84ff;
+  --accent: #ff7a2f;
   --accent-ink: #ffffff;
   --fill: rgba(255, 255, 255, 0.1);
   --fill-strong: rgba(255, 255, 255, 0.16);
@@ -24,13 +29,20 @@
   --term-bar: #2a2a2d;
   --term-ink: #d7d7db;
   --shadow: 0 20px 50px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
-  --focus: 0 0 0 3px rgba(10, 132, 255, 0.45);
+  --focus: 0 0 0 3px rgba(255, 122, 47, 0.45);
+  --window-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --group-shine: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   color-scheme: dark;
 }
 
 :root.light-theme {
-  --bg: #f5f5f7;
-  --sidebar: rgba(232, 232, 236, 0.82);
+  --wallpaper:
+    radial-gradient(60% 70% at 10% 6%, rgba(255, 154, 98, 0.55), transparent 60%),
+    radial-gradient(55% 60% at 92% 92%, rgba(94, 214, 220, 0.5), transparent 62%),
+    radial-gradient(50% 55% at 72% 16%, rgba(170, 140, 255, 0.42), transparent 60%),
+    linear-gradient(160deg, #f3f0ff, #e7f4f7);
+  --bg: rgba(246, 246, 248, 0.94);
+  --sidebar: rgba(236, 236, 240, 0.7);
   --group: #ffffff;
   --group-hover: #f7f7f9;
   --sep: rgba(0, 0, 0, 0.08);
@@ -38,7 +50,7 @@
   --ink: #1d1d1f;
   --ink-soft: #6e6e73;
   --ink-faint: #a1a1a6;
-  --accent: #007aff;
+  --accent: #f26b1d;
   --fill: rgba(0, 0, 0, 0.05);
   --fill-strong: rgba(0, 0, 0, 0.09);
   --ok: #28a745;
@@ -47,6 +59,8 @@
   --term-bg: #1c1c1e;
   --term-bar: #e6e6ea;
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  --window-shadow: 0 30px 80px rgba(40, 30, 80, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  --group-shine: none;
   color-scheme: light;
 }
 
@@ -58,7 +72,7 @@ html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background: var(--wallpaper) fixed;
   color: var(--ink);
   font: 13px/1.45 var(--font);
   -webkit-font-smoothing: antialiased;
@@ -96,22 +110,37 @@ a {
 .mac-app {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
-  min-height: 100vh;
+  height: calc(100vh - 44px);
+  margin: 22px;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--window-shadow);
 }
 
 .mac-sidebar {
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  position: relative;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 18px 10px 12px;
+  padding: 14px 10px 12px;
   background: var(--sidebar);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(28px);
+  -webkit-backdrop-filter: saturate(180%) blur(28px);
   border-right: 1px solid var(--stroke);
   overflow-y: auto;
+}
+
+/* Window traffic lights (decorative) */
+.mac-sidebar::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin: 2px 8px 16px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow: 20px 0 #febc2e, 40px 0 #28c840;
 }
 
 .mac-sidebar-head {
@@ -237,7 +266,36 @@ a {
 
 .mac-main {
   min-width: 0;
-  padding: 28px 36px 60px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 30px 38px 60px;
+  background: var(--bg);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+}
+
+/* Slim overlay-style scrollbars, like macOS */
+.mac-main,
+.mac-sidebar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--fill-strong) transparent;
+}
+
+.mac-main::-webkit-scrollbar,
+.mac-sidebar::-webkit-scrollbar {
+  width: 11px;
+}
+
+.mac-main::-webkit-scrollbar-thumb,
+.mac-sidebar::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background: var(--fill-strong) padding-box;
+}
+
+.mac-main::-webkit-scrollbar-track,
+.mac-sidebar::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .mac-banner {
@@ -266,7 +324,32 @@ a {
 }
 
 .mac-pane-head {
-  margin-bottom: 18px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.mac-pane-head > :not(.mac-pane-icon) {
+  grid-column: 2;
+}
+
+.mac-pane-icon {
+  grid-row: 1 / span 2;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28), inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+}
+
+.mac-pane-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.mac-pane-head--row > div {
+  grid-row: 1 / span 2;
 }
 
 .mac-pane-head h1 {
@@ -317,6 +400,7 @@ a {
   border: 1px solid var(--stroke);
   border-radius: 11px;
   overflow: hidden;
+  box-shadow: var(--group-shine), 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .mac-group + .mac-group {
@@ -602,26 +686,73 @@ input[type="checkbox"] {
 }
 
 .admin-stats-card {
-  padding: 11px 13px;
-  border-radius: 9px;
-  background: var(--fill);
+  --tile: #8e8e93;
+  position: relative;
+  padding: 12px 14px 13px;
+  border-radius: 10px;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--tile) 14%, transparent), var(--fill) 70%);
+  border: 1px solid color-mix(in srgb, var(--tile) 22%, transparent);
 }
 
+.admin-stats-card--cpu { --tile: #0a84ff; }
+.admin-stats-card--ram { --tile: #bf5af2; }
+.admin-stats-card--swap { --tile: #40c8e0; }
+.admin-stats-card--uptime { --tile: #30d158; }
+.admin-stats-card--sinceDeploy { --tile: #ff9f0a; }
+.admin-stats-card--net { --tile: #ff375f; }
+
 .admin-stats-k {
-  margin: 0 0 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
   color: var(--ink-soft);
   font-size: 11.5px;
+  font-weight: 600;
+}
+
+.admin-stats-k::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tile);
+  box-shadow: 0 0 8px var(--tile);
 }
 
 .admin-stats-v {
   margin: 0;
-  font-size: 13px;
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 
-.admin-stats-v strong {
-  font-weight: 600;
+.admin-stats-sub {
+  margin: 1px 0 0;
+  color: var(--ink-soft);
+  font-size: 11.5px;
 }
+
+.mac-meter {
+  display: block;
+  height: 4px;
+  margin-top: 9px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+
+.mac-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ok);
+  transition: width 0.4s ease;
+}
+
+.mac-meter[data-level="mid"] i { background: var(--warn); }
+.mac-meter[data-level="high"] i { background: var(--error); }
 
 /* ---------- log window (terminal) ---------- */
 
@@ -725,7 +856,7 @@ input[type="checkbox"] {
 }
 
 .admin-pill[aria-pressed="true"] {
-  background: rgba(10, 132, 255, 0.9);
+  background: rgba(255, 122, 47, 0.92);
   color: #fff;
 }
 
@@ -760,7 +891,7 @@ input[type="checkbox"] {
 }
 
 .admin-console {
-  height: clamp(320px, calc(100vh - 290px), 900px);
+  height: clamp(320px, calc(100vh - 340px), 900px);
   margin: 0;
   padding: 10px 12px 14px;
   overflow: auto;
@@ -802,7 +933,7 @@ input[type="checkbox"] {
   padding: 0 12px;
   border: 0;
   border-radius: 13px;
-  background: rgba(10, 132, 255, 0.95);
+  background: rgba(255, 122, 47, 0.95);
   color: #fff;
   font: 500 12px var(--font);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
@@ -935,10 +1066,26 @@ th[aria-sort="descending"] .admin-table-sort::after { content: " ▼"; font-size
 @media (max-width: 760px) {
   .mac-app {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100vh;
+    margin: 0;
+    border-radius: 0;
+    overflow: visible;
+    box-shadow: none;
+  }
+
+  .mac-sidebar::before {
+    display: none;
+  }
+
+  .mac-main {
+    height: auto;
+    overflow: visible;
   }
 
   .mac-sidebar {
     position: sticky;
+    top: 0;
     z-index: 1000;
     height: auto;
     flex-direction: row;
