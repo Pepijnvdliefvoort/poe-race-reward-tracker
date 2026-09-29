@@ -28,10 +28,16 @@ def _to_mb(value_bytes: float | int | None) -> float | None:
 
 
 _CPU_SAMPLE_SECONDS = 5.0
+_CPU_FIRST_SAMPLE_SECONDS = 0.5  # quick first reading so the stats never start empty
 _cpu_lock = threading.Lock()
 _cpu_latest: float | None = None
 _cpu_latest_at_s: float | None = None
 _cpu_thread_started = False
+
+
+def start_cpu_sampler() -> None:
+    """Start the background CPU sampler (called at server startup; safe to call again)."""
+    _ensure_cpu_sampler_started()
 
 
 def _ensure_cpu_sampler_started() -> None:
@@ -44,11 +50,14 @@ def _ensure_cpu_sampler_started() -> None:
 
     def worker() -> None:
         global _cpu_latest, _cpu_latest_at_s
-        # Prime psutil's internal counters.
+        # A short first sample, then the regular 5-second rhythm.
         try:
-            psutil.cpu_percent(interval=None)
+            first = float(psutil.cpu_percent(interval=_CPU_FIRST_SAMPLE_SECONDS))
         except Exception:
-            pass
+            first = None
+        with _cpu_lock:
+            _cpu_latest = first
+            _cpu_latest_at_s = time.time()
 
         while True:
             try:

@@ -1346,3 +1346,267 @@ th[aria-sort="descending"] .admin-table-sort::after { content: " ▼"; font-size
     height: 60vh;
   }
 }
+
+/* ---------- confirmation sheet (slides down from the window's top edge) ---------- */
+
+.mac-app {
+  position: relative;
+}
+
+.mac-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  background: rgba(0, 0, 0, 0);
+  transition: background 0.18s ease;
+}
+
+body > .mac-sheet-backdrop {
+  position: fixed;
+}
+
+.mac-sheet-backdrop--shown {
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.mac-sheet {
+  width: min(420px, calc(100% - 32px));
+  padding: 22px 22px 16px;
+  border-radius: 0 0 14px 14px;
+  border: 1px solid var(--stroke);
+  border-top: 0;
+  background: var(--group);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  text-align: center;
+  transform: translateY(-110%);
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.mac-sheet--shown {
+  transform: translateY(0);
+}
+
+.mac-sheet-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 10px;
+  border-radius: 12px;
+  background: linear-gradient(#3b9bff, #0a6cff);
+  color: #fff;
+  font: 700 22px var(--font);
+}
+
+.mac-sheet--destructive .mac-sheet-icon {
+  background: linear-gradient(#ff6b5f, #e5322a);
+}
+
+.mac-sheet-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.mac-sheet-text {
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.mac-sheet-require {
+  display: block;
+  margin: 12px 0 4px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-align: left;
+}
+
+.mac-sheet-require strong {
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.mac-sheet-input {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-top: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 7px;
+  background: var(--fill);
+  color: var(--ink);
+  font: 13px var(--mono);
+}
+
+.mac-sheet-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus);
+}
+
+.mac-sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.mac-sheet-actions .admin-btn {
+  min-width: 88px;
+}
+
+.admin-btn-destructive {
+  background: var(--error);
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mac-sheet,
+  .mac-sheet-backdrop {
+    transition: none;
+  }
+}
+
+/* ---------- toasts ---------- */
+
+.mac-toasts {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.mac-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 10px 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  background: color-mix(in srgb, var(--group) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.35);
+  color: var(--ink);
+  font: 12.5px/1.45 var(--font);
+  pointer-events: auto;
+  transform: translateX(calc(100% + 24px));
+  transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.mac-toast--shown {
+  transform: translateX(0);
+}
+
+.mac-toast-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #fff;
+  font: 700 11px var(--font);
+}
+
+.mac-toast--error .mac-toast-icon { background: var(--error); }
+.mac-toast--info .mac-toast-icon { background: #0a84ff; }
+
+.mac-toast-text {
+  flex: 1 1 auto;
+  padding-top: 1px;
+  overflow-wrap: anywhere;
+}
+
+.mac-toast-close {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ---------- config editor states ---------- */
+
+.admin-json-editor.is-invalid {
+  border-color: var(--error);
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.22);
+}
+
+#marketCfgSaveBtn.is-dirty::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ---------- log tools ---------- */
+
+.mac-window-bar-actions {
+  display: flex;
+  justify-self: end;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.mac-switch--pause input:checked + .mac-switch-track {
+  background: var(--warn);
+}
+
+.mac-window.is-paused .mac-window-bar::after {
+  content: "Paused";
+  position: absolute;
+  left: 50%;
+  top: 42px;
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  border-radius: 0 0 8px 8px;
+  background: var(--warn);
+  color: #1c1c1e;
+  font: 600 11px var(--font);
+}
+
+.mac-window {
+  position: relative;
+}
+
+.mac-log-tool {
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #a1a1a6;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mac-log-tool:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #f5f5f7;
+}
+
+.log-match {
+  border-radius: 3px;
+  background: rgba(255, 214, 10, 0.32);
+  color: inherit;
+  box-shadow: 0 0 0 1px rgba(255, 214, 10, 0.4);
+}

@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="./css/variables.css" />
     <link rel="stylesheet" href="./css/layout.css" />
     <link rel="stylesheet" href="./css/filters.css" />
+    <link rel="stylesheet" href="./css/toolbar.css" />
     <link rel="stylesheet" href="./css/companion.css" />
     <link rel="stylesheet" href="./css/animations.css" />
     <link rel="stylesheet" href="./css/cards.css" />
@@ -23,7 +24,8 @@
     <link rel="icon" type="image/png" href="./assets/icons/FairgravesTricorneAlt.png" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
     <script type="module" src="./js/app.js" defer></script>
-    <script type="module" src="/js/adminDock.js"></script>
+    <link rel="stylesheet" href="/css/site-dock.css?v=20260930-7" />
+    <script type="module" src="/js/siteDock.js"></script>
   </head>
   <body>
     <div class="bg-orb bg-orb-a" aria-hidden="true"></div>
@@ -36,22 +38,6 @@
       </div>
       <div class="topbar-right">
         <div class="topbar-actions">
-          <nav class="topbar-nav" aria-label="Tools">
-            <a href="/" class="topbar-nav-link" aria-current="page">Dashboard</a>
-            <a href="/compare" class="topbar-nav-link">Compare</a>
-            <a href="/aa-ladder" class="topbar-nav-link">AA ladder</a>
-            <a href="/alt-arts" class="topbar-nav-link">Alt arts</a>
-          </nav>
-          <button
-            id="filtersMenuBtn"
-            class="filters-menu-btn"
-            title="Open filters"
-            aria-label="Open filters and sorting options"
-            aria-controls="filtersOverlay"
-            aria-expanded="false"
-          >
-            ☰
-          </button>
           <button id="themeToggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
             <span class="theme-icon">🌙</span>
           </button>
@@ -65,64 +51,140 @@
     </header>
 
     <main>
-      <div class="search-row">
-        <div class="filter-group main-search-group">
-          <div class="search-label-row">
-            <label for="searchInput">Search</label>
-            <span class="search-regex-info-wrap">
-              <button
-                type="button"
-                class="search-regex-info-btn"
-                aria-label="Regex search examples"
-                aria-describedby="searchRegexHelp"
-              >
-                <span class="search-regex-info-icon" aria-hidden="true">i</span>
-              </button>
-              <div id="searchRegexHelp" class="search-regex-tooltip" role="tooltip">
-                <p class="search-regex-tooltip-lead">
-                  Supports regex like PoE stash tab: <code>im</code> (case-insensitive, line
-                  <code>^</code>/<code>$</code>). Only <strong>item names</strong> are matched here.
-                  Use spaces around <code>|</code> for OR (e.g. <code>Tabula | Headhunter</code>); a compact <code>|</code> is
-                  alternation inside one regex.
-                </p>
-                <ul class="search-regex-examples">
-                  <li>
-                    <code>Storm|Presence</code>
-                    <span class="search-regex-hint">one pattern: <code>|</code> means OR (no quotes)</span>
-                  </li>
-                  <li>
-                    <code>"Demigod's Stride"|"Demigod's Immortality"</code>
-                    <span class="search-regex-hint">quotes to include spaces in the name</span>
-                  </li>
-                  <li>
-                    <code>"Talisman" "normal"</code>
-                    <span class="search-regex-hint">space-separated quoted parts all match the name (AND)</span>
-                  </li>
-                  <li>
-                    <code>^The </code>
-                    <span class="search-regex-hint">names starting with “The ”</span>
-                  </li>
-                  <li>
-                    <code>!Tabula</code>
-                    <span class="search-regex-hint">not matching names with <code>!</code> (negates)</span>
-                  </li>
-                </ul>
-              </div>
-            </span>
-          </div>
-          <div class="search-input-wrap">
-            <input
-              type="text"
-              id="searchInput"
-              placeholder="Filter by name..."
-              enterkeyhint="done"
-            />
-            <button type="button" id="searchClearBtn" class="search-clear-btn" aria-label="Clear search" title="Clear search">
-              &times;
+      <section class="dash-toolbar" aria-label="Search, sort and filters">
+        <div class="dash-search">
+          <svg class="dash-search-icon" viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2" />
+            <path d="M13 13l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          <input type="text" id="searchInput" placeholder="Search items…" enterkeyhint="done" aria-label="Search items" />
+          <button type="button" id="searchClearBtn" class="search-clear-btn" aria-label="Clear search" title="Clear search">
+            &times;
+          </button>
+          <span class="search-regex-info-wrap">
+            <button
+              type="button"
+              class="search-regex-info-btn"
+              aria-label="Regex search examples"
+              aria-describedby="searchRegexHelp"
+            >
+              <span class="search-regex-info-icon" aria-hidden="true">i</span>
             </button>
-          </div>
+            <div id="searchRegexHelp" class="search-regex-tooltip" role="tooltip">
+              <p class="search-regex-tooltip-lead">
+                Supports regex like PoE stash tab: <code>im</code> (case-insensitive, line
+                <code>^</code>/<code>$</code>). Only <strong>item names</strong> are matched here.
+                Use spaces around <code>|</code> for OR (e.g. <code>Tabula | Headhunter</code>); a compact <code>|</code> is
+                alternation inside one regex.
+              </p>
+              <ul class="search-regex-examples">
+                <li>
+                  <code>Storm|Presence</code>
+                  <span class="search-regex-hint">one pattern: <code>|</code> means OR (no quotes)</span>
+                </li>
+                <li>
+                  <code>"Demigod's Stride"|"Demigod's Immortality"</code>
+                  <span class="search-regex-hint">quotes to include spaces in the name</span>
+                </li>
+                <li>
+                  <code>"Talisman" "normal"</code>
+                  <span class="search-regex-hint">space-separated quoted parts all match the name (AND)</span>
+                </li>
+                <li>
+                  <code>^The </code>
+                  <span class="search-regex-hint">names starting with “The ”</span>
+                </li>
+                <li>
+                  <code>!Tabula</code>
+                  <span class="search-regex-hint">not matching names with <code>!</code> (negates)</span>
+                </li>
+              </ul>
+            </div>
+          </span>
         </div>
-      </div>
+
+        <div class="dash-controls">
+          <label class="dash-field">
+            <span class="dash-field-label">Sort</span>
+            <select id="sortBy">
+              <option value="">Default order</option>
+              <option value="price-desc">Price: high → low</option>
+              <option value="price-asc">Price: low → high</option>
+              <option value="trend-high">Trend: rising first</option>
+              <option value="trend-low">Trend: falling first</option>
+              <option value="sold-high">Most sold first</option>
+              <option value="sold-low">Least sold first</option>
+            </select>
+          </label>
+
+          <div class="dash-field" title="Period for the charts, trend and est. sold">
+            <span class="dash-field-label" id="periodLabel">Period</span>
+            <div class="dash-seg" role="radiogroup" aria-labelledby="periodLabel">
+              <button type="button" role="radio" data-period="1w">1W</button>
+              <button type="button" role="radio" data-period="1m">1M</button>
+              <button type="button" role="radio" data-period="3m">3M</button>
+              <button type="button" role="radio" data-period="6m">6M</button>
+              <button type="button" role="radio" data-period="all">All</button>
+              <button type="button" role="radio" data-period="custom">Custom</button>
+            </div>
+            <div id="chartTimespanCustomWrap" class="dash-custom-period" hidden>
+              <input
+                type="number"
+                id="chartTimespanAmount"
+                min="1"
+                step="1"
+                value="3"
+                aria-label="Custom period amount"
+              />
+              <select id="chartTimespanUnit" aria-label="Custom period unit">
+                <option value="day">days</option>
+                <option value="week">weeks</option>
+                <option value="month" selected>months</option>
+              </select>
+            </div>
+          </div>
+
+          <button type="button" id="favoritesOnly" class="dash-chip" aria-pressed="false" title="Show only your favorites">
+            <span aria-hidden="true">★</span> Favorites
+          </button>
+
+          <div class="dash-popover-wrap">
+            <button
+              type="button"
+              id="priceFilterBtn"
+              class="dash-chip"
+              aria-expanded="false"
+              aria-controls="pricePopover"
+              title="Filter by price"
+            >
+              Price <span id="priceFilterValue" class="dash-chip-value"></span>
+              <span class="dash-chip-caret" aria-hidden="true">▾</span>
+            </button>
+            <div id="pricePopover" class="dash-popover" role="dialog" aria-label="Price range" hidden>
+              <div class="range-label-row">
+                <span>Price range</span>
+                <span class="range-values">
+                  <input type="number" id="priceRangeMinLabel" class="range-num-input" min="0" max="100" step="1" value="0" aria-label="Minimum price" />
+                  <span class="range-sep">&ndash;</span>
+                  <input type="number" id="priceRangeMaxLabel" class="range-num-input" min="0" max="100" step="1" value="100" aria-label="Maximum price" /><span class="range-at-cap" id="rangeAtCap">+</span>
+                  <span class="range-unit">mirrors</span>
+                </span>
+              </div>
+              <div class="range-control">
+                <div class="range-slider-wrap">
+                  <div class="range-bg">
+                    <div class="range-fill" id="rangeFill"></div>
+                  </div>
+                  <input type="range" id="priceRangeMin" min="0" max="100" step="1" value="0" aria-label="Minimum price" />
+                  <input type="range" id="priceRangeMax" min="0" max="100" step="1" value="100" aria-label="Maximum price" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button type="button" id="resetFiltersBtn" class="dash-reset" title="Clear search, sort and filters" hidden>Reset</button>
+        </div>
+      </section>
       <section class="cards" id="cards"></section>
     </main>
 
@@ -220,96 +282,6 @@
       </aside>
     </div>
 
-    <div id="filtersOverlay" class="filters-overlay" aria-hidden="true">
-      <aside class="filters-drawer" role="dialog" aria-modal="true" aria-labelledby="filtersDrawerTitle">
-        <div class="filters-drawer-header">
-          <button id="filtersCloseBtn" class="filters-drawer-close" aria-label="Close filters">&times;</button>
-          <h2 id="filtersDrawerTitle">Filters &amp; Sorting</h2>
-        </div>
-        <div class="filters-panel">
-          <div class="filter-group">
-            <label for="priceSort">Price</label>
-            <select id="priceSort">
-              <option value="">None</option>
-              <option value="desc">Highest First</option>
-              <option value="asc">Lowest First</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label for="trendSort">Trend</label>
-            <select id="trendSort">
-              <option value="">None</option>
-              <option value="highest">Highest Trend</option>
-              <option value="lowest">Lowest Trend</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label for="soldSort">Est. sold</label>
-            <select id="soldSort">
-              <option value="">None</option>
-              <option value="high">Most sold first</option>
-              <option value="low">Least sold first</option>
-            </select>
-          </div>
-          <div class="filter-group filter-group-checkbox">
-            <label for="favoritesOnly">Favorites</label>
-            <label class="checkbox-row" for="favoritesOnly">
-              <input type="checkbox" id="favoritesOnly" />
-              Favorites only
-            </label>
-          </div>
-          <div class="filter-group filter-group-range">
-            <div class="range-label-row">
-              <span>Price Range</span>
-              <span class="range-values">
-                <input type="number" id="priceRangeMinLabel" class="range-num-input" min="0" max="100" step="1" value="0" />
-                <span class="range-sep">&ndash;</span>
-                <input type="number" id="priceRangeMaxLabel" class="range-num-input" min="0" max="100" step="1" value="100" /><span class="range-at-cap" id="rangeAtCap">+</span>
-                <span class="range-unit">mirror(s)</span>
-              </span>
-            </div>
-            <div class="range-control">
-              <div class="range-slider-wrap">
-                <div class="range-bg">
-                  <div class="range-fill" id="rangeFill"></div>
-                </div>
-                <input type="range" id="priceRangeMin" min="0" max="100" step="1" value="0" />
-                <input type="range" id="priceRangeMax" min="0" max="100" step="1" value="100" />
-              </div>
-            </div>
-          </div>
-          <div class="filter-group filter-group-timespan">
-            <label for="chartTimespanPreset">Chart period</label>
-            <select id="chartTimespanPreset">
-              <option value="1w">1 week</option>
-              <option value="1m">1 month</option>
-              <option value="3m">3 months</option>
-              <option value="6m">6 months</option>
-              <option value="all" selected>All time</option>
-              <option value="custom">Custom</option>
-            </select>
-            <div id="chartTimespanCustomWrap" class="chart-timespan-custom-wrap" hidden>
-              <input
-                type="number"
-                id="chartTimespanAmount"
-                class="chart-timespan-amount"
-                min="1"
-                step="1"
-                value="3"
-                aria-label="Custom chart period amount"
-              />
-              <select id="chartTimespanUnit" aria-label="Custom chart period unit">
-                <option value="day">day(s)</option>
-                <option value="week">week(s)</option>
-                <option value="month" selected>month(s)</option>
-              </select>
-            </div>
-          </div>
-          <button id="resetFiltersBtn" class="reset-filters-btn" title="Clear all filters">Reset Filters</button>
-          <button id="applyFiltersBtn" class="apply-filters-btn" title="Apply filters">Apply</button>
-        </div>
-      </aside>
-    </div>
 
     <footer class="site-footer">
       <p>

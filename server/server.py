@@ -10,6 +10,7 @@ install_structured_logging("server", "server.log")
 
 from .http_handler import create_server
 from . import http_handler as _http_handler_mod
+from .stats_service import start_cpu_sampler
 from .storage_service import ServerStorage
 
 HOST = "127.0.0.1"
@@ -17,6 +18,7 @@ PORT = 8080
 
 
 def main() -> None:
+    start_cpu_sampler()  # so the admin stats have a CPU value from the first request
     server = create_server(HOST, PORT)
     print(f"Using handler module: {_http_handler_mod.__file__}")
     print(f"Serving dashboard at http://{HOST}:{PORT}")

@@ -2,21 +2,6 @@
   background: transparent;
 }
 
-.page-alt-arts .topbar-actions-filters-gap {
-  display: none;
-  box-sizing: border-box;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
-}
-
-@media (max-width: 1024px) {
-  .page-alt-arts .topbar-actions-filters-gap {
-    display: block;
-    margin-right: auto;
-  }
-}
-
 .alt-arts-panel {
   margin: 18px auto 8px;
 }
