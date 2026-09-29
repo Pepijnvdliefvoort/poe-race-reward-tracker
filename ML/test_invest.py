@@ -233,13 +233,32 @@ class EstimatorTests(unittest.TestCase):
         self.assertLessEqual(est.expected_days, params.horizon_days + params.listing_lag_days + 1e-9)
 
     def test_listings_ahead_of_us_slow_the_sale(self) -> None:
-        alone = estimate(_snap(divine_ladder=(10.0,)))
-        behind_wall = estimate(_snap(divine_ladder=(10.0, 10.5, 11.0, 11.0)))
+        behind = EstimatorParams(front_of_queue=False)
+        alone = estimate(_snap(divine_ladder=(10.0,)), behind)
+        behind_wall = estimate(_snap(divine_ladder=(10.0, 10.5, 11.0, 11.0)), behind)
         self.assertEqual(behind_wall.queue_ahead, 3)
         self.assertGreater(behind_wall.expected_days, alone.expected_days)
         # Whole-mirror listings worth <= our ask are shown first too; pricier ones are not.
-        with_mirrors = estimate(_snap(divine_ladder=(10.0,), mirror_listings=((11, 2), (30, 5))))
+        with_mirrors = estimate(_snap(divine_ladder=(10.0,), mirror_listings=((11, 2), (30, 5))), behind)
         self.assertEqual(with_mirrors.queue_ahead, 2)
+
+    def test_ask_is_anchored_on_current_listings(self) -> None:
+        # Past sales say 12 (ask 11.4), but another copy is listed at 10.5: list just under it.
+        est = estimate(_snap(divine_ladder=(10.0, 10.5, 11.0)))
+        self.assertLess(est.ask_price, 10.5)
+        self.assertGreater(est.ask_price, 10.45)
+        self.assertEqual(est.queue_ahead, 0)
+        # A whole-mirror listing at 10 means our divine copy can't be listed above it: no profit.
+        self.assertLessEqual(estimate(_snap(divine_ladder=(10.0,), mirror_listings=((10, 1),))).return_per_day, 0.0)
+        # Edge of Madness: bought at 10, other copies at 10, 11, 11. Listing at 13 mirrors (past sales
+        # at 13) would sit behind three cheaper copies, so it is not offered.
+        edge = _snap(
+            entry_price=10.0, listing_anchor=None, sale_anchor=None, fair_value=10.0, sales_30d=0, sales_90d=0,
+            recent_sale_prices=(), mirror_listings=((10, 2), (11, 2), (20, 1)), entry_whole_mirrors=10,
+            mirror_sale_amounts=(13, 13, 15, 13, 11, 10, 10, 12, 13, 10), market_mirror_rate_per_day=0.04,
+        )
+        self.assertLessEqual(estimate(edge).return_per_day, 0.0)
+        self.assertEqual(estimate(edge, EstimatorParams(front_of_queue=False)).ask_whole_mirrors, 13)
 
     def test_unsold_listings_at_similar_price_slow_the_sale(self) -> None:
         on = EstimatorParams(use_listing_evidence=True)

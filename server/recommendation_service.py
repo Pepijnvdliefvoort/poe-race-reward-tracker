@@ -275,12 +275,21 @@ def _reasons(snap: Snapshot, est: Estimate, params: EstimatorParams) -> list[str
             f"Buy at {snap.entry_price:.2f} and list at exactly {k} mirror{'s' if k != 1 else ''}: "
             f"{est.return_if_sold * 100:+.0f}% if a mirror buyer takes it "
             f"({est.sales_at_or_above_ask_90d} of {n_mirror} whole-mirror sale{'s' if n_mirror != 1 else ''} in 90 days were at "
-            f"{k}+ mirrors; {est.queue_ahead} other listing{'s' if est.queue_ahead != 1 else ''} at <= {k} mirrors)."
+            f"{k}+ mirrors; "
+            + (
+                f"{est.queue_ahead} other listing{'s' if est.queue_ahead != 1 else ''} at exactly {k} mirrors, buyers pick among them at random)."
+                if est.queue_ahead
+                else f"no other listing at {k} mirrors or less)."
+            )
         )
     else:
         reasons.append(
             f"Buy at {snap.entry_price:.2f}, list at {est.ask_price:.2f}: {est.return_if_sold * 100:+.1f}% if it sells"
-            + (f" ({est.queue_ahead} listing{'s' if est.queue_ahead != 1 else ''} at or below your price ahead of yours)." if est.queue_ahead else ".")
+            + (
+                f" ({est.queue_ahead} listing{'s' if est.queue_ahead != 1 else ''} at or below your price ahead of yours)."
+                if est.queue_ahead
+                else " (yours would be the cheapest listing)."
+            )
         )
     reasons.append(
         f"About {est.expected_days:.0f} days to sell at that price "

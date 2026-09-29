@@ -65,6 +65,12 @@ class EstimatorParams:
     # on the Sep 2026 production DB the 1-mirror plan predicted a 10% sell chance where 1.6% sold
     # (3 of 192 item-weeks). Those sales count at this weight. Items worth more were calibrated.
     premium_mirror_sale_weight: float = 0.15
+    # Anchor the ask on what is listed now: never list behind a cheaper competing copy. The divine ask
+    # is at most just under the cheapest competing listing; a whole-mirror ask at most the cheapest
+    # competing whole-mirror price (ties allowed: buyers pick among equal ones at random). Past sales
+    # still cap the ask (fair value) and set how fast buyers come. Prices drop in this market, and a
+    # copy behind cheaper ones mostly waits for them.
+    front_of_queue: bool = True
 
 
 @dataclass(frozen=True)
@@ -167,8 +173,32 @@ def _finish(
     )
 
 
+FRONT_STEP = 0.002  # how far under the cheapest competing listing a divine ask goes (~1 div at 500 div)
+
+
+def _competing_divine(snap: Snapshot) -> list[float]:
+    """Divine-channel listings other than the one we buy."""
+    ladder = list(snap.divine_ladder)
+    return ladder[1:] if snap.entry_whole_mirrors == 0 and ladder else ladder
+
+
+def _competing_whole(snap: Snapshot) -> list[tuple[int, int]]:
+    """Whole-mirror listings ((k, count), ...) other than the one we buy."""
+    out = []
+    for k, c in snap.mirror_listings:
+        if k == snap.entry_whole_mirrors:
+            c -= 1
+        if c > 0:
+            out.append((k, c))
+    return out
+
+
 def _undercut_plan(snap: Snapshot, params: EstimatorParams) -> Estimate:
     ask = snap.fair_value * (1.0 - max(0.0, params.undercut_pct) / 100.0)
+    if params.front_of_queue:
+        cheapest = min(_competing_divine(snap) + [float(k) for k, _ in _competing_whole(snap)], default=None)
+        if cheapest is not None:
+            ask = min(ask, cheapest * (1.0 - FRONT_STEP))
     n90 = snap.sales_90d
     n_at_ask = sum(1 for p in snap.recent_sale_prices if p >= ask - 1e-9)
 
@@ -253,7 +283,10 @@ def estimate(snap: Snapshot, params: EstimatorParams = EstimatorParams()) -> Est
     best = _undercut_plan(snap, params)
     # No whole-mirror sales anywhere means no evidence that mirror buyers exist.
     if params.consider_mirror_plan and (snap.mirror_sale_amounts or snap.market_mirror_rate_per_day > 0):
+        max_k = min((k for k, _ in _competing_whole(snap)), default=None) if params.front_of_queue else None
         for k in mirror_candidates(snap):
+            if max_k is not None and k > max_k:
+                continue
             alt = _mirror_plan(snap, params, k)
             if alt.return_per_day > best.return_per_day:
                 best = alt
