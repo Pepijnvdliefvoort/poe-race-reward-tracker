@@ -1,8 +1,9 @@
-import { updateAllCards } from "./cards.js";
+import { syncNextInLineClasses, updateAllCards } from "./cards.js";
 import { getFilteredAndSortedItems, hasActiveFilters } from "./filters.js";
 import { initPriceRangeSlider } from "./priceRange.js";
 import { fetchPricesPayload } from "../core/pricesFetch.js";
 import { dom, state } from "../core/state.js";
+import { fetchPollStatus } from "../core/pollStatus.js";
 import { formatTime } from "../core/utils.js";
 
 /**
@@ -52,6 +53,16 @@ export function getNextInLineItemName(items) {
         }
     }
 
+    // /api/prices is cached server-side (~60s) while the poller moves on every ~30s, so prefer
+    // the fresher /api/poll-status result when it is at least as new as the prices payload.
+    const live = state.latestPoll;
+    if (live && live.time >= latestTime) {
+        const liveItem = items.find((it) => it.itemName === live.itemName);
+        if (liveItem) {
+            latestItem = liveItem;
+        }
+    }
+
     // If no item has been polled yet, start with the first one (lowest sortOrder)
     if (latestItem === null) {
         const first = items.reduce((min, it) =>
@@ -85,6 +96,58 @@ export function getNextInLineItemName(items) {
 }
 
 /**
+ * Recompute next-in-line and move the green border if it changed.
+ */
+function updateNextInLine() {
+    const nextName = getNextInLineItemName(state.currentItems);
+    if (nextName === state.nextInLineItemName) {
+        return;
+    }
+    state.nextInLineItemName = nextName;
+    if (hasActiveFilters()) {
+        // Filters always keep the next-in-line item visible, so the filtered set may change.
+        applyFiltersAndRender();
+    }
+    syncNextInLineClasses();
+}
+
+/**
+ * Poll the lightweight /api/poll-status endpoint so the green border tracks the poller
+ * closely, and refresh the divine:mirror ratio shown in the topbar.
+ */
+export async function refreshPollStatus() {
+    let status;
+    try {
+        status = await fetchPollStatus();
+    } catch {
+        return; // Transient; the next tick (or the full refresh) will catch up.
+    }
+    renderMirrorRatio(status?.divinesPerMirror);
+
+    const poll = status?.latestPoll;
+    const time = poll?.requestedAtUtc ? Date.parse(poll.requestedAtUtc) : NaN;
+    if (!poll?.itemName || !Number.isFinite(time)) {
+        return;
+    }
+    state.latestPoll = { itemName: poll.itemName, time };
+    if (state.currentItems.length) {
+        updateNextInLine();
+    }
+}
+
+function renderMirrorRatio(ratio) {
+    const el = dom.mirrorRatio;
+    if (!el) return;
+    const value = Number(ratio);
+    if (!Number.isFinite(value) || value <= 0) {
+        el.hidden = true;
+        return;
+    }
+    dom.mirrorRatioValue.textContent = String(Math.round(value));
+    el.hidden = false;
+}
+
+/**
  * Set the status indicator (color and message).
  */
 export function setStatus(stateName, text) {
@@ -106,8 +169,7 @@ export function render(payload) {
     }
 
     // Recalculate next-in-line from FRESH data before any sorting/filtering
-    const nextName = getNextInLineItemName(state.currentItems);
-    state.nextInLineItemName = nextName;
+    state.nextInLineItemName = getNextInLineItemName(state.currentItems);
 
     initPriceRangeSlider();
     document.dispatchEvent(new CustomEvent("dashboard:price-range"));
@@ -118,6 +180,7 @@ export function render(payload) {
         const reordered = getFilteredAndSortedItems(state.currentItems);
         updateAllCards(reordered, applyFiltersAndRender);
     }
+    syncNextInLineClasses();
 }
 
 /**

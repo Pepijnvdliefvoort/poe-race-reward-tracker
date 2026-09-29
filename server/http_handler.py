@@ -457,6 +457,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
         if "/api/admin/visitor-map" in request_line:
             return
+        # High-frequency dashboard heartbeat; logging it would drown out everything else.
+        if "/api/poll-status" in request_line:
+            return
         # Use stdout so it stays INFO-level in captured logs.
         #
         # BaseHTTPRequestHandler calls log_message('"%s" %s %s', requestline, code, size)
@@ -1090,6 +1093,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/config":
             payload = load_config()
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            self._send_json_body(200, body)
+            return
+
+        if parsed.path == "/api/poll-status":
+            # Uncached (unlike /api/prices) so the dashboard can track the poller in near real time.
+            payload = ServerStorage().latest_poll_status()
             body = json.dumps(payload, allow_nan=False).encode("utf-8")
             self._send_json_body(200, body)
             return
