@@ -68,6 +68,20 @@ export function setupMacWindow({ onMinimizedChange } = {}) {
     store(window.localStorage, THEME_KEY, light ? "light" : "dark");
   });
 
+  // Escape closes the window, like the red button. Keys pressed inside an embedded window never
+  // reach the dock's own listener, so each app handles it. A focused field gets Escape first
+  // (clears/blurs it); the next press closes.
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape" || ev.defaultPrevented || ev.repeat || ev.isComposing) return;
+    const target = ev.target;
+    if (target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {
+      target.blur?.();
+      return;
+    }
+    if (document.querySelector("dialog[open]")) return;
+    buttons.close?.click();
+  });
+
   if (embedded) {
     root.classList.add("mac-embedded");
     root.classList.remove("mac-zoomed"); // the dock window owns its size
