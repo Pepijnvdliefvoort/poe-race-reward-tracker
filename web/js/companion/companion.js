@@ -339,7 +339,8 @@ function renderPick(rec, rank, { portfolio = false } = {}) {
 
   const name = el("div", "companion-pick-name");
   name.append(el("strong", "", rec.itemName || "Unknown item"), tagEl(rec.category || "Speculative"));
-  if (est.plan === "one_mirror") name.appendChild(tagEl("plan", "1 mirror"));
+  const wholeMirrors = est.plan === "mirror" ? num(est.askWholeMirrors) : null;
+  if (wholeMirrors) name.appendChild(tagEl("plan", `${wholeMirrors} mirror${wholeMirrors === 1 ? "" : "s"}`));
 
   const rpdValue = num(est.returnPerDayPct);
   const rpd = el("div", "companion-rpd", formatPercent(rpdValue, 2));
@@ -359,7 +360,10 @@ function renderPick(rec, rank, { portfolio = false } = {}) {
   details.appendChild(summary);
 
   const body = el("div", "companion-details");
-  const planLabel = est.plan === "one_mirror" ? "Exactly 1 mirror" : "Undercut recent sales";
+  const askDivines = num(est.askDivines);
+  const planLabel = wholeMirrors
+    ? `List at exactly ${wholeMirrors} mirror${wholeMirrors === 1 ? "" : "s"}`
+    : `List in divines${askDivines ? ` at ${askDivines.toLocaleString()} div` : ""}`;
   body.appendChild(
     factsEl([
       ["Plan", planLabel, true],
