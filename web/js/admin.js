@@ -16,6 +16,7 @@
 })();
 
 import { setupMacWindow } from "./core/macWindow.js";
+import { confirmSheet, formatWhen, toast } from "./core/macUi.js";
 
 const fetchOpts = { credentials: "same-origin" };
 
@@ -261,12 +262,12 @@ function renderVisitorTable(data) {
     .map((row) => {
       const ip = String(row?.ip || "");
       const visits = Number(row?.visits) || 0;
-      const lastSeen = row?.lastSeen ? formatLocalDateTime(row.lastSeen) : "—";
+      const lastSeen = formatWhen(row?.lastSeen);
       return `
         <tr data-visitor-ip="${escapeHtml(ip)}">
           <td>${escapeHtml(ip)}</td>
           <td>${escapeHtml(visits)}</td>
-          <td>${escapeHtml(lastSeen)}</td>
+          <td title="${escapeHtml(lastSeen.title)}">${escapeHtml(lastSeen.text)}</td>
         </tr>`;
     })
     .join("");
@@ -472,7 +473,54 @@ class LogViewer {
       }, 250);
     });
     this.toolbarEl.appendChild(input);
+
+    const tool = (label, title, onClick) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mac-log-tool";
+      b.textContent = label;
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.addEventListener("click", onClick);
+      this.toolbarEl.appendChild(b);
+    };
+    tool("⧉", `Copy the visible ${this.name}.log lines`, () => void this.copyVisible());
+    tool("↓", `Download the visible ${this.name}.log lines`, () => this.downloadVisible());
     this._syncPressed();
+  }
+
+  visibleText() {
+    return this.placeholder ? "" : this.preEl?.textContent || "";
+  }
+
+  async copyVisible() {
+    const text = this.visibleText();
+    if (!text) {
+      toast("Nothing to copy.", { kind: "info" });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(`Copied ${this.lineCount} ${this.name}.log line${this.lineCount === 1 ? "" : "s"}.`);
+    } catch {
+      toast("Copy failed: clipboard access was blocked.", { kind: "error" });
+    }
+  }
+
+  downloadVisible() {
+    const text = this.visibleText();
+    if (!text) {
+      toast("Nothing to download.", { kind: "info" });
+      return;
+    }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    a.download = `${this.name}-${stamp}.log`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   _setupJump() {
@@ -528,11 +576,27 @@ class LogViewer {
 
   _fragment(entries) {
     const frag = document.createDocumentFragment();
+    const q = this.query.trim();
+    // Highlight what the filter matched (case-insensitive, like the server-side filter).
+    const re = q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi") : null;
     for (const entry of entries) {
       const { level, text } = logLineParts(entry);
       const span = document.createElement("span");
       if (level !== "info") span.className = `log-line--${level}`;
-      span.textContent = `${text}\n`;
+      if (re) {
+        let last = 0;
+        for (const m of text.matchAll(re)) {
+          if (m.index > last) span.appendChild(document.createTextNode(text.slice(last, m.index)));
+          const mark = document.createElement("mark");
+          mark.className = "log-match";
+          mark.textContent = m[0];
+          span.appendChild(mark);
+          last = m.index + m[0].length;
+        }
+        span.appendChild(document.createTextNode(`${text.slice(last)}\n`));
+      } else {
+        span.textContent = `${text}\n`;
+      }
       frag.appendChild(span);
     }
     return frag;
@@ -598,6 +662,7 @@ let serverLogViewer;
 let pollerLogViewer;
 let logRefreshTick = 0;
 let logRefreshInFlight = false;
+let logsPaused = false;
 let logRefreshQueued = false;
 
 function appendLocalConsoleLine(viewer, { msg, level = "info" }) {
@@ -633,7 +698,7 @@ async function refreshLogStream(viewer) {
 }
 
 async function refreshLogs() {
-  if (!isPaneLive("logs")) return;
+  if (!isPaneLive("logs") || logsPaused) return;
   if (logRefreshInFlight) {
     logRefreshQueued = true;
     return;
@@ -706,6 +771,14 @@ function setupLogsWindow() {
     }
   };
   followEl?.addEventListener("change", () => setFollow(followEl.checked));
+
+  // Pause stops fetching new lines (to read or copy); resuming catches up from where it left off.
+  const pauseEl = document.getElementById("adminLogPause");
+  pauseEl?.addEventListener("change", () => {
+    logsPaused = pauseEl.checked;
+    document.getElementById("adminLogWindow")?.classList.toggle("is-paused", logsPaused);
+    if (!logsPaused) requestLogRefresh();
+  });
 
   let savedView = "split";
   let savedFollow = true;
@@ -917,13 +990,23 @@ function setupMlRetrain() {
       ["Status", status.last_status ?? "—"],
       ["Running", status.running ? "Yes" : "No"],
       ["Last run week", status.last_run_week_key || "—"],
-      ["Last attempt", status.last_attempt_at_utc || "—"],
-      ["Last completed", status.last_completed_at_utc || "—"],
+      ["Last attempt", formatWhen(status.last_attempt_at_utc)],
+      ["Last completed", formatWhen(status.last_completed_at_utc)],
       ["Exit code", status.last_exit_code != null ? String(status.last_exit_code) : "—"],
-      ["Log path", status.last_log_path || "—"],
+      [
+        "Log file",
+        status.last_log_path
+          ? { text: String(status.last_log_path).split(/[\\/]/).pop(), title: String(status.last_log_path) }
+          : "—",
+      ],
     ];
+    // A value is text, or { text, title } where title is shown on hover (exact time, full path).
     const rowsHtml = rows
-      .map(([k, v]) => `<div class="admin-appconfig-row"><span class="admin-appconfig-k">${escapeHtml(k)}</span><span class="admin-appconfig-v">${escapeHtml(v)}</span></div>`)
+      .map(([k, v]) => {
+        const text = typeof v === "object" && v ? v.text : v;
+        const title = typeof v === "object" && v?.title ? ` title="${escapeHtml(v.title)}"` : "";
+        return `<div class="admin-appconfig-row"><span class="admin-appconfig-k">${escapeHtml(k)}</span><span class="admin-appconfig-v"${title}>${escapeHtml(text)}</span></div>`;
+      })
       .join("");
     statusEl.innerHTML = rowsHtml;
     if (status.last_log_tail) {
@@ -939,9 +1022,11 @@ function setupMlRetrain() {
     });
 
   btn.addEventListener("click", async () => {
-    const ok = window.confirm(
-      "Force-trigger the ML retrain now?\n\nThis clears the week key so the poller will launch the retrain on its next cycle (within ~30s).\n\nContinue?",
-    );
+    const ok = await confirmSheet({
+      title: "Retrain the ranking now?",
+      message: "The poller starts the retrain on its next cycle (within ~30 seconds). It runs in the background and takes a few minutes.",
+      confirmLabel: "Retrain",
+    });
     if (!ok) return;
 
     btn.disabled = true;
@@ -950,9 +1035,11 @@ function setupMlRetrain() {
       const payload = await fetchJsonWithInit("/api/admin/trigger-ml-retrain", { method: "POST" });
       if (!payload?.ok) {
         setHint(payload?.error ? `Trigger failed: ${payload.error}` : "Trigger failed.", true);
+        toast(payload?.error ? `Retrain failed: ${payload.error}` : "Retrain could not be started.", { kind: "error" });
         return;
       }
       setHint("Triggered. The poller will start the retrain on its next cycle.");
+      toast("Retrain scheduled for the next poller cycle.");
       // Refresh status after a short delay.
       setTimeout(() => {
         fetchJson("/api/admin/ml-retrain-status")
@@ -961,6 +1048,7 @@ function setupMlRetrain() {
       }, 3000);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "ML retrain trigger"), true);
+      toast(adminEndpointErrorMessage(e, "ML retrain trigger"), { kind: "error" });
     } finally {
       btn.disabled = false;
     }
@@ -1036,9 +1124,11 @@ function setupRunDbExport() {
   };
 
   btn.addEventListener("click", async () => {
-    const ok = window.confirm(
-      "Run the DB export/backup now?\n\nThis will snapshot the SQLite DB and upload it to the configured Discord webhook.\n\nContinue?",
-    );
+    const ok = await confirmSheet({
+      title: "Export the database now?",
+      message: "A snapshot of market.db is uploaded to the backup Discord channel.",
+      confirmLabel: "Export",
+    });
     if (!ok) return;
 
     btn.disabled = true;
@@ -1047,13 +1137,17 @@ function setupRunDbExport() {
       const payload = await fetchJsonWithInit("/api/admin/run-db-export", { method: "POST" });
       if (!payload?.ok) {
         setHint(payload?.error ? `DB export: ${payload.error}` : "DB export failed.", true);
+        toast(payload?.error ? `DB export failed: ${payload.error}` : "DB export failed.", { kind: "error" });
         return;
       }
       const name = payload?.file || "export";
       const sizeMiB = payload?.sizeMiB;
-      setHint(sizeMiB != null ? `DB export uploaded: ${name} (${sizeMiB} MiB).` : `DB export uploaded: ${name}.`);
+      const done = sizeMiB != null ? `DB export uploaded: ${name} (${sizeMiB} MiB).` : `DB export uploaded: ${name}.`;
+      setHint(done);
+      toast(done);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "DB export"), true);
+      toast(adminEndpointErrorMessage(e, "DB export"), { kind: "error" });
     } finally {
       btn.disabled = false;
     }
@@ -1072,9 +1166,13 @@ function setupClearData() {
   };
 
   btn.addEventListener("click", async () => {
-    const ok = window.confirm(
-      "This will clear market data from SQLite (data/market.db).\n\nContinue?",
-    );
+    const ok = await confirmSheet({
+      title: "Clear all market data?",
+      message: "This deletes every poll, listing snapshot and recorded sale from the database. It cannot be undone.",
+      confirmLabel: "Clear data",
+      destructive: true,
+      requireText: "clear",
+    });
     if (!ok) return;
 
     btn.disabled = true;
@@ -1084,8 +1182,10 @@ function setupClearData() {
       const cleared = payload?.cleared || {};
       const sqlite = cleared.sqlite ? "sqlite" : null;
       setHint(sqlite ? "Cleared: sqlite" : "Cleared.");
+      toast("Market data cleared.");
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Clear data"), true);
+      toast(adminEndpointErrorMessage(e, "Clear data"), { kind: "error" });
     } finally {
       btn.disabled = false;
     }
@@ -1191,13 +1291,16 @@ function setupAlertTestTool() {
       });
       if (!payload?.ok) {
         setHint(payload?.error ? `Alert test: ${payload.error}` : "Alert test failed.", true);
+        toast(payload?.error ? `Alert test: ${payload.error}` : "Alert test failed.", { kind: "error" });
         return;
       }
       const sent = Array.isArray(payload?.sent) ? payload.sent.join(", ") : "none";
       const skipped = Array.isArray(payload?.skipped) && payload.skipped.length ? ` · skipped: ${payload.skipped.join("; ")}` : "";
       setHint(`Sent: ${sent}${skipped}`);
+      toast(`Test alerts sent: ${sent}${skipped}`);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Alert test"), true);
+      toast(adminEndpointErrorMessage(e, "Alert test"), { kind: "error" });
     } finally {
       renderPreview();
     }
@@ -1558,15 +1661,18 @@ function setupDeleteSalesTool() {
       });
       if (!payload?.ok) {
         setHint(payload?.error ? `${errorLabel}: ${payload.error}` : `${errorLabel} failed`, true);
+        toast(payload?.error ? `${errorLabel}: ${payload.error}` : `${errorLabel} failed`, { kind: "error" });
         return;
       }
       successMessage(payload);
+      toast(document.getElementById("adminSalesDeleteHint")?.textContent || "Deleted.");
       const keepItem = String(itemSelect.value || "").trim();
       const keepVariantId = selected ? Number(selected.variantId) : null;
       await loadVariants();
       populateItemSelect(keepItem, keepVariantId);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, errorLabel), true);
+      toast(adminEndpointErrorMessage(e, errorLabel), { kind: "error" });
     } finally {
       btn.disabled = false;
       historyBtn.disabled = false;
@@ -1575,11 +1681,14 @@ function setupDeleteSalesTool() {
 
   historyBtn.addEventListener("click", async () => {
     if (!selected) return;
-    const msg =
-      `Delete ALL price history for:\n\n${selected.displayName}\n\n` +
-      `This will remove every poll row for this art variant, plus the related listing snapshots, inference events, sales rows, and fingerprint state.\n\n` +
-      `This cannot be undone.\n\nContinue?`;
-    const ok = window.confirm(msg);
+    const ok = await confirmSheet({
+      title: `Delete all price history for ${selected.displayName}?`,
+      message:
+        "Every poll for this art variant is removed, with its listing snapshots, inference events, sales and fingerprint state. It cannot be undone.",
+      confirmLabel: "Delete history",
+      destructive: true,
+      requireText: "delete",
+    });
     if (!ok) return;
     await deleteSelectedVariantData(
       { scope: "history", variantId: selected.variantId },
@@ -1616,11 +1725,14 @@ function setupDeleteSalesTool() {
       });
       if (!payload?.ok) {
         setHint(payload?.error ? `Resend sale alert: ${payload.error}` : "Resend sale alert failed.", true);
+        toast(payload?.error ? `Resend sale alert: ${payload.error}` : "Resend sale alert failed.", { kind: "error" });
         return;
       }
       setHint(`Resent sale alert for ${payload?.item || selected.displayName} (${g.label}, ${g.signals} signal(s)).`);
+      toast(`Sale alert resent for ${payload?.item || selected.displayName}.`);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Resend sale alert"), true);
+      toast(adminEndpointErrorMessage(e, "Resend sale alert"), { kind: "error" });
     } finally {
       updateSalePreview();
     }
@@ -1633,24 +1745,22 @@ function setupDeleteSalesTool() {
     let requestBody;
     if (g) {
       msg =
-        `Delete sale group for:\n\n${selected.displayName}\n` +
-        `Timestamp: ${g.label} · ${g.signals} signal(s)\n\n` +
-        `This will remove ${g.saleIds.length} sale record(s).\n` +
-        `Fingerprints and inference state are NOT affected.\n\n` +
-        `This cannot be undone.\n\nContinue?`;
+        `${selected.displayName} · ${g.label} · ${g.saleIds.length} sale record(s).\n\n` +
+        "Fingerprints and inference state are not affected. It cannot be undone.";
       requestBody = { scope: "sales", variantId: selected.variantId, saleIds: g.saleIds };
     } else {
       msg =
-        `Delete ALL sales + fingerprint state for:\n\n${selected.displayName}\n\n` +
-        `This will remove:\n` +
-        `- all sales rows\n` +
-        `- listing snapshot fingerprints (used for inference)\n` +
-        `- inference events/state fingerprints\n` +
-        `- inferred sale counters ("Est. sold") for this variant\n\n` +
-        `This cannot be undone.\n\nContinue?`;
+        "Removes all recorded sales, the listing and inference fingerprints, and the est. sold counters for this variant. " +
+        "It cannot be undone.";
       requestBody = { scope: "variant", variantId: selected.variantId };
     }
-    const ok = window.confirm(msg);
+    const ok = await confirmSheet({
+      title: g ? "Delete this sale?" : `Delete all sales for ${selected.displayName}?`,
+      message: msg,
+      confirmLabel: g ? "Delete sale" : "Delete all",
+      destructive: true,
+      requireText: g ? "" : "delete",
+    });
     if (!ok) return;
     await deleteSelectedVariantData(
       requestBody,
@@ -1742,21 +1852,7 @@ function setupMarketConfigEditor() {
     hintEl.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
   };
 
-  const formatConfigTimestamp = (value) => {
-    // Expected input: ISO-8601 UTC string. Render: dd-MM-yyyy HH:mm
-    if (!value) return "";
-    const raw = value instanceof Date ? value.toISOString() : String(value);
-    const hasTz = /([zZ]|[+\-]\d{2}:\d{2})$/.test(raw.trim());
-    const d = value instanceof Date ? value : new Date(hasTz ? raw : `${raw}Z`);
-    if (Number.isNaN(d.getTime())) return String(value);
-    const pad2 = (n) => String(n).padStart(2, "0");
-    const dd = pad2(d.getDate());
-    const MM = pad2(d.getMonth() + 1);
-    const yyyy = String(d.getFullYear());
-    const HH = pad2(d.getHours());
-    const mm = pad2(d.getMinutes());
-    return `${dd}-${MM}-${yyyy} ${HH}:${mm}`;
-  };
+  const formatConfigTimestamp = (value) => (value ? formatWhen(value).text : "");
 
   const escapeHtml = (s) =>
     String(s)
@@ -1842,6 +1938,148 @@ function setupMarketConfigEditor() {
     }
   };
 
+  // Unsaved-changes tracking and live validation.
+  let savedValue = "";
+  let loadedKey = getSelectedKey();
+  const isDirty = () => jsonEl.value !== savedValue;
+  const jsonErrorAt = (raw) => {
+    // Browsers word JSON errors differently (Chrome often gives no position), so find the
+    // first offending character ourselves with a small validating scanner.
+    let i = 0;
+    const fail = (what) => {
+      throw { index: i, what };
+    };
+    const ws = () => {
+      while (i < raw.length && " \t\r\n".includes(raw[i])) i += 1;
+    };
+    const lit = (word) => {
+      if (raw.startsWith(word, i)) i += word.length;
+      else fail("unexpected value");
+    };
+    const str = () => {
+      i += 1;
+      while (i < raw.length && raw[i] !== '"') {
+        if (raw[i] === "\\") i += 1;
+        else if (raw[i] === "\n") fail("line break inside a string");
+        i += 1;
+      }
+      if (raw[i] !== '"') fail("unterminated string");
+      i += 1;
+    };
+    const num = () => {
+      const m = raw.slice(i).match(/^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?/);
+      if (!m || !m[0]) fail("expected a value");
+      i += m[0].length;
+    };
+    const value = () => {
+      ws();
+      const c = raw[i];
+      if (c === "{") {
+        i += 1;
+        ws();
+        if (raw[i] === "}") {
+          i += 1;
+          return;
+        }
+        for (;;) {
+          ws();
+          if (raw[i] !== '"') fail(raw[i] === "}" ? "trailing comma" : "expected a quoted key");
+          str();
+          ws();
+          if (raw[i] !== ":") fail("expected ':' after the key");
+          i += 1;
+          value();
+          ws();
+          if (raw[i] === ",") {
+            i += 1;
+            continue;
+          }
+          if (raw[i] === "}") {
+            i += 1;
+            return;
+          }
+          fail("expected ',' or '}'");
+        }
+      } else if (c === "[") {
+        i += 1;
+        ws();
+        if (raw[i] === "]") {
+          i += 1;
+          return;
+        }
+        for (;;) {
+          value();
+          ws();
+          if (raw[i] === ",") {
+            i += 1;
+            ws();
+            if (raw[i] === "]") fail("trailing comma");
+            continue;
+          }
+          if (raw[i] === "]") {
+            i += 1;
+            return;
+          }
+          fail("expected ',' or ']'");
+        }
+      } else if (c === '"') str();
+      else if (c === "t") lit("true");
+      else if (c === "f") lit("false");
+      else if (c === "n") lit("null");
+      else if (c === undefined) fail("unexpected end of input");
+      else num();
+    };
+    try {
+      value();
+      ws();
+      if (i < raw.length) fail("unexpected text after the end");
+      return null;
+    } catch (e) {
+      const before = raw.slice(0, e.index);
+      const lines = before.split("\n");
+      return { line: lines.length, col: lines[lines.length - 1].length + 1, msg: e.what };
+    }
+  };
+  const syncDirtyState = () => {
+    const dirty = isDirty();
+    saveBtn.classList.toggle("is-dirty", dirty);
+    saveBtn.title = dirty ? "Save changes (Ctrl/⌘+S)" : "No unsaved changes";
+  };
+  const validate = () => {
+    const raw = (jsonEl.value || "").trim();
+    let error = null;
+    if (raw) {
+      try {
+        JSON.parse(raw);
+      } catch (e) {
+        error = jsonErrorAt(jsonEl.value) || { line: null, col: null, msg: String(e?.message || e) };
+      }
+    }
+    editorEl.classList.toggle("is-invalid", !!error);
+    saveBtn.disabled = !!error || !raw;
+    if (error) {
+      const where = error.line ? `Line ${error.line}, column ${error.col}: ` : "";
+      setHint(`Invalid JSON — ${where}${error.msg}`, true);
+    } else if (isDirty()) {
+      setHint("Unsaved changes.");
+    }
+    syncDirtyState();
+    return !error;
+  };
+  const confirmDiscard = () =>
+    !isDirty() ||
+    confirmSheet({
+      title: "Discard unsaved changes?",
+      message: `Your edits to "${loadedKey}" haven't been saved.`,
+      confirmLabel: "Discard",
+      destructive: true,
+    });
+  window.addEventListener("beforeunload", (ev) => {
+    if (!isDirty()) return;
+    ev.preventDefault();
+    ev.returnValue = "";
+  });
+
   const loadKey = async () => {
     const key = getSelectedKey();
     setHint("Loading…");
@@ -1853,7 +2091,10 @@ function setupMarketConfigEditor() {
         return;
       }
       jsonEl.value = payload?.value_json || "";
+      savedValue = jsonEl.value;
+      loadedKey = key;
       syncHighlight();
+      validate();
       setHint(
         payload?.updated_at_utc
           ? `Loaded ${key} · updated ${formatConfigTimestamp(payload.updated_at_utc)}`
@@ -1876,9 +2117,11 @@ function setupMarketConfigEditor() {
       const parsed = JSON.parse(raw);
       jsonEl.value = JSON.stringify(parsed, null, 2);
       syncHighlight();
-      setHint("Formatted.");
-    } catch (e) {
-      setHint(`Invalid JSON: ${e?.message || e}`, true);
+      fitJsonEditorToContent();
+      validate();
+      setHint(isDirty() ? "Formatted · unsaved changes." : "Formatted.");
+    } catch {
+      validate();
     }
   };
 
@@ -1890,12 +2133,7 @@ function setupMarketConfigEditor() {
       return;
     }
     // Validate client-side before sending.
-    try {
-      JSON.parse(raw);
-    } catch (e) {
-      setHint(`Invalid JSON: ${e?.message || e}`, true);
-      return;
-    }
+    if (!validate()) return;
     setHint("Saving…");
     saveBtn.disabled = true;
     try {
@@ -1906,6 +2144,7 @@ function setupMarketConfigEditor() {
       });
       if (!payload?.ok) {
         setHint(payload?.error || "Save failed.", true);
+        toast(payload?.error ? `Save failed: ${payload.error}` : "Save failed.", { kind: "error" });
         return;
       }
       // Server returns normalized JSON.
@@ -1913,28 +2152,43 @@ function setupMarketConfigEditor() {
         jsonEl.value = payload.value_json;
         syncHighlight();
       }
+      savedValue = jsonEl.value;
       setHint(
         payload?.updated_at_utc
           ? `Saved ${key} · updated ${formatConfigTimestamp(payload.updated_at_utc)}`
           : `Saved ${key}.`,
       );
+      toast(`Saved ${key} config. It applies on the next poller cycle.`);
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, `Save ${key} config`), true);
+      toast(adminEndpointErrorMessage(e, `Save ${key} config`), { kind: "error" });
     } finally {
       saveBtn.disabled = false;
+      syncDirtyState();
     }
   };
 
   saveBtn.addEventListener("click", () => void saveKey());
   fmtBtn.addEventListener("click", () => formatJson());
-  reloadBtn.addEventListener("click", () => void loadKey());
-  keyEl?.addEventListener("change", () => void loadKey());
+  reloadBtn.addEventListener("click", async () => {
+    if (await confirmDiscard()) void loadKey();
+  });
+  keyEl?.addEventListener("change", async () => {
+    if (await confirmDiscard()) {
+      void loadKey();
+    } else {
+      keyEl.value = loadedKey; // stay on the key with the unsaved edits
+    }
+  });
   detailsEl?.addEventListener("toggle", persistJsonEditorOpenState);
 
+  let validateTimer = null;
   jsonEl.addEventListener("input", () => {
     fitJsonEditorToContent();
     syncHighlight();
-    setHint("");
+    syncDirtyState();
+    window.clearTimeout(validateTimer);
+    validateTimer = window.setTimeout(validate, 250);
   });
 
   jsonEl.addEventListener("scroll", syncScroll);
@@ -1969,9 +2223,11 @@ function setupRestartPoller() {
   };
 
   btn.addEventListener("click", async () => {
-    const ok = window.confirm(
-      "Restart the poller process?\n\nThis will stop the current poller (if one is running) and start a new one owned by the server.\n\nContinue?",
-    );
+    const ok = await confirmSheet({
+      title: "Restart the poller?",
+      message: "The running poller (if any) is stopped and a new one is started by the server.",
+      confirmLabel: "Restart",
+    });
     if (!ok) return;
 
     btn.disabled = true;
@@ -1980,9 +2236,11 @@ function setupRestartPoller() {
       const payload = await fetchJsonWithInit("/api/admin/restart-poller", { method: "POST" });
       const pid = payload?.managed?.start?.pid ?? payload?.start?.pid ?? payload?.pid;
       setHint(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
+      toast(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
       pollerLogViewer?.reset();
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Restart poller"), true);
+      toast(adminEndpointErrorMessage(e, "Restart poller"), { kind: "error" });
     } finally {
       btn.disabled = false;
     }
@@ -2001,9 +2259,12 @@ function setupStopPoller() {
   };
 
   btn.addEventListener("click", async () => {
-    const ok = window.confirm(
-      "Stop the poller process?\n\nThis stops polling until you restart it.\n\nContinue?",
-    );
+    const ok = await confirmSheet({
+      title: "Stop the poller?",
+      message: "Polling stops until you restart it. Prices, sales and alerts won't update meanwhile.",
+      confirmLabel: "Stop poller",
+      destructive: true,
+    });
     if (!ok) return;
 
     btn.disabled = true;
@@ -2011,9 +2272,11 @@ function setupStopPoller() {
     try {
       await fetchJsonWithInit("/api/admin/stop-poller", { method: "POST" });
       setHint("Poller stopped.");
+      toast("Poller stopped.", { kind: "info" });
       appendLocalConsoleLine(pollerLogViewer, { msg: "[admin] Poller stopped." });
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Stop poller"), true);
+      toast(adminEndpointErrorMessage(e, "Stop poller"), { kind: "error" });
     } finally {
       btn.disabled = false;
     }
