@@ -51,8 +51,9 @@ Listing plans are evaluated per item and the best return/day wins:
   divine listings at or below our ask plus the whole-mirror listings worth <= our ask, which the
   trade site shows first. Whole-mirror sales never set the divine fair value.
 - **mirror** (list at exactly k mirrors): buyer flow comes only from past whole-mirror sales at
-  >= k (prior: the pooled whole-mirror rate across items); the queue is every whole-mirror listing
-  at <= k. Candidates: the next whole mirror above the entry, plus amounts the item sold at up to
+  >= k (prior: the pooled whole-mirror rate among items on the same side of 1 mirror); the queue is
+  every whole-mirror listing at <= k. For items worth under 1 mirror, most recorded 1-mirror "sales"
+  are withdrawn listings (predicted 10% sell chance, 1.6% actual), so those count at weight 0.15. Candidates: the next whole mirror above the entry, plus amounts the item sold at up to
   1.5x its value. "Sales" far above value (e.g. 100 mirrors for a 20-mirror item) were mostly
   withdrawn fantasy listings: those picks never sold. Confidence counts sales at >= k.
 
@@ -102,12 +103,12 @@ different scikit-learn version, the transparent estimator ranks.
 
 | | Return/day | Per trade | Sold within 60d |
 |---|---|---|---|
-| Estimator | +0.22% | +9.3% (median +4.4%) | 55% |
-| Estimator, divine plan only | +0.17% | +6.6% | 59% |
+| Estimator | +0.26% | +10.4% (median +5.0%) | 62% |
+| Estimator, divine plan only (picks in 7 of 10 weeks) | +0.28% | +8.4% | 76% |
 | Random picks (20 seeds) | median -0.14% (best +0.05%) | | |
 
-Sell-chance calibration on the picks with a positive estimate: whole-mirror plan predicted 44%,
-actual 43%; divine plan predicted 86%, actual 77%. Over all item-weeks: predicted 17%, actual 14%.
+Sell-chance calibration on the picks with a positive estimate: whole-mirror plan predicted 48%,
+actual 47%; divine plan predicted 83%, actual 81%. Over all item-weeks: predicted 17%, actual 15%.
 Earlier, much higher numbers (+0.4 to +1.5%/day) came from the July mass-vanish artifact and from
 mixing whole-mirror sales into divine prices; they were not real.
 

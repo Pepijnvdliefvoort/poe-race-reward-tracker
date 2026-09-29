@@ -52,7 +52,7 @@ class Snapshot:
     # whole-mirror sale in the last 90 days, and the pooled mirror-channel sale rate (prior).
     mirror_listings: tuple[tuple[int, int], ...] = ()
     mirror_sale_amounts: tuple[int, ...] = ()
-    market_mirror_rate_per_day: float = 0.0
+    market_mirror_rate_per_day: float = 0.0  # among variants on the same side of 1 mirror as this one
     # Which listing we would buy: its whole-mirror price k, or 0 when it is a divine listing.
     entry_whole_mirrors: int = 0
 
@@ -119,14 +119,20 @@ def _median_or_none(values: list[float]) -> float | None:
     return median(values) if values else None
 
 
-def _pooled_rate(market: Market, ts: float, *, mirror_channel: bool) -> float:
-    """Average channel sales/day per variant over the last 90 days."""
+def _pooled_rate(market: Market, ts: float, *, mirror_channel: bool, below_one_mirror: bool | None = None) -> float:
+    """Average channel sales/day per variant over the last 90 days, optionally only among variants
+    whose latest instant floor is below (or at/above) 1 mirror."""
     lo = ts - SALE_WINDOW_DAYS * DAY
     n_variants = 0
     n_sales = 0
     for hist in market.variants.values():
-        if hist.polls_upto(ts) == 0:
+        n_polls = hist.polls_upto(ts)
+        if n_polls == 0:
             continue
+        if below_one_mirror is not None:
+            floor = next((p.instant_floor for p in reversed(hist.polls[:n_polls]) if p.instant_floor is not None), None)
+            if floor is None or (floor < 1.0) != below_one_mirror:
+                continue
         n_variants += 1
         n_sales += sum(1 for s in hist.sales[hist.sales_upto(lo):hist.sales_upto(ts)] if s.mirror_channel == mirror_channel)
     return n_sales / (n_variants * SALE_WINDOW_DAYS) if n_variants else 0.0
@@ -137,12 +143,19 @@ def market_sale_rate(market: Market, ts: float) -> float:
     return max(1.0 / 365.0, _pooled_rate(market, ts, mirror_channel=False))
 
 
-def market_mirror_rate(market: Market, ts: float) -> float:
-    """Pooled mirror-channel sales/day per variant (prior for the whole-mirror plan)."""
-    return _pooled_rate(market, ts, mirror_channel=True)
+def market_mirror_rate(market: Market, ts: float) -> tuple[float, float]:
+    """Pooled mirror-channel sales/day per variant (prior for the whole-mirror plan), as (items worth
+    under 1 mirror, items worth 1 mirror or more). Below 1 mirror a whole-mirror listing is a slow
+    premium; above it, whole mirrors are the usual currency, so the two rates differ a lot."""
+    return (
+        _pooled_rate(market, ts, mirror_channel=True, below_one_mirror=True),
+        _pooled_rate(market, ts, mirror_channel=True, below_one_mirror=False),
+    )
 
 
-def snapshot(hist: VariantHistory, ts: float, *, market_rate: float, market_mirror: float = 0.0) -> Snapshot | None:
+def snapshot(
+    hist: VariantHistory, ts: float, *, market_rate: float, market_mirror: tuple[float, float] = (0.0, 0.0)
+) -> Snapshot | None:
     """Point-in-time view of `hist` at `ts`, or None if there is no recent buyable price."""
     n_polls = hist.polls_upto(ts)
     if n_polls == 0:
@@ -240,7 +253,7 @@ def snapshot(hist: VariantHistory, ts: float, *, market_rate: float, market_mirr
         listing_evidence=tuple(evidence),
         mirror_listings=mirror_listings,
         mirror_sale_amounts=mirror_amounts,
-        market_mirror_rate_per_day=market_mirror,
+        market_mirror_rate_per_day=market_mirror[0] if entry < 1.0 else market_mirror[1],
         entry_whole_mirrors=entry_whole,
     )
 

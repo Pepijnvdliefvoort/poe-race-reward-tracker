@@ -61,6 +61,10 @@ class EstimatorParams:
     evidence_band: tuple[float, float] = (0.9, 1.25)  # "similar price" relative to our ask
     evidence_prior_listing_days: float = 60.0  # pseudo listing-days behind the flow-based rate
     consider_mirror_plan: bool = True  # also evaluate listing at exactly k mirrors (see module docstring)
+    # For items worth under 1 mirror, most recorded 1-mirror "sales" are listings withdrawn, not bought:
+    # on the Sep 2026 production DB the 1-mirror plan predicted a 10% sell chance where 1.6% sold
+    # (3 of 192 item-weeks). Those sales count at this weight. Items worth more were calibrated.
+    premium_mirror_sale_weight: float = 0.15
 
 
 @dataclass(frozen=True)
@@ -229,6 +233,8 @@ def _mirror_plan(snap: Snapshot, params: EstimatorParams, k: int) -> Estimate:
     b = max(0.0, params.prior_exposure_days)
     all_rate = (n + snap.market_mirror_rate_per_day * b) / (SALE_WINDOW_DAYS + b)
     rate = all_rate * (n_at_k + 0.5) / (n + 1.0)
+    if snap.entry_price < 1.0:
+        rate *= max(0.0, params.premium_mirror_sale_weight)
     queue = 0
     if params.use_queue:
         # Cheaper whole-mirror listings sell first; buyers pick among equal ones at random.
