@@ -1,4 +1,4 @@
-# Claude Instructions for poe-market-flips
+# Claude Instructions for PoE Race Rewards (poe-race-reward-tracker)
 
 ## Goal
 This repository tracks Path of Exile unique-item market listings, infers sales/reprices, and serves a dashboard + admin API.
@@ -49,6 +49,16 @@ When editing server/admin_service.py, server/http_handler.py, or auth-sensitive 
 - Prefer small, focused CSS/JS changes over broad restyling.
 - Preserve mobile and desktop behavior in web/css/*.css split styles.
 
+## Frontend Conventions
+- Site navigation is the dock (web/js/siteDock.js, web/css/site-dock.css) on the public pages; there is no header nav.
+  The admin section of the dock only renders for an authenticated admin (/api/companion/auth).
+- Admin and DB explorer are macOS-style app windows (web/css/admin-mac.css, db-mac.css, web/js/core/macWindow.js).
+  Use web/js/core/macUi.js for confirmations (confirmSheet), feedback (toast) and dates (formatWhen); never window.confirm/alert.
+- App icons live in web/assets/apps/*.svg (PoE-style tiles). web/assets/icons/ is reserved for item icons (scanned by the server).
+- Dashboard filters live in the toolbar (web/css/toolbar.css, web/js/ui/filterUI.js); keep stored filter keys compatible with saved filters.
+- Caddy serves web/ directly in production: bump the `?v=` query on changed CSS links in the HTML pages.
+- Light theme is `:root.light-theme`; check both themes and phone width (<= 760px) for visual changes.
+
 ## Validation Checklist (Run What Applies)
 - Python syntax check on changed files.
 - Targeted tests for touched logic, for example:
@@ -57,6 +67,20 @@ When editing server/admin_service.py, server/http_handler.py, or auth-sensitive 
   - python -m unittest ML.test_invest server.test_recommendation_service
 - If HTTP/API behavior changed, start server and verify impacted endpoint(s).
 - If inference logic changed, verify no obvious regressions in inferred sale/relist flow.
+
+## Git Workflow
+- Branch from develop as feat/... or fix/...; PRs go into develop, then develop into main.
+- Merging to main deploys to the VPS automatically (.github/workflows/deploy-vps.yml). CI runs on PRs and pushes to develop.
+- Commit only when asked; push the feature branch and give the user a PR title and description (see the pr-description skill).
+- Never add Claude attribution (Co-Authored-By trailers, "Generated with Claude Code") to commits or PRs.
+- After merges the user usually wants branches cleaned up (keep only main and develop, locally and on GitHub).
+
+## Production (VPS)
+- Repo at /opt/poe-market-flips; Python is .venv/bin/python (run commands from the repo root).
+- systemd units: poe-market-server and poe-market-poller; Caddy reverse-proxies to 127.0.0.1:8080. See VPS_DEPLOYMENT.md.
+- Maintenance scripts that change data (e.g. scripts/revert_fake_sales.py) preview by default and write only with --apply;
+  keep that pattern, and mark rows (e.g. reverted) instead of deleting them.
+- Never print or echo ADMIN_TOKEN or other secrets in chat. In local testing, never confirm destructive admin actions.
 
 ## Style and Change Policy
 - Follow existing code style in each file.
