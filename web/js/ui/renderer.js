@@ -110,6 +110,7 @@ export function render(payload) {
     state.nextInLineItemName = nextName;
 
     initPriceRangeSlider();
+    document.dispatchEvent(new CustomEvent("dashboard:price-range"));
 
     if (hasActiveFilters()) {
         applyFiltersAndRender();

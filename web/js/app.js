@@ -23,7 +23,6 @@ syncFilterControlsFromState();
 registerFilterEventListeners();
 registerKeyboardShortcuts();
 
-initFiltersDrawer();
 initBackToTopButton();
 initCompanion();
 initStatusJumpToNextInLine();
@@ -32,75 +31,6 @@ initStatusJumpToNextInLine();
 refresh();
 setInterval(refresh, REFRESH_MS);
 
-function initFiltersDrawer() {
-  const menuBtn = document.getElementById("filtersMenuBtn");
-  const closeBtn = document.getElementById("filtersCloseBtn");
-  const overlay = document.getElementById("filtersOverlay");
-  const drawer = overlay?.querySelector(".filters-drawer");
-
-  if (!menuBtn || !closeBtn || !overlay || !drawer) {
-    return;
-  }
-
-  let scrollYBeforeOpen = 0;
-  const lockBodyScroll = () => {
-    scrollYBeforeOpen = window.scrollY || 0;
-    document.body.classList.add("filters-open");
-    // iOS Safari: overflow:hidden alone doesn't reliably prevent scroll.
-    document.body.style.position = "fixed";
-    document.body.style.top = `-${scrollYBeforeOpen}px`;
-    document.body.style.left = "0";
-    document.body.style.right = "0";
-    document.body.style.width = "100%";
-  };
-
-  const unlockBodyScroll = () => {
-    document.body.classList.remove("filters-open");
-    document.body.style.position = "";
-    document.body.style.top = "";
-    document.body.style.left = "";
-    document.body.style.right = "";
-    document.body.style.width = "";
-    window.scrollTo(0, scrollYBeforeOpen);
-  };
-
-  const openDrawer = () => {
-    lockBodyScroll();
-    overlay.classList.add("open");
-    overlay.setAttribute("aria-hidden", "false");
-    menuBtn.setAttribute("aria-expanded", "true");
-    window.requestAnimationFrame(() => closeBtn.focus());
-  };
-
-  const closeDrawer = () => {
-    overlay.classList.remove("open");
-    overlay.setAttribute("aria-hidden", "true");
-    menuBtn.setAttribute("aria-expanded", "false");
-    unlockBodyScroll();
-    menuBtn.focus();
-  };
-
-  menuBtn.addEventListener("click", openDrawer);
-  closeBtn.addEventListener("click", closeDrawer);
-
-  // Apply button closes the drawer
-  const applyBtn = document.getElementById("applyFiltersBtn");
-  if (applyBtn) {
-    applyBtn.addEventListener("click", closeDrawer);
-  }
-
-  overlay.addEventListener("click", (event) => {
-    if (!drawer.contains(event.target)) {
-      closeDrawer();
-    }
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && overlay.classList.contains("open")) {
-      closeDrawer();
-    }
-  });
-}
 
 function initBackToTopButton() {
   const btn = document.getElementById("backToTopBtn");
