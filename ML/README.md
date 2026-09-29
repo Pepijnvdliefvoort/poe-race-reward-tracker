@@ -132,6 +132,14 @@ made the backtest worse (+0.20 to +0.26%/day), so all 90 days count equally.
 Earlier, much higher numbers (+0.4 to +1.5%/day) came from the July mass-vanish artifact and from
 mixing whole-mirror sales into divine prices; they were not real.
 
+## Live track record
+
+Every pick the companion shows is stored in `companion_picks` (once per item, plan and ISO week, with
+its best rank). Once a pick has sold, or its horizon has passed, it is replayed on the recorded
+history with the same rules as the backtest (`ML.simulate.realize_trade`) and the outcome is stored.
+The admin page shows predicted vs actual sell rate and return for all finished picks and for the
+top 5. Unlike the backtest, this measures the ranking exactly as it was served.
+
 ## Operations
 
 - Weekly retrain (poller, `poller/ml_retrain.py`) runs `scripts/retrain_ml_pipeline.py`, which writes

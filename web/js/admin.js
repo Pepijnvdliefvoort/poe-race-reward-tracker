@@ -1870,6 +1870,63 @@ function setupMlRetrain() {
   });
 }
 
+function setupCompanionTrackRecord() {
+  const summaryEl = document.getElementById("companionTrackRecord");
+  const tbody = document.querySelector("#companionPicksTable tbody");
+  if (!summaryEl || !tbody) return;
+
+  const pct = (v, digits = 0) => (typeof v === "number" ? `${(v * 100).toFixed(digits)}%` : "—");
+  const signedPct = (v, digits = 1) => (typeof v === "number" ? `${v > 0 ? "+" : ""}${v.toFixed(digits)}%` : "—");
+  const mirrors = (v) => (typeof v === "number" ? (v >= 10 ? v.toFixed(0) : v.toFixed(2)) : "—");
+
+  const blockRow = (label, b) => {
+    if (!b || !b.picks) return [label, "No finished picks yet"];
+    return [
+      label,
+      `${b.picks} picks · sold ${pct(b.actualSellRate)} (predicted ${pct(b.predictedSellRate)}) · ` +
+        `return ${signedPct(b.actualReturnPct)} (predicted ${signedPct(b.predictedReturnPct)}) · ` +
+        `${typeof b.actualReturnPerDayPct === "number" ? `${signedPct(b.actualReturnPerDayPct, 3)}/day` : "—"}`,
+    ];
+  };
+
+  const render = (d) => {
+    const rows = [
+      ["Logged picks", `${d.logged ?? 0} (${d.pending ?? 0} still within their horizon)`],
+      blockRow("All finished picks", d.evaluated),
+      blockRow("Top 5 picks", d.top5),
+    ];
+    summaryEl.innerHTML = rows
+      .map(([k, v]) => `<div class="admin-appconfig-row"><span class="admin-appconfig-k">${escapeHtml(k)}</span><span class="admin-appconfig-v">${escapeHtml(v)}</span></div>`)
+      .join("");
+
+    const picks = Array.isArray(d.recent) ? d.recent : [];
+    if (!picks.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="admin-muted">No picks logged yet. They appear after the companion is used.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = picks
+      .map((p) => {
+        const ask = p.askWholeMirrors ? `${p.askWholeMirrors} mirror${p.askWholeMirrors === 1 ? "" : "s"}` : mirrors(p.askPriceMirror);
+        const outcome =
+          p.status === "pending"
+            ? "Pending"
+            : p.status === "sold"
+              ? `Sold in ${p.daysToSell ?? "?"}d (${signedPct(p.returnPct)})`
+              : `Not sold (${signedPct(p.returnPct)})`;
+        return `<tr><td>${escapeHtml(p.week)}</td><td>${escapeHtml(p.itemName)}</td><td>${escapeHtml(String(p.bestRank))}</td>` +
+          `<td>${escapeHtml(`${mirrors(p.entryPriceMirror)} → ${ask}`)}</td>` +
+          `<td>${escapeHtml(`${pct(p.sellProbability)} · ~${Math.round(p.expectedDays)}d`)}</td><td>${escapeHtml(outcome)}</td></tr>`;
+      })
+      .join("");
+  };
+
+  fetchJson("/api/admin/companion/track-record")
+    .then(render)
+    .catch((e) => {
+      summaryEl.innerHTML = `<p class="admin-muted" style="margin:0;color:var(--warn)">${adminEndpointErrorMessage(e, "Companion track record")}</p>`;
+    });
+}
+
 function setupRunDbExport() {
   const btn = document.getElementById("runDbExportBtn");
   const hint = document.getElementById("adminDataHint");
@@ -2887,6 +2944,7 @@ function main() {
   setupDeleteSalesTool();
   setupMarketConfigEditor();
   setupMlRetrain();
+  setupCompanionTrackRecord();
   setupStopPoller();
   setupRestartPoller();
   setupMapResize();
