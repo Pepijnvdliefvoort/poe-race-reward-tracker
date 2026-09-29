@@ -307,1214 +307,420 @@ function renderVisitorTable(data) {
   });
 }
 
-function setupLogConsoleWindowControls() {
-  const splitEl = document.getElementById("adminLogSplit");
-  const handleA = document.getElementById("adminLogSplitHandleA");
-  const handleB = document.getElementById("adminLogSplitHandleB");
-  const taskbarEl = document.getElementById("adminLogTaskbar");
-  const emptyEl = document.getElementById("adminLogEmpty");
-  const serverPane = document.getElementById("serverConsolePane");
-  const pollerPane = document.getElementById("pollerConsolePane");
-  const statsPane = document.getElementById("statsConsolePane");
-  if (!splitEl || !handleA || !handleB || !taskbarEl || !emptyEl || !serverPane || !pollerPane || !statsPane) return;
+// ---- sections (sidebar navigation) ----------------------------------------------------------
 
-  const ensurePollerPaneControlsMount = () => {
-    const titlebar = pollerPane.querySelector(".admin-console-titlebar");
-    if (!titlebar) return null;
+const PANES = ["overview", "logs", "config", "ml", "visitors", "data"];
+const PANE_STORAGE_KEY = "admin.pane.v2";
+let activePane = null;
 
-    let mount = document.getElementById("adminPollerPaneControls");
-    if (mount?.parentElement === titlebar) return mount;
-    if (mount) mount.remove();
-
-    mount = document.createElement("div");
-    mount.id = "adminPollerPaneControls";
-    mount.className = "admin-poller-pane-controls";
-    // Put at the far right: title has margin-left:auto.
-    titlebar.appendChild(mount);
-    return mount;
-  };
-
-  const prefersReducedMotion = () => {
-    const reduced = !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    const isMobile = !!window.matchMedia?.("(max-width: 768px)")?.matches;
-    // On mobile, avoid animated show/hide because it causes visible layout jumping.
-    return reduced || isMobile;
-  };
-  const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
-
-  const forceScrollLogsToBottom = (consoleKey) => {
-    const viewer = consoleKey === "server" ? serverLogViewer : (consoleKey === "poller" ? pollerLogViewer : null);
-    const preEl = viewer?.preEl || (consoleKey === "server"
-      ? document.getElementById("serverConsole")
-      : (consoleKey === "poller" ? document.getElementById("pollerConsole") : null));
-    if (!preEl) return;
-    // Force after layout so clientHeight is correct.
-    requestAnimationFrame(() => {
-      preEl.scrollTop = preEl.scrollHeight;
-    });
-  };
-
-  const animatePaneVisibility = async (el, shouldShow, opts) => {
-    if (!el) return;
-    if (prefersReducedMotion()) {
-      el.style.display = shouldShow ? "" : "none";
-      el.classList.toggle("admin-console-wrap--anim-hide", !shouldShow);
-      el.classList.remove("admin-console-wrap--anim-to-tray");
-      el.classList.toggle("admin-console-wrap--anim-show", shouldShow);
-      return;
-    }
-
-    // If visibility isn't changing, don't replay the animation.
-    const isDisplayed = el.style.display !== "none";
-    if (shouldShow && isDisplayed && el.classList.contains("admin-console-wrap--anim-show")) {
-      return;
-    }
-    if (!shouldShow && !isDisplayed) {
-      return;
-    }
-
-    if (shouldShow) {
-      el.style.display = "";
-      // Start from hidden state then transition to shown.
-      el.classList.remove("admin-console-wrap--anim-show");
-      el.classList.remove("admin-console-wrap--anim-to-tray");
-      el.classList.remove("admin-console-wrap--anim-hide");
-
-      const fromEl = opts?.fromEl || null;
-      if (fromEl && !fromEl.hidden) {
-        const to = el.getBoundingClientRect();
-        const from = fromEl.getBoundingClientRect();
-        const toCx = to.left + to.width / 2;
-        const toCy = to.top + to.height / 2;
-        const fromCx = from.left + from.width / 2;
-        const fromCy = from.top + from.height / 2;
-        const dx = fromCx - toCx;
-        const dy = fromCy - toCy;
-        el.style.setProperty("--tray-dx", `${Math.round(dx)}px`);
-        el.style.setProperty("--tray-dy", `${Math.round(dy)}px`);
-        el.classList.add("admin-console-wrap--anim-to-tray");
-      } else {
-        el.classList.add("admin-console-wrap--anim-hide");
-      }
-      // Force layout so the initial transform/opacity is committed before we animate to "show".
-      // Without this, when other panes are already visible, the browser can coalesce style changes
-      // and the open animation becomes imperceptible.
-      void el.getBoundingClientRect();
-      await nextFrame();
-      await nextFrame();
-      el.classList.remove("admin-console-wrap--anim-hide");
-      el.classList.remove("admin-console-wrap--anim-to-tray");
-      el.classList.add("admin-console-wrap--anim-show");
-      el.style.removeProperty("--tray-dx");
-      el.style.removeProperty("--tray-dy");
-      return;
-    }
-
-    // Hide: animate then set display none.
-    el.classList.remove("admin-console-wrap--anim-show");
-    el.classList.remove("admin-console-wrap--anim-hide");
-    el.classList.remove("admin-console-wrap--anim-to-tray");
-
-    const toEl = opts?.toEl || null;
-    if (toEl && !toEl.hidden) {
-      const from = el.getBoundingClientRect();
-      const to = toEl.getBoundingClientRect();
-      const fromCx = from.left + from.width / 2;
-      const fromCy = from.top + from.height / 2;
-      const toCx = to.left + to.width / 2;
-      const toCy = to.top + to.height / 2;
-      const dx = toCx - fromCx;
-      const dy = toCy - fromCy;
-      el.style.setProperty("--tray-dx", `${Math.round(dx)}px`);
-      el.style.setProperty("--tray-dy", `${Math.round(dy)}px`);
-      el.classList.add("admin-console-wrap--anim-to-tray");
-    } else {
-      el.classList.add("admin-console-wrap--anim-hide");
-    }
-    // Commit initial state before transition begins.
-    void el.getBoundingClientRect();
-
-    const done = new Promise((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        el.removeEventListener("transitionend", onEnd);
-        resolve();
-      };
-      const onEnd = (ev) => {
-        if (ev.target !== el) return;
-        finish();
-      };
-      el.addEventListener("transitionend", onEnd);
-      window.setTimeout(finish, 260);
-    });
-    await done;
-    el.style.display = "none";
-    el.style.removeProperty("--tray-dx");
-    el.style.removeProperty("--tray-dy");
-  };
-
-  const animateAuxVisibility = async (el, hideClass, shouldShow) => {
-    if (!el) return;
-    if (prefersReducedMotion()) {
-      el.hidden = !shouldShow;
-      el.classList.toggle(hideClass, !shouldShow);
-      return;
-    }
-
-    if (shouldShow) {
-      el.hidden = false;
-      el.classList.add(hideClass);
-      await nextFrame();
-      await nextFrame();
-      el.classList.remove(hideClass);
-      return;
-    }
-
-    el.classList.add(hideClass);
-    const done = new Promise((resolve) => window.setTimeout(resolve, 240));
-    await done;
-    el.hidden = true;
-  };
-
-  const storageKey = "admin.logs.windowState.v1";
-  const pollerHintEl = document.getElementById("adminPollerHint");
-
-  const setPollerHint = (text, isWarn = false) => {
-    if (!pollerHintEl) return;
-    pollerHintEl.textContent = text || "";
-    pollerHintEl.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
-  };
-
-  const stopPollerProcess = async () => {
-    setPollerHint("Stopping poller…");
-    try {
-      const payload = await fetchJsonWithInit("/api/admin/stop-poller", { method: "POST" });
-      setPollerHint("Poller stopped.");
-      return payload;
-    } catch (e) {
-      setPollerHint(adminEndpointErrorMessage(e, "Stop poller"), true);
-      throw e;
-    }
-  };
-
-  const restartPollerProcess = async () => {
-    setPollerHint("Restarting poller…");
-    try {
-      const payload = await fetchJsonWithInit("/api/admin/restart-poller", { method: "POST" });
-      // Local/dev (subprocess mode) nests the new process under `managed.start`.
-      const pid = payload?.managed?.start?.pid ?? payload?.start?.pid ?? payload?.pid;
-      setPollerHint(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
-      return payload;
-    } catch (e) {
-      setPollerHint(adminEndpointErrorMessage(e, "Start poller"), true);
-      throw e;
-    }
-  };
-
-  const resetLogViewerToSessionStart = (viewer) => {
-    if (!viewer) return;
-    viewer.entries = [];
-    // Force refreshLogs() to do a full snapshot request (no cursor) next time.
-    viewer.cursor = null;
-    viewer._filterKey = "";
-    if (viewer.preEl) viewer.preEl.innerHTML = "";
-  };
-
-  const defaultState = {
-    server: { mode: "open" }, // open | minimized | closed
-    poller: { mode: "open" }, // open | minimized | closed
-    stats: { mode: "minimized" }, // open | minimized | closed
-  };
-
-  const readState = () => {
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (!raw) return structuredClone ? structuredClone(defaultState) : JSON.parse(JSON.stringify(defaultState));
-      const parsed = JSON.parse(raw);
-      const norm = (v) => (v === "open" || v === "minimized" || v === "closed" ? v : "open");
-      return {
-        server: { mode: norm(parsed?.server?.mode) },
-        poller: { mode: norm(parsed?.poller?.mode) },
-        stats: { mode: norm(parsed?.stats?.mode) },
-      };
-    } catch {
-      return structuredClone ? structuredClone(defaultState) : JSON.parse(JSON.stringify(defaultState));
-    }
-  };
-
-  let state = readState();
-
-  const saveState = () => {
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(state));
-    } catch {
-      // ignore storage failures
-    }
-  };
-
-  const isVisible = (consoleKey) => state[consoleKey].mode === "open";
-  const isMinimized = (consoleKey) => state[consoleKey].mode === "minimized";
-  const isClosed = (consoleKey) => state[consoleKey].mode === "closed";
-
-  const labelFor = (consoleKey) =>
-    consoleKey === "server" ? "server.log" : (consoleKey === "poller" ? "poller.log" : "stats");
-
-  const dotColorFor = (consoleKey) =>
-    consoleKey === "server" ? "#28c840" : (consoleKey === "poller" ? "#febc2e" : "#ff7a2f");
-
-  const setMode = (consoleKey, mode) => {
-    state[consoleKey].mode = mode;
-
-    // Mobile UX: only one pane visible at a time.
-    // Opening a pane replaces the currently-open one (others become minimized).
-    const isMobile = () => !!window.matchMedia?.("(max-width: 768px)")?.matches;
-    if (mode === "open" && isMobile()) {
-      ["server", "poller", "stats"].forEach((k) => {
-        if (k === consoleKey) return;
-        if (state[k]?.mode === "open") state[k].mode = "minimized";
-      });
-    }
-
-    saveState();
-    if (consoleKey === "stats") {
-      if (mode === "closed") stopStatsPolling();
-      else startStatsPolling();
-    }
-    render();
-  };
-
-  const closeConsole = (consoleKey) => setMode(consoleKey, "closed");
-  const minimizeConsole = (consoleKey) => setMode(consoleKey, "minimized");
-
-  const restoreConsole = (consoleKey) => {
-    if (isClosed("server") && isClosed("poller") && isClosed("stats")) {
-      state.server.mode = consoleKey === "server" ? "open" : "closed";
-      state.poller.mode = consoleKey === "poller" ? "open" : "closed";
-      state.stats.mode = consoleKey === "stats" ? "open" : "closed";
-      saveState();
-      render();
-      if (consoleKey === "server" || consoleKey === "poller") forceScrollLogsToBottom(consoleKey);
-      return;
-    }
-    setMode(consoleKey, "open");
-    if (consoleKey === "server" || consoleKey === "poller") forceScrollLogsToBottom(consoleKey);
-  };
-
-  const toggleFromDock = (consoleKey) => {
-    const mode = state[consoleKey].mode;
-    if (mode === "open") {
-      minimizeConsole(consoleKey);
-      return;
-    }
-    // If poller is "closed", treat dock click as "start it back up".
-    if (consoleKey === "poller" && mode === "closed") {
-      void (async () => {
-        try {
-          await restartPollerProcess();
-          // After a stop→start, show only the new run's logs.
-          resetLogViewerToSessionStart(pollerLogViewer);
-          await refreshLogs();
-          restoreConsole(consoleKey);
-        } catch {
-          // hint already set
-        }
-      })();
-      return;
-    }
-    restoreConsole(consoleKey);
-  };
-
-  const maximizeConsole = (consoleKey) => {
-    state[consoleKey].mode = "open";
-    // Requirement: maximize current console, minimizing the other ones.
-    ["server", "poller", "stats"].forEach((k) => {
-      if (k === consoleKey) return;
-      if (!isClosed(k)) state[k].mode = "minimized";
-    });
-    saveState();
-    render();
-    if (consoleKey === "server" || consoleKey === "poller") forceScrollLogsToBottom(consoleKey);
-  };
-
-  const renderTaskbar = async () => {
-    taskbarEl.innerHTML = "";
-    // Always-visible "dock" with fixed slots for each console.
-    const allKeys = ["server", "poller", "stats"];
-    allKeys.forEach((k) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      const mode = state[k].mode;
-      const modeClass =
-        mode === "open"
-          ? "admin-console-taskbar-btn--open"
-          : (mode === "minimized" ? "admin-console-taskbar-btn--minimized" : "admin-console-taskbar-btn--closed");
-      btn.className = `admin-console-taskbar-btn ${modeClass}`.trim();
-      btn.setAttribute("data-console", k);
-      btn.setAttribute("aria-label", `${mode === "open" ? "Minimize" : "Open"} ${labelFor(k)}`);
-
-      const dot = document.createElement("span");
-      dot.className = "admin-console-taskbar-dot";
-      dot.style.background = mode === "closed" ? "rgba(148, 163, 184, 0.55)" : dotColorFor(k);
-      btn.appendChild(dot);
-
-      const text = document.createElement("span");
-      text.textContent = labelFor(k);
-      btn.appendChild(text);
-
-      btn.addEventListener("click", () => toggleFromDock(k));
-      taskbarEl.appendChild(btn);
-    });
-
-    // Poller controls live in the poller window titlebar (not in the taskbar).
-    const pollerMount = ensurePollerPaneControlsMount();
-    if (pollerMount) {
-      pollerMount.innerHTML = "";
-      const stopBtn = document.createElement("button");
-      stopBtn.type = "button";
-      stopBtn.className = "admin-console-dock-action admin-console-dock-action--stop";
-      stopBtn.title = "Stop poller";
-      stopBtn.setAttribute("aria-label", "Stop poller");
-      stopBtn.textContent = "■";
-      stopBtn.disabled = state.poller.mode === "closed";
-      stopBtn.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        void (async () => {
-          try {
-            await stopPollerProcess();
-            // Keep the poller console open; just stop the process.
-            restoreConsole("poller");
-            await refreshLogs();
-          } catch {
-            // hint already set
-          }
-        })();
-      });
-
-      const restartBtn = document.createElement("button");
-      restartBtn.type = "button";
-      restartBtn.className = "admin-console-dock-action admin-console-dock-action--restart";
-      restartBtn.title = "Restart poller";
-      restartBtn.setAttribute("aria-label", "Restart poller");
-      restartBtn.textContent = "↻";
-      restartBtn.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        void (async () => {
-          try {
-            await restartPollerProcess();
-            resetLogViewerToSessionStart(pollerLogViewer);
-            await refreshLogs();
-            restoreConsole("poller");
-          } catch {
-            // hint already set
-          }
-        })();
-      });
-
-      pollerMount.appendChild(stopBtn);
-      pollerMount.appendChild(restartBtn);
-    }
-
-    // Build per-console target map for animations.
-    dockTargets = {
-      server: taskbarEl.querySelector('button[data-console="server"]'),
-      poller: taskbarEl.querySelector('button[data-console="poller"]'),
-      stats: taskbarEl.querySelector('button[data-console="stats"]'),
-    };
-  };
-
-  const renderLayout = async () => {
-    const serverVisible = isVisible("server");
-    const pollerVisible = isVisible("poller");
-    const statsVisible = isVisible("stats");
-
-    // Show/hide panes based on mode.
-    await Promise.all([
-      animatePaneVisibility(serverPane, serverVisible, { toEl: dockTargets?.server, fromEl: dockTargets?.server }),
-      animatePaneVisibility(pollerPane, pollerVisible, { toEl: dockTargets?.poller, fromEl: dockTargets?.poller }),
-      animatePaneVisibility(statsPane, statsVisible, { toEl: dockTargets?.stats, fromEl: dockTargets?.stats }),
-    ]);
-
-    // Show handles only when both adjacent panes are visible.
-    // Special case: if poller is closed but server+stats are open, handleA becomes the divider.
-    handleA.style.display = (serverVisible && pollerVisible) || (serverVisible && statsVisible && !pollerVisible) ? "" : "none";
-    handleB.style.display = pollerVisible && statsVisible ? "" : "none";
-
-    // Re-apply split ratios when visibility changes (e.g. stats closed).
-    window.__adminLogSplit?.apply?.();
-
-    // Show placeholder if none visible.
-    const anyVisible = serverVisible || pollerVisible || statsVisible;
-    await animateAuxVisibility(emptyEl, "admin-console-empty--anim-hide", !anyVisible);
-    if (!anyVisible) {
-      emptyEl.innerHTML = "";
-      const msg = document.createElement("div");
-      msg.textContent = "No console active";
-      emptyEl.appendChild(msg);
-    }
-  };
-
-  let renderToken = 0;
-  let dockTargets = { server: null, poller: null, stats: null };
-  const render = async () => {
-    const token = (renderToken += 1);
-    // Ensure dock is rendered first so animations have a per-console target.
-    await renderTaskbar();
-    if (token !== renderToken) return;
-    await renderLayout();
-  };
-
-  // Wire dot buttons.
-  splitEl.addEventListener("click", (ev) => {
-    const btn = ev.target?.closest?.("button.admin-console-dot");
-    if (!btn) return;
-    if (btn.disabled) return;
-    const consoleKey = btn.getAttribute("data-console");
-    const action = btn.getAttribute("data-action");
-    if (consoleKey !== "server" && consoleKey !== "poller" && consoleKey !== "stats") return;
-    if (action === "close") {
-      // Server close is disabled (never stop server from this UI).
-      if (consoleKey === "server") return;
-      // Poller close should actually stop the process.
-      if (consoleKey === "poller") {
-        void (async () => {
-          try {
-            await stopPollerProcess();
-          } finally {
-            // Ensure reopening doesn't show pre-stop logs.
-            resetLogViewerToSessionStart(pollerLogViewer);
-            closeConsole("poller");
-            await refreshLogs();
-          }
-        })();
-        return;
-      }
-      closeConsole(consoleKey);
-      return;
-    }
-    else if (action === "minimize") minimizeConsole(consoleKey);
-    else if (action === "maximize") maximizeConsole(consoleKey);
-  });
-
-  // Clicking inside a log pane should jump to the latest logs.
-  splitEl.addEventListener("click", (ev) => {
-    const pane = ev.target?.closest?.(".admin-console-wrap");
-    if (!pane) return;
-    const id = pane.getAttribute("id") || "";
-    if (id === "serverConsolePane") forceScrollLogsToBottom("server");
-    else if (id === "pollerConsolePane") forceScrollLogsToBottom("poller");
-  });
-
-  render();
-
-  // Expose tiny hook for split view setup (so it can re-render after ratio changes).
-  window.__adminLogWindowState = {
-    getVisiblePair: () => ({ server: isVisible("server"), poller: isVisible("poller"), stats: isVisible("stats") }),
-    render,
-  };
+function paneFromLocation() {
+  const fromHash = (window.location.hash || "").replace(/^#/, "");
+  if (PANES.includes(fromHash)) return fromHash;
+  try {
+    const saved = window.localStorage.getItem(PANE_STORAGE_KEY);
+    if (PANES.includes(saved)) return saved;
+  } catch {
+    // storage unavailable
+  }
+  return "overview";
 }
 
-function setupLogSplitView() {
-  const splitEl = document.getElementById("adminLogSplit");
-  const handleA = document.getElementById("adminLogSplitHandleA");
-  const handleB = document.getElementById("adminLogSplitHandleB");
-  const serverPane = document.getElementById("serverConsolePane");
-  const pollerPane = document.getElementById("pollerConsolePane");
-  const statsPane = document.getElementById("statsConsolePane");
-  if (!splitEl || !handleA || !handleB || !serverPane || !pollerPane || !statsPane) return;
-
-  const tripleKey = "admin.logSplit.triple.v1";
-  const doubleKey = "admin.logSplit.double.v1";
-  const serverStatsKey = "admin.logSplit.double.serverStats.v1";
-  const pollerStatsKey = "admin.logSplit.double.pollerStats.v1";
-  const minServer = 0.21; // server pane at least 21%
-  const minStats = 0.2; // stats pane at least 20%
-  const min = 0.18; // other panes at least 18%
-  const step = 0.02;
-  const clamp = (value, minValue, maxValue) => Math.min(maxValue, Math.max(minValue, value));
-
-  const _width = (el) => {
-    if (!el) return 0;
-    const rect = el.getBoundingClientRect();
-    return Number.isFinite(rect.width) ? rect.width : 0;
-  };
-
-  const _outerWidth = (el) => {
-    if (!el) return 0;
-    // When display:none, width is 0.
-    const w = _width(el);
-    if (!w) return 0;
-    try {
-      const cs = window.getComputedStyle(el);
-      const ml = Number.parseFloat(cs.marginLeft || "0") || 0;
-      const mr = Number.parseFloat(cs.marginRight || "0") || 0;
-      return w + ml + mr;
-    } catch {
-      return w;
-    }
-  };
-
-  const ratiosForVisibility = (vis) => {
-    const totalW = _width(splitEl);
-    // Handles have horizontal margins; include them so pane min% matches the visible %.
-    const wA =
-      vis?.server && (vis?.poller || (vis?.stats && !vis?.poller)) ? _outerWidth(handleA) : 0;
-    const wB = vis?.poller && vis?.stats ? _outerWidth(handleB) : 0;
-    const paneW = Math.max(1, totalW - wA - wB);
-
-    // Convert "min % of total container" into min ratio of the pane area.
-    const minServerRatio = clamp((minServer * totalW) / paneW, 0, 1);
-    const minOtherRatio = clamp((min * totalW) / paneW, 0, 1);
-    const minStatsRatio = clamp((minStats * totalW) / paneW, 0, 1);
-    return { minServerRatio, minOtherRatio, minStatsRatio };
-  };
-
-  const clampDouble = (ratio, vis) => {
-    const { minServerRatio, minOtherRatio } = ratiosForVisibility(vis);
-    return clamp(Number(ratio) || 0.5, minServerRatio, 1 - minOtherRatio);
-  };
-
-  const clampSplit = (x1, x2, vis) => {
-    let a = Number(x1);
-    let b = Number(x2);
-    if (!Number.isFinite(a)) a = 0.34;
-    if (!Number.isFinite(b)) b = 0.68;
-    const { minServerRatio, minOtherRatio, minStatsRatio } = ratiosForVisibility(vis);
-    // a is the server split point; enforce server min explicitly.
-    a = clamp(a, minServerRatio, 1 - 2 * minOtherRatio);
-    // b splits poller vs stats; enforce poller>=minOther and stats>=minStats.
-    b = clamp(b, a + minOtherRatio, 1 - minStatsRatio);
-    return [a, b];
-  };
-
-  const clampServerStats = (ratio, vis) => {
-    const { minServerRatio, minStatsRatio } = ratiosForVisibility(vis);
-    return clamp(Number(ratio) || 0.5, minServerRatio, 1 - minStatsRatio);
-  };
-
-  const clampPollerStats = (ratio, vis) => {
-    const { minOtherRatio, minStatsRatio } = ratiosForVisibility(vis);
-    // ratio is poller share
-    return clamp(Number(ratio) || 0.5, minOtherRatio, 1 - minStatsRatio);
-  };
-
-  const applyDouble = (ratio) => {
-    const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    if (vis && (!vis.server || !vis.poller)) return;
-    const r = clampDouble(ratio, vis);
-    serverPane.style.flex = `${r} 1 0`;
-    pollerPane.style.flex = `${1 - r} 1 0`;
-    statsPane.style.flex = "";
-    handleA.setAttribute("aria-valuenow", String(Math.round(r * 100)));
-    handleA.setAttribute("aria-valuemin", String(Math.round(minServer * 1000) / 10));
-    handleA.setAttribute("aria-valuemax", String(Math.round((1 - min) * 1000) / 10));
-  };
-
-  const applyTriple = (x1, x2) => {
-    const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    if (vis && (!vis.server || !vis.poller || !vis.stats)) return;
-    const [a, b] = clampSplit(x1, x2, vis);
-    serverPane.style.flex = `${a} 1 0`;
-    pollerPane.style.flex = `${b - a} 1 0`;
-    statsPane.style.flex = `${1 - b} 1 0`;
-    handleA.setAttribute("aria-valuenow", String(Math.round(a * 100)));
-    handleA.setAttribute("aria-valuemin", String(Math.round(minServer * 1000) / 10));
-    handleA.setAttribute("aria-valuemax", String(Math.round((1 - 2 * min) * 100)));
-    handleB.setAttribute("aria-valuenow", String(Math.round(b * 100)));
-    handleB.setAttribute("aria-valuemin", String(Math.round((min * 2) * 100)));
-    handleB.setAttribute("aria-valuemax", String(Math.round((1 - min) * 100)));
-  };
-
-  const applyServerStats = (ratio) => {
-    const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    if (vis && (!vis.server || !vis.stats || vis.poller)) return;
-    const r = clampServerStats(ratio, vis);
-    serverPane.style.flex = `${r} 1 0`;
-    pollerPane.style.flex = "";
-    statsPane.style.flex = `${1 - r} 1 0`;
-    handleA.setAttribute("aria-valuenow", String(Math.round(r * 100)));
-    handleA.setAttribute("aria-valuemin", String(Math.round(minServer * 1000) / 10));
-    handleA.setAttribute("aria-valuemax", String(Math.round((1 - minStats) * 1000) / 10));
-  };
-
-  const readTriple = () => {
-    try {
-      const raw = window.localStorage.getItem(tripleKey);
-      if (!raw) return [0.34, 0.68];
-      const parsed = JSON.parse(raw);
-      return clampSplit(parsed?.x1, parsed?.x2, window.__adminLogWindowState?.getVisiblePair?.());
-    } catch {
-      return [0.34, 0.68];
-    }
-  };
-
-  const saveTriple = (x1, x2) => {
-    try {
-      const [a, b] = clampSplit(x1, x2, window.__adminLogWindowState?.getVisiblePair?.());
-      window.localStorage.setItem(tripleKey, JSON.stringify({ x1: a, x2: b }));
-    } catch {
-      // ignore storage failures
-    }
-  };
-
-  const readDouble = () => {
-    try {
-      const raw = window.localStorage.getItem(doubleKey);
-      if (!raw) return 0.5;
-      const parsed = JSON.parse(raw);
-      return clampDouble(parsed?.ratio, window.__adminLogWindowState?.getVisiblePair?.());
-    } catch {
-      return 0.5;
-    }
-  };
-
-  const saveDouble = (ratio) => {
-    try {
-      window.localStorage.setItem(
-        doubleKey,
-        JSON.stringify({ ratio: clampDouble(ratio, window.__adminLogWindowState?.getVisiblePair?.()) }),
-      );
-    } catch {
-      // ignore storage failures
-    }
-  };
-
-  const readServerStats = () => {
-    try {
-      const raw = window.localStorage.getItem(serverStatsKey);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      const r = clampServerStats(parsed?.ratio, window.__adminLogWindowState?.getVisiblePair?.());
-      return Number.isFinite(r) ? r : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const saveServerStats = (ratio) => {
-    try {
-      window.localStorage.setItem(
-        serverStatsKey,
-        JSON.stringify({ ratio: clampServerStats(ratio, window.__adminLogWindowState?.getVisiblePair?.()) }),
-      );
-    } catch {
-      // ignore storage failures
-    }
-  };
-
-  const readPollerStats = () => {
-    try {
-      const raw = window.localStorage.getItem(pollerStatsKey);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      const r = clampPollerStats(parsed?.ratio, window.__adminLogWindowState?.getVisiblePair?.());
-      return Number.isFinite(r) ? r : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const savePollerStats = (ratio) => {
-    try {
-      window.localStorage.setItem(
-        pollerStatsKey,
-        JSON.stringify({ ratio: clampPollerStats(ratio, window.__adminLogWindowState?.getVisiblePair?.()) }),
-      );
-    } catch {
-      // ignore storage failures
-    }
-  };
-
-  let [x1, x2] = readTriple();
-  let ratio2 = readDouble();
-  let ratioSS = readServerStats();
-  let ratioPS = readPollerStats();
-
-  const applyFromVisibility = () => {
-    const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    // If only one pane is visible, let it take full width.
-    if (vis && vis.server && !vis.poller && !vis.stats) {
-      serverPane.style.flex = "1 1 0";
-      pollerPane.style.flex = "";
-      statsPane.style.flex = "";
-      return;
-    }
-    if (vis && !vis.server && vis.poller && !vis.stats) {
-      serverPane.style.flex = "";
-      pollerPane.style.flex = "1 1 0";
-      statsPane.style.flex = "";
-      return;
-    }
-    if (vis && !vis.server && !vis.poller && vis.stats) {
-      serverPane.style.flex = "";
-      pollerPane.style.flex = "";
-      statsPane.style.flex = "1 1 0";
-      return;
-    }
-    // If poller is closed but server + stats are open, allow a dedicated 2-pane split.
-    if (vis && vis.server && !vis.poller && vis.stats) {
-      const fallbackFromTriple = (() => {
-        const [a] = clampSplit(x1, x2, vis);
-        return clampServerStats(a, vis);
-      })();
-      const r = ratioSS == null ? fallbackFromTriple : clampServerStats(ratioSS, vis);
-      applyServerStats(r);
-      return;
-    }
-    // If server is minimized/closed but poller + stats are open, allow a dedicated 2-pane split.
-    if (vis && !vis.server && vis.poller && vis.stats) {
-      const fallbackFromTriple = (() => {
-        const [, b] = clampSplit(x1, x2, vis);
-        return clampPollerStats(b, vis);
-      })();
-      const r = ratioPS == null ? fallbackFromTriple : clampPollerStats(ratioPS, vis);
-      serverPane.style.flex = "";
-      pollerPane.style.flex = `${r} 1 0`;
-      statsPane.style.flex = `${1 - r} 1 0`;
-      return;
-    }
-    if (vis && vis.server && vis.poller && vis.stats) {
-      applyTriple(x1, x2);
-      return;
-    }
-    if (vis && vis.server && vis.poller) {
-      applyDouble(ratio2);
-    }
-  };
-
-  applyFromVisibility();
-
-  const ratioFromClientX = (clientX) => {
-    const rect = splitEl.getBoundingClientRect();
-    const x = clamp(clientX - rect.left, 0, rect.width);
-    return rect.width > 0 ? x / rect.width : 0.5;
-  };
-
-  const startDrag = (handleEl, which, ev) => {
-    if (window.matchMedia?.("(max-width: 768px)")?.matches) return;
-    const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    if (which === "a") {
-      if (vis && (!vis.server || (!vis.poller && !vis.stats))) return;
-    } else {
-      if (vis && (!vis.poller || !vis.stats)) return;
-    }
-    handleEl.dataset.dragging = "true";
-    const pointerId = ev.pointerId;
-    handleEl.setPointerCapture?.(pointerId);
-    ev.preventDefault();
-
-    const onMove = (moveEv) => {
-      const r = ratioFromClientX(moveEv.clientX);
-      if (which === "a") {
-        // If poller is not visible, handleA becomes a server↔stats splitter.
-        if (vis && vis.server && !vis.poller && vis.stats) {
-          ratioSS = clampServerStats(r, vis);
-          applyServerStats(ratioSS);
-          saveServerStats(ratioSS);
-          return;
-        }
-        // If stats is not visible, handleA becomes a simple 2-pane splitter.
-        if (vis && vis.server && vis.poller && !vis.stats) {
-          ratio2 = clampDouble(r, vis);
-          applyDouble(ratio2);
-          saveDouble(ratio2);
-          return;
-        }
-        [x1, x2] = clampSplit(r, x2, vis);
-        applyTriple(x1, x2);
-        saveTriple(x1, x2);
-        return;
-      }
-
-      // handleB: if server is not visible, make it a 2-pane poller↔stats splitter.
-      if (vis && !vis.server && vis.poller && vis.stats) {
-        ratioPS = clampPollerStats(r, vis);
-        applyFromVisibility();
-        savePollerStats(ratioPS);
-        return;
-      }
-
-      [x1, x2] = clampSplit(x1, r, vis);
-      applyTriple(x1, x2);
-      saveTriple(x1, x2);
-    };
-
-    const stop = () => {
-      handleEl.dataset.dragging = "false";
-      handleEl.releasePointerCapture?.(pointerId);
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-  };
-
-  handleA.addEventListener("pointerdown", (ev) => startDrag(handleA, "a", ev));
-  handleB.addEventListener("pointerdown", (ev) => startDrag(handleB, "b", ev));
-
-  const onKey = (which, ev) => {
-    const vis = window.__adminLogWindowState?.getVisiblePair?.();
-    if (which === "a") {
-      if (vis && (!vis.server || (!vis.poller && !vis.stats))) return;
-    } else {
-      if (vis && (!vis.poller || !vis.stats)) return;
-    }
-    if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
-    const delta = ev.key === "ArrowLeft" ? -step : step;
-    if (which === "a") {
-      if (vis && vis.server && !vis.poller && vis.stats) {
-        ratioSS = clampServerStats((ratioSS == null ? 0.5 : ratioSS) + delta, vis);
-        applyServerStats(ratioSS);
-        saveServerStats(ratioSS);
-      } else
-        if (vis && vis.server && vis.poller && !vis.stats) {
-          ratio2 = clampDouble(ratio2 + delta, vis);
-          applyDouble(ratio2);
-          saveDouble(ratio2);
-        } else {
-          [x1, x2] = clampSplit(x1 + delta, x2, vis);
-          applyTriple(x1, x2);
-          saveTriple(x1, x2);
-        }
-    } else {
-      if (vis && !vis.server && vis.poller && vis.stats) {
-        ratioPS = clampPollerStats((ratioPS == null ? 0.5 : ratioPS) + delta, vis);
-        applyFromVisibility();
-        savePollerStats(ratioPS);
-      } else {
-        [x1, x2] = clampSplit(x1, x2 + delta, vis);
-        applyTriple(x1, x2);
-        saveTriple(x1, x2);
-      }
-    }
-    ev.preventDefault();
-  };
-
-  handleA.addEventListener("keydown", (ev) => onKey("a", ev));
-  handleB.addEventListener("keydown", (ev) => onKey("b", ev));
-
-  // Let the window manager re-apply ratios when panes open/close.
-  window.__adminLogSplit = {
-    apply: applyFromVisibility,
-  };
+function isPaneLive(name) {
+  return activePane === name && !document.hidden;
 }
 
-// Keep enough lines for several hours of poller activity (~20k at typical rates).
-const ADMIN_LOG_MAX_ENTRIES = 20000;
+function onPaneShown(name) {
+  if (name === "logs") {
+    requestLogRefresh();
+    [serverLogViewer, pollerLogViewer].forEach((v) => v?.follow && v.scrollToBottom());
+  } else if (name === "overview") {
+    void refreshStats();
+  } else if (name === "visitors") {
+    void refreshVisitors();
+    // Leaflet measures its container; it was hidden until now.
+    requestAnimationFrame(() => map?.invalidateSize({ animate: false }));
+  }
+}
 
-function isImportantLogEntry(entry) {
+function showPane(name, { updateHash = true } = {}) {
+  const pane = PANES.includes(name) ? name : "overview";
+  activePane = pane;
+  document.querySelectorAll(".mac-pane").forEach((el) => {
+    el.hidden = el.dataset.pane !== pane;
+  });
+  document.querySelectorAll(".mac-nav-item").forEach((btn) => {
+    if (btn.dataset.pane === pane) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
+  try {
+    window.localStorage.setItem(PANE_STORAGE_KEY, pane);
+  } catch {
+    // storage unavailable
+  }
+  if (updateHash && window.location.hash !== `#${pane}`) {
+    window.history.replaceState(null, "", `#${pane}`);
+  }
+  onPaneShown(pane);
+  // Sections that size themselves from their content (hidden until now) re-measure on this.
+  document.dispatchEvent(new CustomEvent("admin:pane-shown", { detail: pane }));
+}
+
+function setupPanes() {
+  document.querySelectorAll(".mac-nav-item").forEach((btn) => {
+    btn.addEventListener("click", () => showPane(btn.dataset.pane));
+  });
+  window.addEventListener("hashchange", () => showPane(paneFromLocation(), { updateHash: false }));
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && activePane) onPaneShown(activePane);
+  });
+  showPane(paneFromLocation());
+}
+
+function setupThemeToggle() {
+  const btn = document.getElementById("adminThemeToggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const light = document.documentElement.classList.toggle("light-theme");
+    try {
+      // Same key as the dashboard, so both pages follow the choice.
+      window.localStorage.setItem("poe-market-theme", light ? "light" : "dark");
+    } catch {
+      // storage unavailable
+    }
+  });
+}
+
+// ---- logs ------------------------------------------------------------------------------------
+
+// Lines kept per console. Each refresh only appends the new lines to the DOM and drops the oldest
+// past this cap, so a long session stays cheap (the old viewer rebuilt up to 20k lines every 2.5s).
+const LOG_MAX_LINES = 3000;
+const LOG_VIEW_STORAGE_KEY = "admin.logs.view.v2";
+const LOG_FOLLOW_STORAGE_KEY = "admin.logs.follow.v2";
+const logTimeFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+function logLineParts(entry) {
+  const raw = String(entry?.ts || "").trim();
+  let ts = "";
+  if (raw) {
+    // Timestamps without a zone are UTC (browsers would read them as local time).
+    const d = new Date(/([zZ]|[+-]\d{2}:\d{2})$/.test(raw) ? raw : `${raw}Z`);
+    ts = Number.isNaN(d.getTime()) ? raw : logTimeFormat.format(d);
+  }
   const lvl = String(entry?.level || "info").toLowerCase();
-  return lvl === "warning" || lvl === "warn" || lvl === "error" || lvl === "critical";
-}
-
-function trimLogEntries(entries) {
-  if (!Array.isArray(entries) || entries.length <= ADMIN_LOG_MAX_ENTRIES) {
-    return Array.isArray(entries) ? entries : [];
-  }
-  const important = [];
-  const routine = [];
-  for (const e of entries) {
-    (isImportantLogEntry(e) ? important : routine).push(e);
-  }
-  const maxRoutine = Math.max(0, ADMIN_LOG_MAX_ENTRIES - important.length);
-  const trimmedRoutine =
-    routine.length > maxRoutine ? routine.slice(routine.length - maxRoutine) : routine;
-  const merged = important.concat(trimmedRoutine);
-  merged.sort((a, b) => {
-    const ta = Date.parse(a?.ts || "") || 0;
-    const tb = Date.parse(b?.ts || "") || 0;
-    return ta - tb;
-  });
-  if (merged.length <= ADMIN_LOG_MAX_ENTRIES) return merged;
-  return merged.slice(merged.length - ADMIN_LOG_MAX_ENTRIES);
+  const level = lvl === "warning" || lvl === "warn" ? "warn" : lvl === "error" || lvl === "critical" ? "error" : "info";
+  const parts = [ts, entry?.msg ? String(entry.msg) : ""];
+  if (level === "error" && entry?.exc) parts.push(String(entry.exc));
+  return { level, text: parts.filter(Boolean).join(" ") || "(blank)" };
 }
 
 class LogViewer {
-  constructor({ preEl, toolbarEl, onChange }) {
+  constructor({ name, preEl, toolbarEl, paneEl, onFilterChange }) {
+    this.name = name;
     this.preEl = preEl;
     this.toolbarEl = toolbarEl;
-    this.onChange = typeof onChange === "function" ? onChange : null;
-
-    this.entries = [];
+    this.paneEl = paneEl;
+    this.onFilterChange = onFilterChange;
     this.level = "all"; // all | info | warn | error
     this.query = "";
-    this.cursor = 0;
+    this.cursor = null; // null = next request is a full snapshot
     this._filterKey = "";
-
+    this.lineCount = 0;
+    this.placeholder = false;
+    this.follow = true;
     this.pills = {};
     this._setupToolbar();
+    this._setupJump();
   }
 
   _setupToolbar() {
     if (!this.toolbarEl) return;
-    this.toolbarEl.innerHTML = "";
+    this.toolbarEl.textContent = "";
+    const label = document.createElement("span");
+    label.className = "mac-log-name";
+    label.textContent = `${this.name}.log`;
+    this.toolbarEl.appendChild(label);
 
-    const makePill = (key, label, extraClass = "") => {
+    const levels = [
+      ["all", "All", ""],
+      ["info", "Info", ""],
+      ["warn", "Warning", "admin-pill--warn"],
+      ["error", "Error", "admin-pill--error"],
+    ];
+    for (const [key, text, cls] of levels) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = `admin-pill ${extraClass}`.trim();
-      btn.setAttribute("aria-pressed", "false");
+      btn.className = `admin-pill ${cls}`.trim();
+      btn.textContent = text;
       btn.addEventListener("click", () => {
-        if (key.startsWith("level:")) {
-          this.level = key.slice("level:".length);
-          this._syncPressed();
-          this._filterKey = "";
-          this.onChange?.();
-          return;
-        }
+        if (this.level === key) return;
+        this.level = key;
+        this._syncPressed();
+        this._filtersChanged();
       });
       this.toolbarEl.appendChild(btn);
       this.pills[key] = btn;
-      btn.textContent = label;
-      return btn;
-    };
-
-    makePill("level:all", "All");
-    makePill("level:info", "Info");
-    makePill("level:warn", "Warning", "admin-pill--warn");
-    makePill("level:error", "Error", "admin-pill--error");
+    }
 
     const input = document.createElement("input");
     input.className = "admin-pill-input";
     input.type = "search";
-    input.placeholder = "Filter… (text match)";
+    input.placeholder = "Filter";
+    input.setAttribute("aria-label", `Filter ${this.name}.log`);
+    let t = null;
     input.addEventListener("input", () => {
-      this.query = input.value || "";
-      this._filterKey = "";
-      this.onChange?.();
+      window.clearTimeout(t);
+      t = window.setTimeout(() => {
+        this.query = input.value || "";
+        this._filtersChanged();
+      }, 250);
     });
     this.toolbarEl.appendChild(input);
-
     this._syncPressed();
   }
 
+  _setupJump() {
+    if (!this.paneEl || !this.preEl) return;
+    this.jumpBtn = document.createElement("button");
+    this.jumpBtn.type = "button";
+    this.jumpBtn.className = "mac-log-jump";
+    this.jumpBtn.textContent = "↓ Latest";
+    this.jumpBtn.hidden = true;
+    this.jumpBtn.addEventListener("click", () => this.scrollToBottom());
+    this.paneEl.appendChild(this.jumpBtn);
+    this.preEl.addEventListener(
+      "scroll",
+      () => {
+        if (this.isNearBottom()) this.jumpBtn.hidden = true;
+      },
+      { passive: true },
+    );
+  }
+
   _syncPressed() {
-    const pressed = (key, val) => {
-      const el = this.pills[key];
-      if (!el) return;
-      el.setAttribute("aria-pressed", val ? "true" : "false");
-    };
-
-    pressed("level:all", this.level === "all");
-    pressed("level:info", this.level === "info");
-    pressed("level:warn", this.level === "warn");
-    pressed("level:error", this.level === "error");
-  }
-
-  setEntries({ entries, counts }) {
-    this.entries = trimLogEntries(Array.isArray(entries) ? entries : []);
-    const c = counts && typeof counts === "object" ? counts : null;
-    if (c) {
-      const all = Number.isFinite(c.all) ? c.all : this.entries.length;
-      const info = Number.isFinite(c.info) ? c.info : 0;
-      const warning = Number.isFinite(c.warning) ? c.warning : 0;
-      const error = Number.isFinite(c.error) ? c.error : 0;
-      this._setCounts({ all, info, warning, error });
-    } else {
-      this._setCounts({ all: this.entries.length, info: 0, warning: 0, error: 0 });
+    for (const [key, btn] of Object.entries(this.pills)) {
+      btn.setAttribute("aria-pressed", key === this.level ? "true" : "false");
     }
-    this.render();
   }
 
-  appendEntries({ entries }) {
-    const next = Array.isArray(entries) ? entries : [];
-    if (!next.length) return;
-    this.entries = trimLogEntries(this.entries.concat(next));
-    this.render();
+  _filtersChanged() {
+    this._filterKey = ""; // forces a snapshot request with the new filters
+    this.onFilterChange?.();
   }
 
-  _setCounts({ all, info, warning, error }) {
-    const setLabel = (key, label) => {
-      const el = this.pills[key];
-      if (el) el.textContent = label;
-    };
-    setLabel("level:all", `All (${all})`);
-    setLabel("level:info", `Info (${info})`);
-    setLabel("level:warn", `Warning (${warning})`);
-    setLabel("level:error", `Error (${error})`);
+  get filterKey() {
+    return `${this.level}::${this.query}`;
   }
 
-  render() {
+  isNearBottom() {
+    const el = this.preEl;
+    return el.scrollHeight - (el.scrollTop + el.clientHeight) < 32;
+  }
+
+  scrollToBottom() {
     if (!this.preEl) return;
+    this.preEl.scrollTop = this.preEl.scrollHeight;
+    if (this.jumpBtn) this.jumpBtn.hidden = true;
+  }
 
-    const wasNearBottom = this.preEl.scrollHeight - (this.preEl.scrollTop + this.preEl.clientHeight) < 24;
+  reset() {
+    this.cursor = null;
+    this._filterKey = "";
+    this.lineCount = 0;
+    if (this.preEl) this.preEl.textContent = "";
+  }
 
-    const parseIsoAssumeUtc = (raw) => {
-      const s = String(raw || "").trim();
-      if (!s) return null;
-      // If the ISO string has no timezone suffix, assume it is UTC.
-      // (Browsers treat "2026-04-29T12:00:00" as local time, which makes UTC logs look "stuck" in UTC.)
-      const hasTz = /([zZ]|[+\-]\d{2}:\d{2})$/.test(s);
-      const normalized = hasTz ? s : `${s}Z`;
-      const d = new Date(normalized);
-      return Number.isNaN(d.getTime()) ? null : d;
+  _fragment(entries) {
+    const frag = document.createDocumentFragment();
+    for (const entry of entries) {
+      const { level, text } = logLineParts(entry);
+      const span = document.createElement("span");
+      if (level !== "info") span.className = `log-line--${level}`;
+      span.textContent = `${text}\n`;
+      frag.appendChild(span);
+    }
+    return frag;
+  }
+
+  setEntries(entries) {
+    if (!this.preEl) return;
+    const list = Array.isArray(entries) ? entries.slice(-LOG_MAX_LINES) : [];
+    this.preEl.textContent = "";
+    this.lineCount = list.length;
+    this.placeholder = list.length === 0;
+    if (this.placeholder) {
+      const span = document.createElement("span");
+      span.className = "log-line--muted";
+      span.textContent = "(no matching lines)\n";
+      this.preEl.appendChild(span);
+    } else {
+      this.preEl.appendChild(this._fragment(list));
+    }
+    if (this.follow) this.scrollToBottom();
+  }
+
+  appendEntries(entries) {
+    if (!this.preEl || !Array.isArray(entries) || !entries.length) return;
+    const stick = this.follow && this.isNearBottom();
+    if (this.placeholder) {
+      this.preEl.textContent = "";
+      this.lineCount = 0;
+      this.placeholder = false;
+    }
+    this.preEl.appendChild(this._fragment(entries));
+    this.lineCount += entries.length;
+    while (this.lineCount > LOG_MAX_LINES && this.preEl.firstChild) {
+      this.preEl.removeChild(this.preEl.firstChild);
+      this.lineCount -= 1;
+    }
+    if (stick) this.scrollToBottom();
+    else if (this.jumpBtn) this.jumpBtn.hidden = false;
+  }
+
+  setCounts(counts) {
+    if (!counts || typeof counts !== "object") return;
+    const n = (v) => (Number.isFinite(v) ? v : 0);
+    const labels = {
+      all: `All ${n(counts.all)}`,
+      info: `Info ${n(counts.info)}`,
+      warn: `Warning ${n(counts.warning)}`,
+      error: `Error ${n(counts.error)}`,
     };
-
-    let html = "";
-    for (const entry of this.entries) {
-      const levelRaw = String(entry?.level || "info").toLowerCase();
-      const level = levelRaw === "warning" ? "warn" : (levelRaw === "error" ? "error" : "info");
-      const tsRaw = entry?.ts ? String(entry.ts) : "";
-      let ts = "";
-      if (tsRaw) {
-        const d = parseIsoAssumeUtc(tsRaw);
-        ts = d
-          ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-          : tsRaw;
-      }
-      const msg = entry?.msg ? String(entry.msg) : "";
-      const exc = entry?.exc ? String(entry.exc) : "";
-      const line = level === "error" ? [ts, msg, exc].filter(Boolean).join(" ") : [ts, msg].filter(Boolean).join(" ");
-      const printable = line.length ? line : "(blank)";
-      html += `<span class="log-line log-line--${level}">${escapeHtml(printable)}</span>\n`;
-    }
-
-    if (!this.entries.length) {
-      html = `<span class="log-line log-line--muted">(no matching lines)</span>\n`;
-    }
-
-    // Render.
-    this.preEl.innerHTML = html;
-
-    if (wasNearBottom) {
-      this.preEl.scrollTop = this.preEl.scrollHeight;
+    for (const [key, text] of Object.entries(labels)) {
+      if (this.pills[key]) this.pills[key].textContent = text;
     }
   }
+}
+
+function isEditingAdminDatalist() {
+  // Re-rendering while a data-tools select is open can dismiss it; pause background refreshes then.
+  const el = document.activeElement;
+  return typeof el?.closest === "function" && !!el.closest(".admin-data-tools");
 }
 
 let serverLogViewer;
 let pollerLogViewer;
 let logRefreshTick = 0;
-let logRefreshSeq = 0;
-let logPollTimer = null;
-let mapPollTimer = null;
-let statsPollTimer = null;
-
-function isEditingAdminDatalist() {
-  const el = document.activeElement;
-  if (!el) return false;
-  // When typing in a <input list="...">, browsers can dismiss the suggestions on unrelated DOM churn.
-  // We pause log/visitor rendering while the user is interacting with these controls.
-  if (el.id === "adminSalesItemSelect" || el.id === "adminSalesVariantSelect") return true;
-  if (typeof el.closest === "function" && el.closest(".admin-data-tools")) return true;
-  return false;
-}
+let logRefreshInFlight = false;
+let logRefreshQueued = false;
 
 function appendLocalConsoleLine(viewer, { msg, level = "info" }) {
-  if (!viewer) return;
-  const entry = {
-    ts: new Date().toISOString(),
-    level,
-    msg,
-    name: "admin",
-  };
-  viewer.appendEntries({ entries: [entry] });
+  viewer?.appendEntries([{ ts: new Date().toISOString(), level, msg, name: "admin" }]);
+}
+
+function visibleLogViewers() {
+  const view = document.getElementById("adminLogPanes")?.dataset.view || "split";
+  return [serverLogViewer, pollerLogViewer].filter((v) => v && (view === "split" || view === v.name));
+}
+
+async function refreshLogStream(viewer) {
+  const filterKey = viewer.filterKey;
+  const snapshot = viewer.cursor == null || viewer._filterKey !== filterKey;
+  const withCounts = snapshot || logRefreshTick % 8 === 1; // counts are a heavier query; refresh them now and then
+  const params = new URLSearchParams({
+    stream: viewer.name,
+    format: "json",
+    since: "session",
+    level: viewer.level,
+    q: viewer.query,
+    limit: String(LOG_MAX_LINES),
+    counts: withCounts ? "1" : "0",
+  });
+  if (!snapshot) params.set("cursor", String(viewer.cursor));
+  const payload = await fetchJson(`/api/admin/logs?${params.toString()}`);
+  if (payload?.format !== "jsonl" || viewer.filterKey !== filterKey) return; // filters changed meanwhile
+  viewer.cursor = Number.isFinite(payload.cursor) ? payload.cursor : viewer.cursor ?? 0;
+  viewer._filterKey = filterKey;
+  if (!snapshot && payload.delta) viewer.appendEntries(payload.entries);
+  else viewer.setEntries(payload.entries);
+  if (payload.counts) viewer.setCounts(payload.counts);
 }
 
 async function refreshLogs() {
-  // Keep <datalist> suggestions stable while the user is selecting an item.
-  if (isEditingAdminDatalist()) {
+  if (!isPaneLive("logs")) return;
+  if (logRefreshInFlight) {
+    logRefreshQueued = true;
     return;
   }
-  const seq = (logRefreshSeq += 1);
-  const serverEl = document.getElementById("serverConsole");
-  const pollerEl = document.getElementById("pollerConsole");
+  logRefreshInFlight = true;
+  logRefreshTick += 1;
+  const hint = document.getElementById("adminAuthHint");
   try {
-    if (serverEl) {
-      if (!serverLogViewer) {
-        serverLogViewer = new LogViewer({
-          preEl: serverEl,
-          toolbarEl: document.getElementById("serverConsoleToolbar"),
-          onChange: () => void refreshLogs(),
-        });
-      }
-    }
-    if (pollerEl) {
-      if (!pollerLogViewer) {
-        pollerLogViewer = new LogViewer({
-          preEl: pollerEl,
-          toolbarEl: document.getElementById("pollerConsoleToolbar"),
-          onChange: () => void refreshLogs(),
-        });
-      }
-    }
-
-    logRefreshTick += 1;
-
-    const buildRequest = (stream, viewer) => {
-      const level = viewer?.level || "all";
-      const q = viewer?.query || "";
-      const filterKey = `${level}::${q}`;
-      const filterChanged = !!viewer && viewer._filterKey !== filterKey;
-      const doCounts = filterChanged || logRefreshTick % 8 === 1; // refresh counts periodically
-      return {
-        params: new URLSearchParams({
-          stream,
-          format: "json",
-          since: "session",
-          level,
-          q,
-          limit: String(ADMIN_LOG_MAX_ENTRIES),
-          ...(filterChanged || viewer?.cursor == null ? {} : { cursor: String(viewer?.cursor || 0) }),
-          counts: doCounts ? "1" : "0",
-        }),
-        filterKey,
-        doCounts,
-        filterChanged,
-      };
-    };
-
-    const serverReq = buildRequest("server", serverLogViewer);
-    const pollerReq = buildRequest("poller", pollerLogViewer);
-
-    const [serverPayload, pollerPayload] = await Promise.all([
-      fetchJson(`/api/admin/logs?${serverReq.params.toString()}`),
-      fetchJson(`/api/admin/logs?${pollerReq.params.toString()}`),
-    ]);
-    // If a newer refresh started while we were awaiting, ignore this one.
-    if (seq !== logRefreshSeq) return;
-
-    if (serverLogViewer && serverPayload?.format === "jsonl") {
-      serverLogViewer.cursor = Number.isFinite(serverPayload.cursor) ? serverPayload.cursor : (serverLogViewer.cursor || 0);
-      serverLogViewer._filterKey = serverReq.filterKey;
-      if (serverPayload.delta) {
-        serverLogViewer.appendEntries({ entries: serverPayload.entries });
-        if (serverReq.doCounts && serverPayload.counts) {
-          serverLogViewer.setEntries({ entries: serverLogViewer.entries, counts: serverPayload.counts });
-        }
-      } else {
-        serverLogViewer.setEntries({ entries: serverPayload.entries, counts: serverPayload.counts });
-      }
-    }
-    if (pollerLogViewer && pollerPayload?.format === "jsonl") {
-      pollerLogViewer.cursor = Number.isFinite(pollerPayload.cursor) ? pollerPayload.cursor : (pollerLogViewer.cursor || 0);
-      pollerLogViewer._filterKey = pollerReq.filterKey;
-      if (pollerPayload.delta) {
-        pollerLogViewer.appendEntries({ entries: pollerPayload.entries });
-        if (pollerReq.doCounts && pollerPayload.counts) {
-          pollerLogViewer.setEntries({ entries: pollerLogViewer.entries, counts: pollerPayload.counts });
-        }
-      } else {
-        pollerLogViewer.setEntries({ entries: pollerPayload.entries, counts: pollerPayload.counts });
-      }
-    }
-
-    const hint = document.getElementById("adminAuthHint");
-    if (hint) hint.textContent = "";
+    await Promise.all(visibleLogViewers().map((v) => refreshLogStream(v)));
+    if (hint?.textContent.startsWith("Logs")) hint.textContent = "";
   } catch (e) {
-    const hint = document.getElementById("adminAuthHint");
-    if (hint) {
-      hint.textContent = adminEndpointErrorMessage(e, "Logs");
-    }
+    if (hint) hint.textContent = adminEndpointErrorMessage(e, "Logs");
+  } finally {
+    logRefreshInFlight = false;
   }
+  if (logRefreshQueued) {
+    logRefreshQueued = false;
+    void refreshLogs();
+  }
+}
 
-  window.__adminEqualizePanes?.schedule?.();
+function requestLogRefresh() {
+  void refreshLogs();
+}
+
+function setupLogsWindow() {
+  const panesEl = document.getElementById("adminLogPanes");
+  if (!panesEl) return;
+  serverLogViewer = new LogViewer({
+    name: "server",
+    preEl: document.getElementById("serverConsole"),
+    toolbarEl: document.getElementById("serverConsoleToolbar"),
+    paneEl: document.getElementById("serverConsolePane"),
+    onFilterChange: requestLogRefresh,
+  });
+  pollerLogViewer = new LogViewer({
+    name: "poller",
+    preEl: document.getElementById("pollerConsole"),
+    toolbarEl: document.getElementById("pollerConsoleToolbar"),
+    paneEl: document.getElementById("pollerConsolePane"),
+    onFilterChange: requestLogRefresh,
+  });
+
+  const viewButtons = Array.from(document.querySelectorAll("[data-log-view]"));
+  const setView = (view) => {
+    const v = ["server", "poller", "split"].includes(view) ? view : "split";
+    panesEl.dataset.view = v;
+    viewButtons.forEach((b) => b.setAttribute("aria-selected", b.dataset.logView === v ? "true" : "false"));
+    try {
+      window.localStorage.setItem(LOG_VIEW_STORAGE_KEY, v);
+    } catch {
+      // storage unavailable
+    }
+    requestLogRefresh();
+    requestAnimationFrame(() => visibleLogViewers().forEach((lv) => lv.follow && lv.scrollToBottom()));
+  };
+  viewButtons.forEach((b) => b.addEventListener("click", () => setView(b.dataset.logView)));
+
+  const followEl = document.getElementById("adminLogFollow");
+  const setFollow = (on) => {
+    [serverLogViewer, pollerLogViewer].forEach((v) => {
+      v.follow = on;
+      if (on) v.scrollToBottom();
+    });
+    if (followEl) followEl.checked = on;
+    try {
+      window.localStorage.setItem(LOG_FOLLOW_STORAGE_KEY, on ? "1" : "0");
+    } catch {
+      // storage unavailable
+    }
+  };
+  followEl?.addEventListener("change", () => setFollow(followEl.checked));
+
+  let savedView = "split";
+  let savedFollow = true;
+  try {
+    savedView = window.localStorage.getItem(LOG_VIEW_STORAGE_KEY) || "split";
+    savedFollow = window.localStorage.getItem(LOG_FOLLOW_STORAGE_KEY) !== "0";
+  } catch {
+    // storage unavailable
+  }
+  setFollow(savedFollow);
+  setView(savedView);
 }
 
 async function refreshVisitors() {
@@ -1584,112 +790,6 @@ function setStatsHint(text, isWarn = false) {
   hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
 }
 
-// When panes get narrow, toolbars can wrap and change the pane height.
-// Keep all visible panes the same height by matching the tallest.
-function setupEqualHeightConsolePanes() {
-  // On mobile we force fixed pane heights in CSS; this desktop-only logic can cause flicker.
-  if (window.matchMedia?.("(max-width: 768px)")?.matches) return;
-
-  const splitEl = document.getElementById("adminLogSplit");
-  if (!splitEl) return;
-
-  const isVisible = (el) => {
-    if (!el) return false;
-    try {
-      return window.getComputedStyle(el).display !== "none";
-    } catch {
-      return true;
-    }
-  };
-
-  let syncing = false;
-  let queued = false;
-
-  const sync = () => {
-    if (syncing) return;
-    syncing = true;
-    queued = false;
-
-    const panes = Array.from(splitEl.querySelectorAll(".admin-console-wrap"));
-
-    // Reset any previous equalization so measurements are natural.
-    panes.forEach((pane) => {
-      pane.style.height = "";
-      const consoleEl = pane.querySelector(".admin-console");
-      if (consoleEl) {
-        consoleEl.style.height = "";
-        consoleEl.style.minHeight = "";
-        consoleEl.style.maxHeight = "";
-      }
-      const panelBody = pane.querySelector(".admin-panel-body");
-      if (panelBody) {
-        panelBody.style.height = "";
-      }
-    });
-
-    // Measure tallest visible pane.
-    let maxH = 0;
-    const visiblePanes = panes.filter(isVisible);
-    visiblePanes.forEach((pane) => {
-      const h = pane.getBoundingClientRect()?.height ?? 0;
-      if (Number.isFinite(h) && h > maxH) maxH = h;
-    });
-    if (!maxH || !Number.isFinite(maxH)) {
-      syncing = false;
-      return;
-    }
-
-    // Apply: set pane height, then expand the body (console/panel body) to fill extra space.
-    visiblePanes.forEach((pane) => {
-      pane.style.height = `${Math.ceil(maxH)}px`;
-
-      const consoleEl = pane.querySelector(".admin-console");
-      if (consoleEl) {
-        // pane height includes titlebar + toolbar + console body.
-        const chromeH = pane.getBoundingClientRect().height - consoleEl.getBoundingClientRect().height;
-        const bodyH = Math.max(120, Math.floor(maxH - chromeH));
-        consoleEl.style.height = `${bodyH}px`;
-        consoleEl.style.minHeight = `${bodyH}px`;
-        consoleEl.style.maxHeight = `${bodyH}px`;
-      }
-
-      const panelBody = pane.querySelector(".admin-panel-body");
-      if (panelBody) {
-        const chromeH = pane.getBoundingClientRect().height - panelBody.getBoundingClientRect().height;
-        const bodyH = Math.max(120, Math.floor(maxH - chromeH));
-        panelBody.style.height = `${bodyH}px`;
-      }
-    });
-
-    syncing = false;
-  };
-
-  const schedule = () => {
-    if (queued) return;
-    queued = true;
-    requestAnimationFrame(() => {
-      // Let layout settle, then measure.
-      requestAnimationFrame(sync);
-    });
-  };
-
-  schedule();
-  window.addEventListener("resize", schedule);
-
-  // Observe size changes caused by toolbar wrapping, fonts, etc.
-  if (typeof ResizeObserver === "function") {
-    const ro = new ResizeObserver(() => {
-      if (syncing) return;
-      schedule();
-    });
-    ro.observe(splitEl);
-    Array.from(splitEl.querySelectorAll(".admin-console-wrap")).forEach((pane) => ro.observe(pane));
-  }
-
-  // Expose a tiny hook so open/close/minimize/maximize can re-sync after animations.
-  window.__adminEqualizePanes = { schedule };
-}
-
 function renderStatsCards(payload) {
   const grid = document.getElementById("adminStatsGrid");
   if (!grid) return;
@@ -1718,7 +818,6 @@ function renderStatsCards(payload) {
     )
     .join("");
 
-  window.__adminEqualizePanes?.schedule?.();
 }
 
 async function refreshStats() {
@@ -1736,24 +835,6 @@ async function refreshStats() {
   } catch (e) {
     setStatsHint(adminEndpointErrorMessage(e, "Stats"), true);
   }
-}
-
-function shouldPollStatsFromStorage() {
-  const visible = window.__adminLogWindowState?.getVisiblePair?.();
-  if (!visible) return true;
-  return !!visible.stats;
-}
-
-function startStatsPolling() {
-  if (statsPollTimer) return;
-  void refreshStats();
-  statsPollTimer = window.setInterval(refreshStats, 10000);
-}
-
-function stopStatsPolling() {
-  if (!statsPollTimer) return;
-  window.clearInterval(statsPollTimer);
-  statsPollTimer = null;
 }
 
 function setupCsvDownload() {
@@ -2855,6 +1936,9 @@ function setupMarketConfigEditor() {
   fitJsonEditorToContent();
   syncHighlight();
   void loadKey();
+  document.addEventListener("admin:pane-shown", (ev) => {
+    if (ev.detail === "config") fitJsonEditorToContent();
+  });
 }
 
 function setupRestartPoller() {
@@ -2880,6 +1964,7 @@ function setupRestartPoller() {
       const payload = await fetchJsonWithInit("/api/admin/restart-poller", { method: "POST" });
       const pid = payload?.managed?.start?.pid ?? payload?.start?.pid ?? payload?.pid;
       setHint(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
+      pollerLogViewer?.reset();
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Restart poller"), true);
     } finally {
@@ -2936,6 +2021,7 @@ function setupMapResize() {
 }
 
 function main() {
+  setupThemeToggle();
   setupCsvDownload();
   setupDbDownload();
   setupRunDbExport();
@@ -2948,15 +2034,11 @@ function main() {
   setupStopPoller();
   setupRestartPoller();
   setupMapResize();
-  setupLogConsoleWindowControls();
-  setupLogSplitView();
-  setupEqualHeightConsolePanes();
-  refreshLogs();
-  if (shouldPollStatsFromStorage()) startStatsPolling();
-  else stopStatsPolling();
-  refreshVisitors();
-  logPollTimer = window.setInterval(refreshLogs, 2500);
-  mapPollTimer = window.setInterval(refreshVisitors, 60000);
+  setupLogsWindow();
+  setupPanes();
+  window.setInterval(refreshLogs, 2500);
+  window.setInterval(() => isPaneLive("overview") && void refreshStats(), 10000);
+  window.setInterval(() => isPaneLive("visitors") && void refreshVisitors(), 60000);
 }
 
 main();
