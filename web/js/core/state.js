@@ -1,4 +1,5 @@
 export const REFRESH_MS = 30_000;
+export const POLL_STATUS_MS = 5_000;
 /** Extra history before chart window for carry-forward / inference aggregates. */
 export const PRICES_HISTORY_BUFFER_MS = 2 * 24 * 60 * 60 * 1000;
 // Charts render 10 historical points + 1 forecast point.
@@ -42,6 +43,8 @@ export const dom = {
   cardsEl: document.getElementById("cards"),
   overviewEl: document.getElementById("overview"),
   statusDot: document.getElementById("statusDot"),
+  mirrorRatio: document.getElementById("mirrorRatio"),
+  mirrorRatioValue: document.getElementById("mirrorRatioValue"),
   statusText: document.getElementById("statusText"),
   searchInput: document.getElementById("searchInput"),
   searchClearBtn: document.getElementById("searchClearBtn"),
@@ -70,6 +73,8 @@ export const state = {
   globalPriceRange: { min: 0, max: 100 },
   currentItems: [],
   nextInLineItemName: null,
+  // Freshest poll seen via /api/poll-status ({ itemName, time }); /api/prices is cached server-side.
+  latestPoll: null,
   favoriteItems: loadFavorites(),
 };
 

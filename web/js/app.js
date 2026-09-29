@@ -1,6 +1,6 @@
-import { REFRESH_MS } from "./core/state.js";
+import { POLL_STATUS_MS, REFRESH_MS } from "./core/state.js";
 import { initTheme, toggleTheme } from "./ui/theme.js";
-import { refresh } from "./ui/renderer.js";
+import { refresh, refreshPollStatus } from "./ui/renderer.js";
 import { registerFilterEventListeners, registerKeyboardShortcuts, syncFilterControlsFromState } from "./ui/filterUI.js";
 import { initCompanion } from "./companion/companion.js";
 
@@ -30,6 +30,13 @@ initStatusJumpToNextInLine();
 // Start data refresh cycle
 refresh();
 setInterval(refresh, REFRESH_MS);
+refreshPollStatus();
+setInterval(() => {
+  if (!document.hidden) refreshPollStatus();
+}, POLL_STATUS_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshPollStatus();
+});
 
 
 function initBackToTopButton() {

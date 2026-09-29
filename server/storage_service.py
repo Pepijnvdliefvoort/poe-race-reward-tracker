@@ -313,6 +313,45 @@ class ServerStorage:
         finally:
             con.close()
 
+    def latest_poll_status(self) -> dict[str, Any]:
+        """Most recent item poll + latest divine:mirror ratio (cheap; used by the live dashboard)."""
+        con = self.connect()
+        try:
+            poll = con.execute(
+                """
+                SELECT v.display_name, ip.requested_at_utc, pr.cycle_number
+                FROM item_polls ip
+                JOIN item_variants v ON v.id = ip.item_variant_id
+                JOIN poll_runs pr ON pr.id = ip.poll_run_id
+                ORDER BY ip.id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            ratio = con.execute(
+                """
+                SELECT divines_per_mirror, started_at_utc
+                FROM poll_runs
+                WHERE divines_per_mirror IS NOT NULL AND divines_per_mirror > 0
+                ORDER BY started_at_utc DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        finally:
+            con.close()
+        return {
+            "latestPoll": (
+                {
+                    "itemName": str(poll["display_name"] or ""),
+                    "requestedAtUtc": str(poll["requested_at_utc"] or ""),
+                    "cycle": int(poll["cycle_number"] or 0),
+                }
+                if poll
+                else None
+            ),
+            "divinesPerMirror": float(ratio["divines_per_mirror"]) if ratio else None,
+            "divinesPerMirrorAtUtc": str(ratio["started_at_utc"] or "") if ratio else None,
+        }
+
     def record_visit(self, *, ts_utc: str, ip: str, path: str) -> None:
         con = self.connect()
         try:
