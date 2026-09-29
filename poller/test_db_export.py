@@ -5,7 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from poller.db_export import _snapshot_sqlite_db
+from unittest import mock
+
+from poller import db_export
+from poller.db_export import DbExportConfig, _snapshot_sqlite_db, maybe_export_db_to_discord
 
 
 class DbExportScrubTests(unittest.TestCase):
@@ -44,6 +47,33 @@ class DbExportScrubTests(unittest.TestCase):
                 self.assertEqual(live.execute("SELECT COUNT(*) FROM visits").fetchone()[0], 1)
             finally:
                 live.close()
+
+
+class DbExportBackgroundTests(unittest.TestCase):
+    def test_export_runs_in_background_and_only_once_at_a_time(self) -> None:
+        import threading
+
+        release = threading.Event()
+        started = []
+
+        def slow_export(**kwargs) -> None:
+            started.append(kwargs["today_local"])
+            release.wait(5)
+
+        storage = mock.Mock()
+        storage.get_config.return_value = {}
+        cfg = DbExportConfig(webhook_url="https://example.invalid/hook", tz_offset_minutes=0, schedule_hour=0, schedule_minute=0)
+        logs = []
+        with mock.patch.object(db_export, "_run_export", side_effect=slow_export):
+            maybe_export_db_to_discord(storage=storage, session=None, cfg=cfg, log=lambda *a: logs.append(a))
+            maybe_export_db_to_discord(storage=storage, session=None, cfg=cfg, log=lambda *a: logs.append(a))
+            thread = db_export._EXPORT_THREAD
+            self.assertIsNotNone(thread)
+            self.assertTrue(thread.is_alive())  # returned while the export is still running
+            release.set()
+            thread.join(5)
+        self.assertEqual(len(started), 1)  # the second cycle did not start a second export
+        self.assertEqual(len(logs), 1)
 
 
 if __name__ == "__main__":
