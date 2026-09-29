@@ -134,8 +134,8 @@ python -m unittest discover -t . -s . -p "test_*.py"   # full test suite, same a
 python scripts/retrain_ml_pipeline.py                 # backtest + retrain the ranking
 ```
 
-- CI runs the syntax check and tests on Python 3.10 and 3.12 for every PR and every push outside
-  `main`; pushes to `main` are tested by the deploy workflow before deploying.
+- CI runs the syntax check and tests on Python 3.10 and 3.12 for every PR and every push to
+  `develop`; pushes to `main` are tested by the deploy workflow before deploying.
 - `data/market.db` is the source of truth; treat it as production data.
 - See [`CLAUDE.md`](CLAUDE.md) for repository rules (schema migrations, inference and auth safety).
 

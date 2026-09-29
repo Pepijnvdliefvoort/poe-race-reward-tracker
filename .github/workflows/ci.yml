@@ -1,10 +1,10 @@
-# Unit tests + syntax check. Runs on every push/PR and is reused by deploy-vps.yml
-# so a failing test blocks the VPS deploy.
+# Unit tests + syntax check. Runs on PRs and on pushes to develop (feature branches are tested once,
+# via their PR). Reused by deploy-vps.yml so a failing test blocks the VPS deploy.
 name: CI
 
 on:
   push:
-    branches-ignore: [main, master]
+    branches: [develop]
   pull_request:
   workflow_call:
 
