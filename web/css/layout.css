@@ -134,6 +134,20 @@ h1 {
   outline-offset: 2px;
 }
 
+.mirror-ratio {
+  gap: 6px;
+}
+
+.mirror-ratio[hidden] {
+  display: none;
+}
+
+.mirror-ratio-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
 #meta {
   gap: 10px;
 }

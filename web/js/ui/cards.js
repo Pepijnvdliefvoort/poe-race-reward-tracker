@@ -356,6 +356,7 @@ export function ensureCard(item, onFavoriteToggle) {
   const card = document.createElement("article");
   card.className = "card card-enter";
   card.dataset.cardKey = key;
+  card.dataset.itemName = item.itemName;
   card.addEventListener(
     "animationend",
     () => {
@@ -778,6 +779,16 @@ export function updateAllCards(itemsToRender, onFavoriteToggle) {
       entry.card.remove();
       chartMap.delete(key);
     }
+  }
+}
+
+/**
+ * Move the green "next in line" border without a full card update. Touches every card
+ * (offscreen ones included) so a stale border can't linger on a card that isn't re-rendered.
+ */
+export function syncNextInLineClasses() {
+  for (const entry of chartMap.values()) {
+    entry.card.classList.toggle("next-in-line", entry.card.dataset.itemName === state.nextInLineItemName);
   }
 }
 
