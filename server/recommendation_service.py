@@ -23,6 +23,7 @@ from ML import model as model_mod
 from ML.estimator import Estimate, EstimatorParams, estimate, params_from_config
 from ML.features import Snapshot, market_mirror_rate, market_sale_rate, snapshot
 from ML.market import Market, load_market
+from server import companion_track_record
 from server.data_service import _get_image_path
 from server.storage_service import ServerStorage
 
@@ -541,6 +542,18 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
 
     portfolio = _build_portfolio_plan(recommendations=recommendations, wealth_mirror=wealth_mirror, risk=risk)
 
+    # Log the shown picks so the admin track record can check them later; never fail the request.
+    try:
+        con = storage.connect()
+        try:
+            companion_track_record.log_picks(
+                con, candidates[:limit], params, ranking_source="model" if use_model else "estimator", now=now
+            )
+        finally:
+            con.close()
+    except sqlite3.Error:
+        pass
+
     return {
         "ok": True,
         "generatedAt": now.isoformat(),
@@ -566,3 +579,14 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
         "skipped": skipped,
         "disclaimer": "These are market estimates from inferred sales and listings, not guaranteed returns.",
     }
+
+
+def companion_track_record_summary(*, root_dir: Path | None = None) -> dict[str, Any]:
+    """Admin: how the companion's logged picks turned out (see server/companion_track_record.py)."""
+    storage = ServerStorage(Path(root_dir) if root_dir is not None else ROOT_DIR)
+    market = _load_market_cached(storage, with_episodes=False)
+    con = storage.connect()
+    try:
+        return companion_track_record.evaluate_and_summarize(con, market, now=_utc_now())
+    finally:
+        con.close()

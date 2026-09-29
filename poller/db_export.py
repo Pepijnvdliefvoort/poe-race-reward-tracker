@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -366,7 +367,10 @@ def maybe_export_db_to_discord(
     """
     Upload a daily DB snapshot to a Discord webhook as a file attachment.
 
-    The "last uploaded" timestamp is stored in SQLite config key `db_export`.
+    The "last uploaded" timestamp is stored in SQLite config key `db_export`. The snapshot, zip and
+    upload take a few minutes of CPU on a large DB, so they run in a background thread: polling
+    continues meanwhile, and at most one export runs at a time. If it fails (or the poller stops
+    mid-way), the next cycle starts it again because the day is only marked done after the upload.
     """
     webhook_url = (cfg.webhook_url or "").strip()
     if not webhook_url:
@@ -384,6 +388,34 @@ def maybe_export_db_to_discord(
     if already_uploaded_today or (not after_schedule):
         return
 
+    global _EXPORT_THREAD
+    with _EXPORT_LOCK:
+        if _EXPORT_THREAD is not None and _EXPORT_THREAD.is_alive():
+            return
+        log("cycle", "Starting daily DB export to Discord in the background (snapshot, zip, upload).")
+        _EXPORT_THREAD = threading.Thread(
+            target=_run_export,
+            kwargs=dict(storage=storage, cfg=cfg, log=log, state=state, now_utc=now_utc, today_local=today_local),
+            name="db-export",
+            daemon=True,
+        )
+        _EXPORT_THREAD.start()
+
+
+_EXPORT_LOCK = threading.Lock()
+_EXPORT_THREAD: threading.Thread | None = None
+
+
+def _run_export(
+    *,
+    storage: StorageService,
+    cfg: DbExportConfig,
+    log: callable,
+    state: dict,
+    now_utc: datetime,
+    today_local: date,
+) -> None:
+    webhook_url = (cfg.webhook_url or "").strip()
     root_dir = storage.db_path.parent.parent
     exports_dir = root_dir / "storage" / "exports"
     stamp = now_utc.strftime("%Y%m%d")

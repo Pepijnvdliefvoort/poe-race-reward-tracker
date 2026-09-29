@@ -9,7 +9,9 @@ from ML import pipeline
 from ML.estimator import EstimatorParams
 from ML.market import load_market
 from ML.synthetic import build_synthetic_db, open_readonly
-from server.recommendation_service import RecommendationInputError, recommend_investments
+from server import companion_track_record
+from server.recommendation_service import RecommendationInputError, companion_track_record_summary, recommend_investments
+from storage.db import Database
 
 
 class RecommendInvestmentsTests(unittest.TestCase):
@@ -82,6 +84,60 @@ class RecommendInvestmentsTests(unittest.TestCase):
             self.assertTrue(all(r["rankingSource"] == "model" for r in recs))
             model_scores = [r["modelReturnPerDayPct"] for r in recs]
             self.assertEqual(model_scores, sorted(model_scores, reverse=True))
+
+    def test_shown_picks_are_logged_once_per_week(self) -> None:
+        con = Database(root_dir=self.root).connect()
+        try:
+            con.execute("DELETE FROM companion_picks")  # other tests in this class log picks too
+            con.commit()
+        finally:
+            con.close()
+        first = self._recommend(limit=3)
+        self._recommend(limit=3)  # same picks again: no new rows
+        con = Database(root_dir=self.root).connect()
+        try:
+            rows = con.execute("SELECT item_variant_id, best_rank, plan FROM companion_picks").fetchall()
+        finally:
+            con.close()
+        self.assertEqual(len(rows), len(first["recommendations"]))
+        self.assertEqual(sorted(int(r["best_rank"]) for r in rows), list(range(1, len(rows) + 1)))
+        summary = companion_track_record_summary(root_dir=self.root)
+        self.assertEqual(summary["logged"], len(rows))
+        self.assertEqual(summary["pending"], len(rows))  # nothing has had time to sell yet
+        self.assertEqual(len(summary["recent"]), len(rows))
+
+
+class TrackRecordReplayTests(unittest.TestCase):
+    def test_old_picks_are_replayed_on_later_history(self) -> None:
+        from datetime import datetime, timezone
+
+        from ML.estimator import estimate
+        from ML.features import DAY, snapshots_at
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = build_synthetic_db(root, variants=12, days=150, poll_hours=12, seed=7)
+            con = open_readonly(db)
+            try:
+                market = load_market(con)
+            finally:
+                con.close()
+            params = EstimatorParams()
+            ts = market.start_ts + 40 * DAY
+            picks = sorted(((s, estimate(s, params)) for s in snapshots_at(market, ts)), key=lambda x: -x[1].return_per_day)[:4]
+            con = Database(root_dir=root).connect()
+            try:
+                when = datetime.fromtimestamp(ts, tz=timezone.utc)
+                companion_track_record.log_picks(con, picks, params, ranking_source="estimator", now=when)
+                out = companion_track_record.evaluate_and_summarize(con, market, now=datetime.now(timezone.utc))
+                stored = con.execute("SELECT COUNT(*) FROM companion_picks WHERE outcome_evaluated_at_utc IS NOT NULL").fetchone()[0]
+            finally:
+                con.close()
+            # 40 + 60 days < 150 days of data: every pick has a final outcome.
+            self.assertEqual(out["pending"], 0)
+            self.assertEqual(out["evaluated"]["picks"], len(picks))
+            self.assertEqual(stored, len(picks))
+            self.assertTrue(all(p["status"] in {"sold", "unsold"} for p in out["recent"]))
 
 
 if __name__ == "__main__":

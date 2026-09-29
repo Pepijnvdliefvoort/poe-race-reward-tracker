@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 def migration_001_initial() -> str:
@@ -329,3 +329,37 @@ def migration_016_inference_signal_count() -> str:
 def migration_017_backfill_online_pending_counted_immediate() -> str:
     """Applied via a Python idempotent migration in `storage/db.py`."""
     return ""
+
+
+def migration_018_companion_picks() -> str:
+    """Investment companion picks, logged once per (variant, ISO week, plan, ask) and checked later."""
+    return """
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS companion_picks (
+  id INTEGER PRIMARY KEY,
+  item_variant_id INTEGER NOT NULL REFERENCES item_variants(id) ON DELETE CASCADE,
+  pick_week TEXT NOT NULL,
+  created_at_utc TEXT NOT NULL,
+  plan TEXT NOT NULL,
+  entry_price_mirror REAL NOT NULL,
+  ask_price_mirror REAL NOT NULL,
+  ask_whole_mirrors INTEGER NOT NULL DEFAULT 0,
+  queue_ahead INTEGER NOT NULL DEFAULT 0,
+  sell_probability REAL NOT NULL,
+  expected_days REAL NOT NULL,
+  expected_return REAL NOT NULL,
+  return_per_day REAL NOT NULL,
+  horizon_days REAL NOT NULL,
+  fee_pct REAL NOT NULL DEFAULT 0,
+  best_rank INTEGER NOT NULL,
+  ranking_source TEXT NOT NULL,
+  outcome_sold INTEGER,
+  outcome_days REAL,
+  outcome_return REAL,
+  outcome_evaluated_at_utc TEXT,
+  UNIQUE(item_variant_id, pick_week, plan, ask_price_mirror)
+);
+
+CREATE INDEX IF NOT EXISTS idx_companion_picks_created ON companion_picks(created_at_utc);
+"""
