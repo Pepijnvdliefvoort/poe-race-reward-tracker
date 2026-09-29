@@ -13,6 +13,7 @@ const riskHelpEl = document.getElementById("companionRiskHelp");
 
 const PREFERENCES_STORAGE_KEY = "companion.preferences.v1";
 const WIDTH_STORAGE_KEY = "companion.width.v1";
+const OPEN_STORAGE_KEY = "companion.open.v1";
 const MIN_WIDTH = 360;
 const MAX_WIDTH = 760;
 
@@ -146,12 +147,13 @@ function applyWidth(width) {
   return clamped;
 }
 
-function openCompanion() {
+function openCompanion({ focus = true } = {}) {
   if (!widget || !panel || !toggleBtn) return;
   panel.hidden = false;
   widget.classList.add("is-open");
   toggleBtn.setAttribute("aria-expanded", "true");
-  window.requestAnimationFrame(() => wealthInput?.focus());
+  writeJson(OPEN_STORAGE_KEY, true);
+  if (focus) window.requestAnimationFrame(() => wealthInput?.focus());
 }
 
 function closeCompanion() {
@@ -159,6 +161,7 @@ function closeCompanion() {
   panel.hidden = true;
   widget.classList.remove("is-open");
   toggleBtn.setAttribute("aria-expanded", "false");
+  writeJson(OPEN_STORAGE_KEY, false);
   toggleBtn.focus();
 }
 
@@ -511,5 +514,7 @@ export function initCompanion() {
     if (!authenticated) return;
     widget.hidden = false;
     document.body.classList.add("companion-available");
+    // Reopen the drawer if it was open when the page was last left (per browser).
+    if (readJson(OPEN_STORAGE_KEY) === true) openCompanion({ focus: false });
   });
 }
