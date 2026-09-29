@@ -358,12 +358,13 @@ async function init() {
   window.addEventListener("message", onAppMessage);
   window.addEventListener("pagehide", saveState);
   document.addEventListener("keydown", (ev) => {
-    // Escape minimizes the front window, like hiding a panel.
-    if (ev.key !== "Escape") return;
+    // Escape closes the front window (the apps handle it themselves while focus is inside them).
+    if (ev.key !== "Escape" || ev.defaultPrevented) return;
+    if (ev.target?.closest?.("input, textarea, select")) return; // e.g. clearing the dashboard search
     const front = [...windows.entries()]
       .filter(([, w]) => w.state === "open")
       .sort((a, b) => Number(b[1].el.style.zIndex) - Number(a[1].el.style.zIndex))[0];
-    if (front) minimizeWindow(front[0]);
+    if (front) closeWindow(front[0]);
   });
 
   // Windows that were open on the previous page (or minimized from the standalone admin page).
