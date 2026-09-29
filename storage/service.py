@@ -499,6 +499,27 @@ class StorageService:
         inference_counts = _reconcile_inference_counts_from_events(inference_counts, inference_events)
         con = self._db.connect()
         try:
+            # Transfer ping-pong: the same two sellers "transferring" a copy back and forth are traders
+            # relisting interchangeable copies (38 of 85 transfers in Sep 2026), not buyers. Neither
+            # the new transfer nor the earlier ones between that pair count as sales.
+            inference_events = [dict(ev) if isinstance(ev, dict) else ev for ev in (inference_events or [])]
+            ping_pong_pairs: set[tuple[str, str]] = set()
+            sales_check = SalesRepo(con)
+            for ev in inference_events:
+                if not isinstance(ev, dict) or str(ev.get("rule") or "") != "confirmed_transfer":
+                    continue
+                a = str(ev.get("from_seller") or "").strip()
+                b = str(ev.get("to_seller") or "").strip()
+                if a and b and sales_check.transfer_exists_between(item_variant_id=int(variant_id), seller_a=a, seller_b=b):
+                    ev["ignoredSaleRule"] = "confirmed_transfer"
+                    ev["rule"] = "transfer_ping_pong_ignored"
+                    ping_pong_pairs.add((a, b))
+            if ping_pong_pairs:
+                inference_counts = dict(inference_counts or {})
+                inference_counts["confirmedTransfer"] = max(
+                    0, int(inference_counts.get("confirmedTransfer", 0)) - len(ping_pong_pairs)
+                )
+
             polls = PollsRepo(con)
             run_id = polls.upsert_poll_run(
                 cycle_number=cycle_number,
@@ -677,6 +698,20 @@ class StorageService:
                         ),
                     )
 
+            for a, b in ping_pong_pairs:
+                for pid in SalesRepo(con).revert_transfers_between(
+                    item_variant_id=int(variant_id),
+                    seller_a=a,
+                    seller_b=b,
+                    reverted_at_utc=_utc_now_iso(),
+                    reverted_by_item_poll_id=int(item_poll_id),
+                    reverted_reason="transfer_ping_pong",
+                ):
+                    con.execute(
+                        "UPDATE item_polls SET inf_confirmed_transfer = MAX(0, inf_confirmed_transfer - 1) WHERE id = ?",
+                        (int(pid),),
+                    )
+
             polls.replace_listing_snapshots(item_poll_id=item_poll_id, rows=listing_preview_rows)
             polls.replace_inference_events(item_poll_id=item_poll_id, events=inference_events)
             self._record_sales_from_inference_events(
@@ -821,6 +856,18 @@ class StorageService:
                 min_cycle=int(min_cycle),
                 max_cycle=int(max_cycle),
             )
+        finally:
+            con.close()
+
+    def revert_anomaly_day_sales(self, *, day_utc: str) -> int:
+        """Revert the given UTC day's sales once that day's count spikes far above the previous two
+        weeks (mass vanish spread over many polls). Returns how many sales were reverted."""
+        from storage.sale_hygiene import revert_anomaly_day_sales
+
+        self.ensure_initialized()
+        con = self._db.connect()
+        try:
+            return len(revert_anomaly_day_sales(con, str(day_utc)))
         finally:
             con.close()
 

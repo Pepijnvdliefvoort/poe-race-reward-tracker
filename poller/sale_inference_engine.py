@@ -21,6 +21,13 @@ Rules:
    (not a sale; only when that pair maps to exactly one listing on both polls).
 6. Same fingerprint offered by 2+ different sellers in one fetch -> multi-party contention signal.
 7. New (fingerprint, seller) pairs vs previous poll -> fresh supply / new listing rows this cycle.
+8. Mass vanish: when at least 4 sellers and at least half of the previous poll's sellers "sell" in
+   the same poll, listings vanished en masse (trade-site glitch, e.g. 2026-07-24/25: 60-90% of
+   sellers gone at once) and none of that poll's removals count as sales. Real multi-sale polls
+   were 10-25% of sellers.
+9. Seller burst: one seller counts at most one sale per poll. Several of one seller's copies
+   vanishing together is a stack being pulled (e.g. 16 copies at 800 div on 2026-07-26), not
+   several buyers.
 """
 
 from __future__ import annotations
@@ -31,6 +38,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 EXALTS_PER_DIVINE = 60.0
+
+MASS_VANISH_MIN_SELLERS = 4
+MASS_VANISH_MIN_SELLER_SHARE = 0.5
+MAX_SALES_PER_SELLER_PER_POLL = 1
+_VANISH_SALE_RULES = ("likely_instant_sale", "likely_non_instant_online_sale")
+_RESULT_COUNTER_FOR_RULE = {
+    "likely_instant_sale": "likely_instant_sale",
+    "likely_non_instant_online_sale": "likely_non_instant_online",
+}
 
 # Bump when `fingerprint_trade_item` inputs change. On poller startup a stored
 # version mismatch clears inference_state_* so the first post-deploy poll does
@@ -1137,6 +1153,75 @@ def _apply_count_decreases(
             )
 
 
+def _ignore_sale_event(ctx: _TransitionContext, ev: dict[str, Any], rule: str) -> None:
+    """Turn a credited sale event into a non-sale audit event and undo its counter."""
+    counter = _RESULT_COUNTER_FOR_RULE[str(ev["rule"])]
+    setattr(ctx.result, counter, getattr(ctx.result, counter) - 1)
+    ev["ignoredSaleRule"] = ev["rule"]
+    ev["rule"] = rule
+
+
+def _drop_new_pendings(
+    ctx: _TransitionContext, pendings: list[dict[str, Any]], keys: set[tuple[str, str]]
+) -> list[dict[str, Any]]:
+    """Remove this cycle's pendings for ignored removals, so a later relist has nothing to revert."""
+    return [
+        p
+        for p in pendings
+        if not (
+            int(p.get("removed_cycle") or 0) == ctx.cycle
+            and (str(p.get("fingerprint") or ""), str(p.get("seller") or "")) in keys
+        )
+    ]
+
+
+def _apply_sale_sanity_caps(
+    ctx: _TransitionContext,
+    new_pending_instant: list[dict[str, Any]],
+    new_pending_online: list[dict[str, Any]],
+    *,
+    mass_vanish_min_sellers: int,
+    mass_vanish_min_seller_share: float,
+    max_sales_per_seller: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Rules 8 (mass vanish) and 9 (seller burst). Returns the filtered new pendings."""
+    sale_events = [ev for ev in ctx.events if str(ev.get("rule") or "") in _VANISH_SALE_RULES]
+    if not sale_events:
+        return new_pending_instant, new_pending_online
+
+    ignored: list[dict[str, Any]] = []
+    sale_sellers = {str(ev.get("seller") or "").casefold() for ev in sale_events}
+    prev_sellers = {str(s.get("seller") or "").casefold() for s in ctx.prev_signals if s.get("seller")}
+    if (
+        mass_vanish_min_sellers > 0
+        and len(sale_sellers) >= mass_vanish_min_sellers
+        and len(sale_sellers) >= mass_vanish_min_seller_share * max(1, len(prev_sellers))
+    ):
+        for ev in sale_events:
+            _ignore_sale_event(ctx, ev, "mass_vanish_ignored")
+            ignored.append(ev)
+    elif max_sales_per_seller > 0:
+        per_seller: dict[str, int] = {}
+        for ev in sale_events:
+            seller = str(ev.get("seller") or "").casefold()
+            per_seller[seller] = per_seller.get(seller, 0) + 1
+            if per_seller[seller] > max_sales_per_seller:
+                _ignore_sale_event(ctx, ev, "seller_burst_ignored")
+                ignored.append(ev)
+
+    if not ignored:
+        return new_pending_instant, new_pending_online
+    keys = {(str(ev.get("fingerprint") or ""), str(ev.get("seller") or "")) for ev in ignored}
+    # A seller keeping one credited sale for this key keeps its pending (relist can still undo it).
+    kept = {
+        (str(ev.get("fingerprint") or ""), str(ev.get("seller") or ""))
+        for ev in sale_events
+        if str(ev.get("rule") or "") in _VANISH_SALE_RULES
+    }
+    keys -= kept
+    return _drop_new_pendings(ctx, new_pending_instant, keys), _drop_new_pendings(ctx, new_pending_online, keys)
+
+
 def evaluate_listing_transition(
     *,
     item_key: str,
@@ -1157,6 +1242,9 @@ def evaluate_listing_transition(
     truncated_instant_vanish_max_above_floor_mirrors: float = 0.08,
     fetch_jitter_grace_polls: int = 2,
     non_instant_online_grace_polls: int = 1,
+    mass_vanish_min_sellers: int = MASS_VANISH_MIN_SELLERS,
+    mass_vanish_min_seller_share: float = MASS_VANISH_MIN_SELLER_SHARE,
+    max_sales_per_seller: int = MAX_SALES_PER_SELLER_PER_POLL,
 ) -> tuple[InferenceCycleResult, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Returns (result, new_pending_instant, new_pending_online_non_instant, curr_signals_for_storage).
@@ -1219,6 +1307,14 @@ def evaluate_listing_transition(
     curr_pair_counts = _signal_pair_counts(curr_signals)
     _apply_reprices(ctx, prev_pair_counts, curr_pair_counts)
     _apply_count_decreases(ctx, prev_pair_counts, curr_pair_counts)
+    new_pending_instant, new_pending_online = _apply_sale_sanity_caps(
+        ctx,
+        new_pending_instant,
+        new_pending_online,
+        mass_vanish_min_sellers=int(mass_vanish_min_sellers),
+        mass_vanish_min_seller_share=float(mass_vanish_min_seller_share),
+        max_sales_per_seller=int(max_sales_per_seller),
+    )
 
     # --- Rule 6: multiple sellers listing the same roll in one ladder slice ---
     result = ctx.result
