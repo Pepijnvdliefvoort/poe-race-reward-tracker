@@ -2863,6 +2863,9 @@ def run_cycle(
         request_timestamp_utc = datetime.now(timezone.utc).isoformat()
         item_key = get_item_variant_key(item)  # Includes image_name_filter if present
         variant_id = int(variant_ids_by_key.get(item_key) or 0)
+        # The summary line below is only logged once the item is done (after rate-limit waits),
+        # so announce the start too; otherwise the log reads one item behind the poller.
+        log_line("item", f"[{index:>{len(str(total_items))}}/{total_items}] {item.name} [{item_mode_label(item)}] fetching...")
 
         # For the first-ever poll of an item variant, force "available" so offline listings
         # don't look like vanished/sold listings in the inference engine.
