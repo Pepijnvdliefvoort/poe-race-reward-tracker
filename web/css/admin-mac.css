@@ -420,6 +420,65 @@ a.mac-nav-item[aria-current="page"] {
   background: transparent;
 }
 
+/* Standalone app without a sidebar (DB explorer): a title bar on top instead. */
+.mac-app--standalone {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.mac-titlebar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  height: 46px;
+  padding: 0 14px;
+  background: var(--sidebar);
+  backdrop-filter: saturate(180%) blur(28px);
+  -webkit-backdrop-filter: saturate(180%) blur(28px);
+  border-bottom: 1px solid var(--stroke);
+  user-select: none;
+}
+
+.mac-titlebar .mac-traffic-lights {
+  padding: 0;
+}
+
+.mac-titlebar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mac-titlebar-title h1 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.mac-titlebar-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mac-titlebar-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.mac-titlebar-btn:hover {
+  background: var(--fill-strong);
+  color: var(--ink);
+}
+
 /* Embedded in a dock window on a public page: the dock window provides frame and size. */
 :root.mac-embedded .mac-app {
   height: 100vh;

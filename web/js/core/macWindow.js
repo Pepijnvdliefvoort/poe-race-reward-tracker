@@ -5,7 +5,7 @@
  * - red: close (animates out, then opens the dashboard)
  * - yellow: minimize to the dashboard's admin dock (web/js/adminDock.js restores it there)
  * - green: zoom between a floating window and the full browser window (remembered);
- *   double-clicking the sidebar header does the same, like a macOS title bar
+ *   double-clicking the title area does the same, like a macOS title bar
  *
  * Embedded (inside a dock window on a public page, `?embedded=1`): the buttons ask the
  * dock to close / minimize / zoom this window via postMessage, links to the other admin
@@ -32,6 +32,16 @@ function store(storage, key, value) {
   } catch {
     // storage unavailable (private mode / blocked)
   }
+}
+
+// Double-clicking the title area (sidebar header, or the title bar of a sidebar-less app)
+// zooms, like a macOS title bar; double-clicks on its buttons are ignored.
+function onTitleDoubleClick(app, handler) {
+  app.querySelectorAll(".mac-sidebar-head, .mac-titlebar").forEach((el) =>
+    el.addEventListener("dblclick", (ev) => {
+      if (!ev.target?.closest?.("button, a, input")) handler();
+    }),
+  );
 }
 
 function appIdForPath(pathname) {
@@ -64,7 +74,7 @@ export function setupMacWindow({ onMinimizedChange } = {}) {
     buttons.close?.addEventListener("click", () => toDock({ action: "close" }));
     buttons.minimize?.addEventListener("click", () => toDock({ action: "minimize" }));
     buttons.zoom?.addEventListener("click", () => toDock({ action: "zoom" }));
-    app.querySelector(".mac-sidebar-head")?.addEventListener("dblclick", () => toDock({ action: "zoom" }));
+    onTitleDoubleClick(app, () => toDock({ action: "zoom" }));
     if (buttons.close) buttons.close.title = "Close window";
     if (buttons.minimize) buttons.minimize.title = "Minimize to the dock";
     if (buttons.zoom) buttons.zoom.title = "Zoom";
@@ -107,7 +117,7 @@ export function setupMacWindow({ onMinimizedChange } = {}) {
   };
   syncZoomLabel();
   buttons.zoom?.addEventListener("click", toggleZoom);
-  app.querySelector(".mac-sidebar-head")?.addEventListener("dblclick", toggleZoom);
+  onTitleDoubleClick(app, toggleZoom);
 
   // ---- standalone: close / minimize both lead to the dashboard ----
   const leave = (cls, afterAnimation) => {
