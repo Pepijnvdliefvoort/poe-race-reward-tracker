@@ -1,17 +1,59 @@
 /**
- * Admin taskbar for the public pages (dashboard, compare, AA ladder, alt arts).
+ * Site taskbar for the public pages (dashboard, compare, AA ladder, alt arts): the site's
+ * navigation, shown to everyone, with the current page marked.
  *
- * Only rendered for an authenticated admin (checked via /api/companion/auth); visitors get
- * nothing. The dock holds the admin apps. Clicking one opens it as a floating window over the
- * current page (the admin page in an iframe, `?embedded=1`); clicking again minimizes it.
- * The window's own traffic lights talk to this script through postMessage (see
- * web/js/core/macWindow.js). Open windows survive moving between public pages: they are
- * restored minimized on the next page.
+ * For an authenticated admin (checked via /api/companion/auth) a separate, tinted section
+ * with the admin apps follows a divider; visitors never see it. Clicking an admin app opens
+ * it as a floating window over the current page (the admin page in an iframe, `?embedded=1`);
+ * clicking again minimizes it. The window's own traffic lights talk to this script through
+ * postMessage (see web/js/core/macWindow.js). Open windows survive moving between public
+ * pages: they are restored minimized on the next page. On phones the dock is a bottom tab
+ * bar and admin apps open as normal pages.
  */
 
 const STATE_KEY = "admin.dock.windows.v1"; // sessionStorage: [{ app, hash }]
 const MSG_FROM_APP = "mac-window";
 const MSG_TO_APP = "mac-window-state";
+
+const svg = (paths) => `<svg viewBox="0 0 20 20" aria-hidden="true">${paths}</svg>`;
+
+// Public pages (links); icons drawn white on a coloured tile.
+const PAGES = [
+  {
+    id: "dashboard",
+    name: "Dashboard",
+    href: "/",
+    svg: svg('<rect x="3" y="3" width="6" height="6" rx="1.3" fill="#fff"/><rect x="11" y="3" width="6" height="6" rx="1.3" fill="#fff"/><rect x="3" y="11" width="6" height="6" rx="1.3" fill="#fff"/><rect x="11" y="11" width="6" height="6" rx="1.3" fill="#fff"/>'),
+  },
+  {
+    id: "compare",
+    name: "Compare",
+    href: "/compare",
+    svg: svg('<path d="M4 16V9M8 16V4M12 16v-6M16 16V7" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>'),
+  },
+  {
+    id: "aa-ladder",
+    name: "AA ladder",
+    href: "/aa-ladder",
+    svg: svg('<path d="M3 17h4v-4h4V9h4V5h2" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
+  },
+  {
+    id: "alt-arts",
+    name: "Alt arts",
+    href: "/alt-arts",
+    svg: svg('<rect x="3" y="4" width="14" height="12" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/><circle cx="8" cy="8.5" r="1.6" fill="#fff"/><path d="M4 15l4-4 3 3 2-2 3 3" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>'),
+  },
+];
+
+function currentPageId() {
+  const path = window.location.pathname.replace(/\/+$/, "").replace(/\.html$/, "") || "/";
+  if (path === "/" || path === "/index") return "dashboard";
+  return PAGES.find((p) => p.href === path)?.id || "";
+}
+
+function isPhone() {
+  return !!window.matchMedia?.("(max-width: 760px)")?.matches;
+}
 
 const APPS = [
   { id: "admin", name: "Admin", path: "/admin", img: "/assets/icons/FairgravesTricorneAlt.png" },
@@ -77,6 +119,7 @@ function syncDock() {
   if (!dockEl) return;
   for (const app of APPS) {
     const btn = dockEl.querySelector(`[data-app="${app.id}"]`);
+    if (!btn) continue;
     const w = windows.get(app.id);
     btn.classList.toggle("adock-item--running", !!w);
     btn.setAttribute(
@@ -187,6 +230,11 @@ function createWindow(appId, { hash = "", minimized = false } = {}) {
 }
 
 function onDockClick(appId) {
+  if (isPhone()) {
+    // No floating windows on phones: open the admin app as a normal page.
+    window.location.assign(APPS.find((a) => a.id === appId).path);
+    return;
+  }
   const w = windows.get(appId);
   if (!w) createWindow(appId);
   else if (w.state === "open") minimizeWindow(appId);
@@ -216,36 +264,78 @@ function onAppMessage(ev) {
   }
 }
 
+function dockItem({ tag, className, label, iconClass, img, svgMarkup }) {
+  const item = document.createElement(tag);
+  item.className = className;
+  const icon = document.createElement("span");
+  icon.className = `adock-icon ${iconClass}`;
+  if (img) {
+    const image = document.createElement("img");
+    image.src = img;
+    image.alt = "";
+    icon.appendChild(image);
+  } else {
+    icon.innerHTML = svgMarkup;
+  }
+  const text = document.createElement("span");
+  text.className = "adock-label";
+  text.textContent = label;
+  const dot = document.createElement("span");
+  dot.className = "adock-dot";
+  item.append(icon, text, dot);
+  return item;
+}
+
 function renderDock() {
   dockEl = document.createElement("nav");
   dockEl.className = "adock";
-  dockEl.setAttribute("aria-label", "Admin apps");
-  for (const app of APPS) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "adock-item";
-    btn.dataset.app = app.id;
-    const icon = document.createElement("span");
-    icon.className = `adock-icon adock-icon--${app.id}`;
-    if (app.img) {
-      const img = document.createElement("img");
-      img.src = app.img;
-      img.alt = "";
-      icon.appendChild(img);
-    } else {
-      icon.innerHTML = app.svg;
-    }
-    const label = document.createElement("span");
-    label.className = "adock-label";
-    label.textContent = app.name;
-    const dot = document.createElement("span");
-    dot.className = "adock-dot";
-    btn.append(icon, label, dot);
-    btn.addEventListener("click", () => onDockClick(app.id));
-    dockEl.appendChild(btn);
+  dockEl.setAttribute("aria-label", "Site");
+  const current = currentPageId();
+  for (const page of PAGES) {
+    const link = dockItem({
+      tag: "a",
+      className: "adock-item adock-item--page",
+      label: page.name,
+      iconClass: `adock-icon--${page.id}`,
+      svgMarkup: page.svg,
+    });
+    link.href = page.href;
+    if (page.id === current) link.setAttribute("aria-current", "page");
+    dockEl.appendChild(link);
   }
   document.body.appendChild(dockEl);
+  document.body.classList.add("has-site-dock");
   requestAnimationFrame(() => dockEl.classList.add("adock--shown"));
+}
+
+function renderAdminSection() {
+  const divider = document.createElement("span");
+  divider.className = "adock-divider";
+  divider.setAttribute("aria-hidden", "true");
+  const group = document.createElement("div");
+  group.className = "adock-admin";
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", "Admin apps (token required)");
+  const badge = document.createElement("span");
+  badge.className = "adock-admin-badge";
+  badge.title = "Admin only";
+  badge.innerHTML = svg('<rect x="5" y="9" width="10" height="8" rx="1.5" fill="currentColor"/><path d="M7 9V7a3 3 0 016 0v2" fill="none" stroke="currentColor" stroke-width="1.8"/>');
+  group.appendChild(badge);
+  for (const app of APPS) {
+    const btn = dockItem({
+      tag: "button",
+      className: "adock-item",
+      label: app.name,
+      iconClass: `adock-icon--${app.id}`,
+      img: app.img,
+      svgMarkup: app.svg,
+    });
+    btn.type = "button";
+    btn.dataset.app = app.id;
+    btn.addEventListener("click", () => onDockClick(app.id));
+    group.appendChild(btn);
+  }
+  dockEl.append(divider, group);
 }
 
 async function isAdmin() {
@@ -259,16 +349,12 @@ async function isAdmin() {
 }
 
 async function init() {
-  // Never nest the dock inside an admin window, and never show it to visitors.
+  // Never nest the dock inside an admin window.
   if (window.parent !== window) return;
-  if (!(await isAdmin())) return;
-
-  const css = document.createElement("link");
-  css.rel = "stylesheet";
-  css.href = "/css/admin-dock.css?v=20260930-2";
-  document.head.appendChild(css);
-
   renderDock();
+  // The admin section only exists for an authenticated admin.
+  if (!(await isAdmin())) return;
+  renderAdminSection();
   window.addEventListener("message", onAppMessage);
   window.addEventListener("pagehide", saveState);
   document.addEventListener("keydown", (ev) => {

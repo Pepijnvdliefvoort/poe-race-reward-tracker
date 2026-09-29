@@ -99,10 +99,6 @@
     margin-right: auto;
   }
 
-  .topbar-nav {
-    order: 2;
-  }
-
   .theme-toggle {
     order: 3;
   }

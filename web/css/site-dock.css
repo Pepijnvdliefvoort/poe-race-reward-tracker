@@ -1,4 +1,10 @@
-/* Admin taskbar + app windows on the public pages (loaded by web/js/adminDock.js for admins only). */
+/* Site taskbar on the public pages (web/js/siteDock.js): page navigation for everyone, plus a
+   separate admin section and the admin app windows for an authenticated admin. */
+
+/* Keep page content clear of the dock. */
+body.has-site-dock {
+  padding-bottom: 96px;
+}
 
 .adock {
   position: fixed;
@@ -36,7 +42,72 @@
   padding: 0;
   border: 0;
   background: none;
+  color: inherit;
+  text-decoration: none;
   cursor: pointer;
+}
+
+.adock-icon--dashboard { background: linear-gradient(#ffa15c, #ff7a2f); }
+.adock-icon--compare { background: linear-gradient(#3b9bff, #0a6cff); }
+.adock-icon--aa-ladder { background: linear-gradient(#c17dff, #8e44ec); }
+.adock-icon--alt-arts { background: linear-gradient(#ff6fa0, #e63d76); }
+
+/* Current page: lit icon + accent dot (the running dot is reused for admin apps). */
+.adock-item--page[aria-current="page"] .adock-icon {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.adock-item--page[aria-current="page"] .adock-dot {
+  background: #ff7a2f;
+  box-shadow: 0 0 6px #ff7a2f;
+}
+
+.adock-item--page:not([aria-current="page"]) .adock-icon {
+  filter: saturate(0.85) brightness(0.95);
+}
+
+/* Admin section: divider + tinted group, only rendered for an authenticated admin. */
+.adock-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 2px 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+:root.light-theme .adock-divider {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.adock-admin {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin: -3px -4px -5px 0;
+  padding: 3px 6px 5px;
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(255, 122, 47, 0.3), rgba(255, 122, 47, 0.08));
+  box-shadow: inset 0 0 0 1px rgba(255, 150, 90, 0.35);
+}
+
+.adock-admin-badge {
+  position: absolute;
+  top: -8px;
+  left: -6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ff7a2f;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.adock-admin-badge svg {
+  width: 11px;
+  height: 11px;
 }
 
 .adock-icon {
@@ -176,10 +247,92 @@
   }
 }
 
-/* Phones: no desktop metaphor; the admin pages are still reachable directly. */
+/* Phones: a full-width bottom tab bar with labels; admin apps open as normal pages. */
 @media (max-width: 760px) {
-  .adock,
+  body.has-site-dock {
+    padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .adock {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    justify-content: space-around;
+    gap: 2px;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    border-radius: 0;
+    border-width: 1px 0 0;
+    transform: translateY(150%);
+  }
+
+  .adock--shown {
+    transform: none;
+  }
+
+  .adock-item {
+    flex: 1 1 0;
+    gap: 3px;
+  }
+
+  .adock-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+
+  .adock-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .adock-item:hover .adock-icon,
+  .adock-item:focus-visible .adock-icon {
+    transform: none;
+  }
+
+  /* Labels sit under the icons instead of as hover tooltips. */
+  .adock-label {
+    position: static;
+    padding: 0;
+    background: none;
+    color: inherit;
+    font-size: 10px;
+    opacity: 0.85;
+  }
+
+  .adock-dot {
+    display: none;
+  }
+
+  .adock-item--page[aria-current="page"] .adock-label {
+    color: #ff7a2f;
+    opacity: 1;
+    font-weight: 600;
+  }
+
+  .adock-divider {
+    margin: 6px 0;
+  }
+
+  .adock-admin {
+    flex: 2 1 0;
+    justify-content: space-around;
+    margin: 0;
+    padding: 3px 4px;
+  }
+
+  .adock-admin-badge {
+    top: -6px;
+    left: 2px;
+  }
+
   .adock-window {
     display: none;
+  }
+
+  /* Floating buttons sit above the tab bar. */
+  body.has-site-dock .companion-launcher,
+  body.has-site-dock .back-to-top {
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
   }
 }

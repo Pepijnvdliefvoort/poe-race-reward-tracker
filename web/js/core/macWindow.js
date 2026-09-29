@@ -3,7 +3,7 @@
  *
  * Standalone (opened directly at /admin or /admin/db):
  * - red: close (animates out, then opens the dashboard)
- * - yellow: minimize to the dashboard's admin dock (web/js/adminDock.js restores it there)
+ * - yellow: minimize to the dashboard's dock (web/js/siteDock.js restores it there)
  * - green: zoom between a floating window and the full browser window (remembered);
  *   double-clicking the title area does the same, like a macOS title bar
  *
@@ -17,7 +17,7 @@
 
 const ZOOM_KEY = "admin.window.zoomed.v1";
 const THEME_KEY = "poe-market-theme";
-const DOCK_STATE_KEY = "admin.dock.windows.v1"; // read by adminDock.js
+const DOCK_STATE_KEY = "admin.dock.windows.v1"; // read by siteDock.js
 const MSG_TO_DOCK = "mac-window";
 const MSG_FROM_DOCK = "mac-window-state";
 const DASHBOARD = "/";
