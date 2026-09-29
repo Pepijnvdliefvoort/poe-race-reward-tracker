@@ -123,11 +123,11 @@ class SaleInferenceEngineMultiListingCountDecreaseTests(unittest.TestCase):
         # reverted as relist_same_seller on the next cycle.
         self.assertEqual(len(new_pend), 0)
 
-    def test_count_decrease_delta_2_credits_two_sales(self) -> None:
-        """Seller had 3 listings; 2 sold, 1 remains -> 2 sales."""
+    def test_count_decrease_delta_2_credits_one_sale_per_seller(self) -> None:
+        """Seller had 3 listings; 2 gone in one poll, 1 remains -> 1 sale (rule 9), 2 without the cap."""
         prev_signals = [self._make_signal("nacho", 7.0, signal_count=3)]
         curr_signals = [self._make_signal("nacho", 8.0)]
-        result, new_pend, _, _ = evaluate_listing_transition(
+        kwargs = dict(
             item_key="StormCloud",
             cycle=100,
             prev_signals=prev_signals,
@@ -136,9 +136,14 @@ class SaleInferenceEngineMultiListingCountDecreaseTests(unittest.TestCase):
             baseline_mirror=9.0,
             snapshot_truncated=False,
         )
-        self.assertEqual(result.likely_instant_sale, 2)
-        self.assertEqual(len([ev for ev in result.events if ev.get("rule") == "likely_instant_sale"]), 2)
+        result, new_pend, _, _ = evaluate_listing_transition(**kwargs)
+        self.assertEqual(result.likely_instant_sale, 1)
+        self.assertEqual(_rules(result).count("likely_instant_sale"), 1)
+        self.assertEqual(_rules(result).count("seller_burst_ignored"), 1)
         self.assertEqual(len(new_pend), 0)
+
+        uncapped, _, _, _ = evaluate_listing_transition(**kwargs, max_sales_per_seller=0)
+        self.assertEqual(uncapped.likely_instant_sale, 2)
 
     def test_count_increase_does_not_credit_sale(self) -> None:
         """Seller added a new listing (count went up) -> no sale."""
@@ -501,3 +506,54 @@ class SaleInferenceEngineGuardTests(unittest.TestCase):
         )
         self.assertEqual(result.non_instant_removed, 1)
         self.assertEqual(pending_online, [])
+
+
+class SaleInferenceEngineSanityCapTests(unittest.TestCase):
+    """Rules 8 (mass vanish) and 9 (seller burst)."""
+
+    def _transition(self, prev: list[dict], curr: list[dict], **kw):
+        return evaluate_listing_transition(
+            item_key="X",
+            cycle=50,
+            prev_signals=prev,
+            curr_signals=curr,
+            pending_instant=[],
+            pending_online=[],
+            baseline_mirror=10.0,
+            snapshot_truncated=False,
+            **kw,
+        )
+
+    def test_most_sellers_vanishing_at_once_is_not_a_sale(self) -> None:
+        # 5 of 6 sellers gone in one poll: a trade-site glitch, not five buyers.
+        prev = [_sig(f"fp{i}", f"S{i}", 10.0 + i * 0.1) for i in range(6)]
+        curr = [prev[5]]
+        result, new_pend, _, _ = self._transition(prev, curr)
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertEqual(_rules(result).count("mass_vanish_ignored"), 5)
+        self.assertEqual(new_pend, [])  # nothing left for a later relist to revert
+
+    def test_several_sales_in_a_big_market_still_count(self) -> None:
+        # 4 of 20 sellers sold (20%): real sales after e.g. poller downtime.
+        prev = [_sig(f"fp{i}", f"S{i}", 10.0 + i * 0.01) for i in range(20)]
+        curr = prev[4:]
+        result, _, _, _ = self._transition(prev, curr)
+        self.assertEqual(result.likely_instant_sale, 4)
+        self.assertNotIn("mass_vanish_ignored", _rules(result))
+
+    def test_three_sellers_in_a_tiny_market_still_count(self) -> None:
+        prev = [_sig(f"fp{i}", f"S{i}", 10.0) for i in range(3)]
+        result, _, _, _ = self._transition(prev, [])
+        self.assertEqual(result.likely_instant_sale, 3)
+
+    def test_one_seller_pulling_several_copies_counts_once(self) -> None:
+        prev = [_sig("fpA", "Glazer", 10.0), _sig("fpB", "Glazer", 10.0), _sig("fpC", "Glazer", 10.0)]
+        prev += [_sig(f"fp{i}", f"S{i}", 11.0) for i in range(10)]
+        curr = prev[3:]
+        result, new_pend, _, _ = self._transition(prev, curr)
+        self.assertEqual(result.likely_instant_sale, 1)
+        self.assertEqual(_rules(result).count("seller_burst_ignored"), 2)
+        # Only the credited removal keeps a pending (so a relist can still undo it).
+        self.assertEqual(len(new_pend), 1)
+        credited = next(ev for ev in result.events if ev.get("rule") == "likely_instant_sale")
+        self.assertEqual(new_pend[0]["fingerprint"], credited["fingerprint"])

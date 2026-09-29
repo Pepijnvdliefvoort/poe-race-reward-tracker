@@ -714,6 +714,46 @@ class SalesRepo:
             ),
         )
 
+    def transfer_exists_between(self, *, item_variant_id: int, seller_a: str, seller_b: str) -> bool:
+        """A counted confirmed_transfer between these two sellers (either direction) for this variant."""
+        row = self._con.execute(
+            """
+            SELECT 1 FROM sales
+            WHERE item_variant_id = ? AND rule = 'confirmed_transfer' AND reverted_at_utc IS NULL
+              AND ((seller = ? AND buyer = ?) OR (seller = ? AND buyer = ?))
+            LIMIT 1
+            """,
+            (int(item_variant_id), str(seller_a), str(seller_b), str(seller_b), str(seller_a)),
+        ).fetchone()
+        return row is not None
+
+    def revert_transfers_between(
+        self,
+        *,
+        item_variant_id: int,
+        seller_a: str,
+        seller_b: str,
+        reverted_at_utc: str,
+        reverted_by_item_poll_id: int,
+        reverted_reason: str,
+    ) -> list[int]:
+        """Revert counted transfers between two sellers; returns the item_poll_id of each reverted row."""
+        params = (int(item_variant_id), str(seller_a), str(seller_b), str(seller_b), str(seller_a))
+        where = """
+            item_variant_id = ? AND rule = 'confirmed_transfer' AND reverted_at_utc IS NULL
+            AND ((seller = ? AND buyer = ?) OR (seller = ? AND buyer = ?))
+        """
+        poll_ids = [int(r[0]) for r in self._con.execute(f"SELECT item_poll_id FROM sales WHERE {where}", params)]
+        if poll_ids:
+            self._con.execute(
+                f"""
+                UPDATE sales SET reverted_at_utc = ?, reverted_by_item_poll_id = ?, reverted_reason = ?
+                WHERE {where}
+                """,
+                (str(reverted_at_utc), int(reverted_by_item_poll_id), str(reverted_reason), *params),
+            )
+        return poll_ids
+
     def revert_latest_sale(
         self,
         *,

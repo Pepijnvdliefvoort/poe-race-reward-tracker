@@ -118,6 +118,28 @@ class LateRelistReconciliationTests(unittest.TestCase):
         self.assertEqual(counts[4].get("likelyInstantSale"), -1)
         self.assertEqual(self._active_sales(), 0)
 
+    def test_transfer_ping_pong_between_same_sellers_is_not_a_sale(self) -> None:
+        # A -> B counts as a transfer; B -> A afterwards shows two traders relisting, so neither counts.
+        counts = self._run([[_sig("A")], [_sig("B")], [_sig("A")]])
+        self.assertEqual(counts[1].get("confirmedTransfer"), 1)
+        self.assertEqual(counts[2].get("confirmedTransfer"), 0)
+        self.assertEqual(self._active_sales(), 0)
+        con = self.storage._db.connect()
+        try:
+            reasons = [r[0] for r in con.execute("SELECT reverted_reason FROM sales")]
+            first_poll_transfers = con.execute(
+                "SELECT inf_confirmed_transfer FROM item_polls ORDER BY id LIMIT 1 OFFSET 1"
+            ).fetchone()[0]
+        finally:
+            con.close()
+        self.assertEqual(reasons, ["transfer_ping_pong"])
+        self.assertEqual(first_poll_transfers, 0)
+
+    def test_one_off_transfer_still_counts(self) -> None:
+        counts = self._run([[_sig("A")], [_sig("B")], [_sig("B")]])
+        self.assertEqual(counts[1].get("confirmedTransfer"), 1)
+        self.assertEqual(self._active_sales(), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
