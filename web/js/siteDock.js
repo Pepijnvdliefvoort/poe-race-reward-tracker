@@ -303,9 +303,36 @@ function renderDock() {
     if (page.id === current) link.setAttribute("aria-current", "page");
     dockEl.appendChild(link);
   }
+  adoptThemeToggle();
   document.body.appendChild(dockEl);
   document.body.classList.add("has-site-dock");
   requestAnimationFrame(() => dockEl.classList.add("adock--shown"));
+}
+
+// The page's own theme button (#themeToggle, wired up by the page script) joins the dock as a
+// utility icon at the far end (like macOS utilities), so the header only needs the title and
+// the status pill.
+let utilityStart = null; // first node of the utility area; the admin section goes before it
+
+function adoptThemeToggle() {
+  const toggle = document.getElementById("themeToggle");
+  if (!toggle) return;
+  const slot = toggle.parentElement;
+  const divider = document.createElement("span");
+  divider.className = "adock-divider";
+  divider.setAttribute("aria-hidden", "true");
+  toggle.classList.add("adock-item", "adock-item--util");
+  const icon = toggle.querySelector(".theme-icon");
+  icon?.classList.add("adock-icon", "adock-icon--theme");
+  const label = document.createElement("span");
+  label.className = "adock-label";
+  label.textContent = "Appearance";
+  const dot = document.createElement("span");
+  dot.className = "adock-dot";
+  toggle.append(label, dot);
+  dockEl.append(divider, toggle);
+  utilityStart = divider;
+  if (slot && slot.classList.contains("topbar-actions") && !slot.children.length) slot.remove();
 }
 
 function renderAdminSection() {
@@ -335,7 +362,8 @@ function renderAdminSection() {
     btn.addEventListener("click", () => onDockClick(app.id));
     group.appendChild(btn);
   }
-  dockEl.append(divider, group);
+  dockEl.insertBefore(divider, utilityStart);
+  dockEl.insertBefore(group, utilityStart);
 }
 
 async function isAdmin() {

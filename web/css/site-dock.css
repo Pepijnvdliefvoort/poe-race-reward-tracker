@@ -66,6 +66,34 @@ body.has-site-dock {
   filter: saturate(0.85) brightness(0.95);
 }
 
+/* Utility: the page's theme toggle, adopted into the dock. */
+.adock .theme-toggle {
+  order: 0;
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: inherit;
+  transform: none;
+}
+
+.adock .theme-toggle:hover {
+  background: none;
+  transform: none;
+}
+
+.adock-icon--theme {
+  font-size: 22px;
+  line-height: 1;
+  background: linear-gradient(#5a5f73, #2f3342);
+}
+
+:root.light-theme .adock-icon--theme {
+  background: linear-gradient(#fff3d6, #ffd98a);
+}
+
 /* Admin section: divider + tinted group, only rendered for an authenticated admin. */
 .adock-divider {
   align-self: stretch;
@@ -283,6 +311,10 @@ body.has-site-dock {
   .adock-icon svg {
     width: 18px;
     height: 18px;
+  }
+
+  .adock-icon--theme {
+    font-size: 16px;
   }
 
   .adock-item:hover .adock-icon,

@@ -39,15 +39,8 @@
     padding: 20px 14px 28px;
   }
 
-  .topbar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
   .topbar-right {
-    width: 100%;
-    align-items: flex-start;
-    gap: 12px;
+    justify-content: flex-start;
   }
 
   .topbar-actions {
@@ -145,13 +138,8 @@
     max-width: 100%;
   }
 
-  #meta,
   #overview {
     width: 100%;
-  }
-
-  #meta {
-    justify-content: center;
   }
 }
 
@@ -165,10 +153,6 @@
     font-size: clamp(1.4rem, 8vw, 1.9rem);
   }
 
-  .meta {
-    width: 100%;
-    justify-content: center;
-  }
 
   .cards {
     grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
