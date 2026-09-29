@@ -20,7 +20,7 @@ Focus on safe, minimal diffs that preserve inference behavior and data integrity
 - server/: HTTP routing, admin endpoints, recommendation logic
 - storage/: schema, migrations, repository and service layer
 - web/: dashboard/admin/compare pages and static JS/CSS
-- ML/: model training, candidates, reports, backtests
+- ML/: investment ranking (return-per-day estimator, trading-simulation backtest, gated learned model); see ML/README.md
 
 ## High-Impact Rules
 - Keep changes scoped. Do not refactor unrelated modules in the same patch.
@@ -54,7 +54,7 @@ When editing server/admin_service.py, server/http_handler.py, or auth-sensitive 
 - Targeted tests for touched logic, for example:
   - python -m unittest discover -t . -s . -p "test_*.py"  (full suite; same as CI)
   - python -m unittest poller.test_sale_inference_engine
-  - python ML/test_hybrid_gate.py  (manual smoke script; temporarily rewrites app config)
+  - python -m unittest ML.test_invest server.test_recommendation_service
 - If HTTP/API behavior changed, start server and verify impacted endpoint(s).
 - If inference logic changed, verify no obvious regressions in inferred sale/relist flow.
 

@@ -232,6 +232,38 @@ def _versioned_local_icon_url(relative_url: str | None) -> str | None:
     return f"{path_only}?v={version}"
 
 
+def _profit_model_summary() -> dict[str, Any] | None:
+    """Gate result + backtest headline from the last retrain (ML/models/profit_model.json)."""
+    from ML.model import META_FILE, model_dir
+
+    path = model_dir(ROOT_DIR) / META_FILE
+    try:
+        meta = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    all_weeks = (meta.get("backtest") or {}).get("allWeeks") or {}
+    active = (meta.get("backtest") or {}).get("modelActiveWeeks") or {}
+
+    def rpd(block: dict[str, Any], name: str) -> float | None:
+        value = (block.get(name) or {}).get("returnPerDay")
+        return round(float(value) * 100.0, 4) if isinstance(value, (int, float)) else None
+
+    return {
+        "enabled": bool(meta.get("enabled")),
+        "disabledReason": meta.get("disabledReason"),
+        "trainedAtUtc": meta.get("trainedAtUtc"),
+        "data": meta.get("data"),
+        "returnPerDayPct": {
+            "estimator": rpd(all_weeks, "estimator"),
+            "random": rpd(all_weeks, "random"),
+            "modelOnActiveWeeks": rpd(active, "model"),
+            "estimatorOnActiveWeeks": rpd(active, "estimator"),
+        },
+    }
+
+
 def _median_float(values: list[float]) -> float | None:
     clean = [float(v) for v in values if isinstance(v, (int, float))]
     if not clean:
@@ -840,7 +872,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         cfg = {}
                 if not isinstance(cfg, dict):
                     cfg = {}
-                body = json.dumps({"ok": True, "status": cfg}, allow_nan=False).encode("utf-8")
+                body = json.dumps({"ok": True, "status": cfg, "model": _profit_model_summary()}, allow_nan=False).encode("utf-8")
                 self._send_json_body(200, body)
                 return
 

@@ -39,10 +39,36 @@ def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     try:
+        import psutil
+
+        return bool(psutil.pid_exists(pid))
+    except ImportError:
+        pass
+    if os.name == "nt":
+        # os.kill(pid, 0) is not a probe on Windows: it terminates the process. Without psutil,
+        # treat the lock as held; a stale lock only delays the retrain.
+        return True
+    try:
         os.kill(pid, 0)
     except OSError:
         return False
     return True
+
+
+def _kill_run(proc: subprocess.Popen[str]) -> None:
+    """Kill the retrain and anything it spawned (it runs in its own session on POSIX)."""
+    if os.name != "nt":
+        try:
+            import signal
+
+            os.killpg(proc.pid, signal.SIGKILL)
+            return
+        except Exception:
+            pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
 
 
 _ACTIVE_PROC: subprocess.Popen[str] | None = None
@@ -165,10 +191,7 @@ def _refresh_active_run(*, storage: StorageService, cfg: MlRetrainConfig, root_d
             except Exception:
                 elapsed = 0.0
             if elapsed > timeout_seconds and _ACTIVE_PROC.poll() is None:
-                try:
-                    _ACTIVE_PROC.kill()
-                except Exception:
-                    pass
+                _kill_run(_ACTIVE_PROC)
 
         rc = _ACTIVE_PROC.poll()
         if rc is None:
