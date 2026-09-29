@@ -1,495 +1,184 @@
-[![Deploy to VPS](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml/badge.svg)](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml)
-
 # poe-market-flips
 
-Path of Exile unique-item market tracker with:
+[![Tests](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/ci.yml?query=branch%3Adevelop)
+[![Deploy to VPS](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml/badge.svg)](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/actions/workflows/deploy-vps.yml)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12-3776AB?logo=python&logoColor=white)
+![SQLite](https://img.shields.io/badge/database-SQLite-003B57?logo=sqlite&logoColor=white)
+![Frontend](https://img.shields.io/badge/frontend-vanilla%20JS-F7DF1E?logo=javascript&logoColor=black)
+[![Last commit](https://img.shields.io/github/last-commit/Pepijnvdliefvoort/poe-race-reward-tracker/develop)](https://github.com/Pepijnvdliefvoort/poe-race-reward-tracker/commits/develop)
 
-- a poller (`python -m poller`) that queries PoE Trade and stores market snapshots
-- a web server (`python -m server.server`) that serves the dashboard, compare tools, admin tools, and companion recommendation API
-- SQLite as the source of truth (`data/market.db`)
+A market tracker for legacy **Path of Exile** unique items. It polls the official trade site, infers which
+listings sold, and serves a live dashboard with price history, Discord alerts and an investment companion
+that suggests which items to flip.
 
-This README reflects the current implementation in this repository.
+## Features
 
-## What It Does
+- **Price tracking** for every item in [`items.txt`](items.txt), including separate alt-art variants.
+- **Sale inference**: detects sales, relists and reprices from listing changes, and reverts a "sale"
+  when the item comes back.
+- **Dashboard** with charts, filters, compare page, alt-art holdings and AA ladder.
+- **Investment companion**: ranks items by expected % return per day, with a buy price, a listing plan
+  and the chance it sells ([how it works](ML/README.md)).
+- **Discord notifications** for flips, sales, reprices, new listings, likely bans, ops health and a
+  weekly recap.
+- **Admin panel**: config editor, DB explorer, logs, poller restart and ML retrain status.
 
-- Tracks items listed in `items.txt` (including separate art variants via `image_name_filter`).
-- Polls the PoE Trade API (Standard league) and stores:
-  - poll runs and per-item price summaries
-  - listing snapshots used for hover previews and analysis
-  - inference events (sale/relist/reprice/new-row signals)
-  - inferred sales rows (with late-relist reversal)
-- Detects potential flip opportunities and can send Discord alerts.
-- Serves a browser UI with charts, filters, compare pages, alt-art holdings tracker (localStorage), admin panel, DB explorer, and account compare.
-- Provides a companion recommendations endpoint (`/api/companion/recommend`) with heuristic ranking plus optional ML shadow/hybrid scoring.
-
-## Current Architecture
-
-- Poller package: `poller/`
-  - entrypoint: `poller/__main__.py`
-  - main loop and API/inference logic: `poller/poll_item_prices.py`
-  - DB export helper: `poller/db_export.py`
-- Server package: `server/`
-  - entrypoint: `server/server.py`
-  - HTTP routing: `server/http_handler.py`
-  - dashboard payload shaping: `server/data_service.py`
-  - admin auth/restart/log tools: `server/admin_service.py`
-  - recommendations engine: `server/recommendation_service.py`
-- Storage layer: `storage/`
-  - DB init/migrations: `storage/db.py`, `storage/schema.py`
-  - repos and service methods: `storage/repos.py`, `storage/service.py`
-- Frontend:
-  - pages in `web/` (`index.html`, `admin.html`, `compare.html`, `alt-arts.html`, `db.html`)
-  - JS modules in `web/js/`
-  - CSS modules in `web/css/`
-  - icon assets in `web/assets/icons/`
-
-## Data Storage
-
-Primary store:
-
-- `data/market.db`
-
-Schema version in code:
-
-- `SCHEMA_VERSION = 12` (`storage/schema.py`)
-
-Important tables include:
-
-- `items`, `item_variants`
-- `poll_runs`, `item_polls`
-- `listing_snapshots`
-- `inference_events`
-- `inference_state_signals`, `inference_state_pending`
-- `sales`
-- `price_alert_cooldown`
-- `app_config`
-- visitor/admin support tables (`visits`, `ip_geo_cache`)
-
-Notes:
-
-- `price_poll.csv` is legacy and not the active source of truth.
-- `items.txt` and `config.json` are bootstrap inputs; runtime state is persisted in SQLite/app_config.
-
-## Requirements
-
-- Python 3.10+
-- Internet access to `www.pathofexile.com`
-
-Python dependencies (`requirements.txt`):
-
-- `requests>=2.31.0`
-- `psutil>=5.9.8`
-
-Install:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Local Environment Variables
-
-Both poller and server load local env files automatically at startup:
-
-- `.env.local`
-- `.env`
-
-Load order is `.env.local` then `.env`. Existing process env variables win by default.
-
-Common keys:
+## How it works
 
 ```text
-DISCORD_WEBHOOK_URL=
-DISCORD_WEBHOOK_URL_SALES=
-DISCORD_WEBHOOK_URL_REPRICES=
-DISCORD_WEBHOOK_URL_NEW_ITEMS=
-DISCORD_WEBHOOK_URL_DB_EXPORT=
-DISCORD_WEBHOOK_URL_OPS=
-DISCORD_WEBHOOK_URL_DAILY_SUMMARY=
-ADMIN_TOKEN=
-PUBLIC_BASE_URL=
-POE_POLLER_RESTART_STRATEGY=
-POE_POLLER_SYSTEMD_SERVICE=
-POE_POLLER_AUTOSTART=
-POE_POLLER_CMD=
-POE_VISITORS_INCLUDE_LOCAL=
+PoE trade API ──► poller ──► SQLite (data/market.db) ──► server ──► dashboard / admin / companion
+                    │                                       │
+                    └──► Discord alerts                     └──► weekly ML retrain (ML/)
 ```
 
-Aliases also supported by code for some webhooks:
+| Part | Entry point | What it does |
+|---|---|---|
+| `poller/` | `python -m poller` | Polls prices, infers sales, sends alerts, runs weekly jobs |
+| `server/` | `python -m server.server` | HTTP API, dashboard, admin, companion recommendations |
+| `storage/` | | Schema (version 17), migrations, repositories |
+| `ML/` | `python scripts/retrain_ml_pipeline.py` | Return-per-day ranking, backtest, gated learned model |
+| `web/` | | Plain HTML/CSS/JS pages served by the server |
 
-- `POE_DISCORD_WEBHOOK_URL`
-- `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`
-- `POE_DISCORD_WEBHOOK_URL_OPS`
-- `POE_DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY`
-- `POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (legacy weekly-recap alias)
+## Quick start
 
-## Quick Start (Windows PowerShell)
+Requires Python 3.10+.
 
-1. Create and activate venv:
-
-```powershell
+```bash
 python -m venv .venv
-& .\.venv\Scripts\Activate.ps1
+.venv\Scripts\activate          # Windows; on Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Start poller from repo root:
+Run the poller and the server in two terminals from the repo root:
 
-```powershell
+```bash
 python -m poller
-```
-
-3. Start server in another terminal:
-
-```powershell
 python -m server.server
 ```
 
-4. Open:
+Then open <http://127.0.0.1:8080>. To use the admin page and the companion, set `ADMIN_TOKEN` in
+`.env.local` and open `/admin?token=<your token>` once.
 
-- `http://127.0.0.1:8080`
+## Configuration
 
-## Automated ML Retraining
+| Where | What |
+|---|---|
+| `items.txt` | Tracked items: `Name`, `Name\|mode`, `Name\|mode\|category` or `Name\|mode\|category\|image_filter` (mode: `aa`, `normal`, `any`) |
+| `.env.local` / `.env` | Secrets and runtime switches (loaded automatically; real environment variables win) |
+| `app_config` table, key `market` | Alert, inference, flip and companion settings. Seeded once from `config.json` (see [`config.example.json`](config.example.json)), then edited in the admin panel |
 
-Run the full retrain pipeline (dataset rebuild -> train candidate models -> backtest -> quality-gated promotion):
+Main environment variables:
 
-```powershell
-python .\scripts\retrain_ml_pipeline.py
+| Variable | Purpose |
+|---|---|
+| `ADMIN_TOKEN` | Enables admin and companion auth. Without it, `/admin` is closed |
+| `DISCORD_WEBHOOK_URL` | Main alert channel (other channels fall back to it) |
+| `DISCORD_WEBHOOK_URL_SALES`, `_REPRICES`, `_NEW_ITEMS`, `_BANS`, `_OPS`, `_DB_EXPORT`, `_WEEKLY_SUMMARY` | Optional per-topic channels |
+| `PUBLIC_BASE_URL` | Public site URL, used for links instead of request headers |
+| `POE_RATE_LIMIT_RESERVE_RATIO` | Share of the trade API budget left for manual trading (default `0.20`) |
+| `POE_ML_RETRAIN_WEEKLY_ENABLED` | Weekly ML retrain in the poller (default on) |
+
+<details>
+<summary>All environment variables</summary>
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `POE_POLLER_RESTART_STRATEGY`, `POE_POLLER_SYSTEMD_SERVICE`, `POE_POLLER_AUTOSTART`, `POE_POLLER_CMD` | | How the admin panel starts and restarts the poller |
+| `POE_VISITORS_INCLUDE_LOCAL` | off | Count local visitors in admin stats |
+| `POE_PRICES_CHART_MAX_POINTS` | `250` | Downsampling target per variant for `/api/prices` |
+| `POE_ML_RETRAIN_WEEKDAY`, `_HOUR`, `_MINUTE`, `_TZ_OFFSET_MINUTES` | Sun 03:30, GMT+2 | Retrain schedule |
+| `POE_ML_RETRAIN_TIMEOUT_SECONDS` | `7200` | Retrain time limit |
+| `POE_ML_RETRAIN_PYTHON`, `POE_ML_RETRAIN_SCRIPT` | current interpreter, `scripts/retrain_ml_pipeline.py` | Retrain command |
+| `POE_WEEKLY_SUMMARY_ENABLED` | on | Weekly Discord recap |
+| `POE_WEEKLY_SUMMARY_WEEKDAY`, `_HOUR`, `_MINUTE`, `_TZ_OFFSET_MINUTES` | Sun 12:00, GMT+2 | Recap schedule |
+| `POE_WEEKLY_SUMMARY_TOP_ITEMS` | `8` | Items in the recap bar chart |
+| `POE_OPS_PROBE_*` | | Settings for the VPS health probe (`python -m server.ops_health_probe`) |
+
+Legacy aliases still work: `POE_DISCORD_WEBHOOK_URL*`, `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` and
+`POE_DAILY_SUMMARY_*`.
+
+</details>
+
+<details>
+<summary>Poller options</summary>
+
+```bash
+python -m poller [--poll-interval SECONDS] [--max-cycles N] [--inference-cap N] [--only SUBSTR ...]
 ```
 
-What it does:
+- `--poll-interval`: pause between cycles (default `3600`, `0` = back-to-back; the VPS uses `0`)
+- `--max-cycles`: stop after N cycles
+- `--inference-cap`: listings fetched per item for sale inference (`0` disables)
+- `--only`: poll items whose name contains one of these substrings first
 
-- rebuilds `ML/training_30d.csv` from `data/market.db`
-- trains candidate artifacts under `ML/candidates/<timestamp>/`
-- backtests the candidate models
-- compares candidate metrics against current live reports
-- promotes candidate models/reports only when gates pass
-- archives live artifacts to `ML/archive/<timestamp>/` before promotion
+</details>
 
-Default quality gates:
+## Investment companion
 
-- classifier PR-AUC drop <= `0.02`
-- classifier ROC-AUC drop <= `0.02`
-- regressor MAPE increase <= `0.10`
-- backtest `avgRealizedEdgeAllLift` at top-k `20,50,100` remains non-negative and does not drop by more than `0.05`
+Open it with the **Invest** button on the dashboard (requires admin auth). Enter a budget and pick a risk
+level, and it ranks items by expected % return per day held:
 
-Useful flags:
+- **Buy** at the cheapest uncorrupted instant-buyout listing.
+- **List** in divines just under the cheapest competing copy, or at a whole-mirror price with at most
+  two other copies at the same price.
+- **Sell chance and days** come from recent sales, the listings ahead of yours, and the separate
+  divine and whole-mirror buyers.
 
-```powershell
-python .\scripts\retrain_ml_pipeline.py --required-lift-k 20,50,100 --max-lift-drop 0.03
-python .\scripts\retrain_ml_pipeline.py --friction 0.25
-python .\scripts\retrain_ml_pipeline.py --retain-candidate-days 90 --retain-archive-days 180
-python .\scripts\retrain_ml_pipeline.py --force-promote
+The ranking is backtested on recorded history every week. See [`ML/README.md`](ML/README.md) for the
+model, data cleaning and backtest results.
+
+## Development
+
+```bash
+python -m unittest discover -t . -s . -p "test_*.py"   # full test suite, same as CI
+python scripts/retrain_ml_pipeline.py                 # backtest + retrain the ranking
 ```
 
-For unattended scheduling on Windows Task Scheduler, use a task action like:
-
-```text
-Program/script: C:\Users\pepij\Documents\Repos\poe-market-flips\.venv\Scripts\python.exe
-Add arguments: scripts\retrain_ml_pipeline.py
-Start in: C:\Users\pepij\Documents\Repos\poe-market-flips
-```
-
-### Poller Weekly Trigger
-
-The poller now includes a built-in weekly retrain trigger (similar to daily DB export scheduling).
-When enabled, each poll cycle checks whether the scheduled weekly slot has passed and runs:
-
-```text
-python scripts/retrain_ml_pipeline.py
-```
-
-State is persisted in SQLite config key `ml_retrain`, so it runs at most once per scheduled week.
-The retrain process is launched in the background with a lock file (`logs/ml_retrain.lock`) so poll cycles continue while training runs.
-
-### Poller Weekly Discord Recap
-
-The poller can post a once-per-week weekly recap (charts + stats) to Discord after a configured local time on a chosen weekday (default **Sunday**).
-Each run covers the **last 7 days** ending at send time. Point the recap webhook at a **forum** (or media) channel so each run opens a new post and replies inside that thread.
-
-When enabled, each poll cycle checks whether the scheduled weekly slot has passed and posts at most once per ISO week.
-State is persisted in SQLite config key `weekly_summary`.
-
-Environment variables:
-
-- `DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY` (optional; preferred)
-- `POE_DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY` (alias)
-- `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (legacy alias; same webhook)
-- `POE_DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (legacy alias)
-- Falls back to `DISCORD_WEBHOOK_URL` when unset
-- `POE_WEEKLY_SUMMARY_ENABLED` (`1`/`0`, default `1`; legacy `POE_DAILY_SUMMARY_ENABLED`)
-- `POE_WEEKLY_SUMMARY_WEEKDAY` (`0..6`, `0`=Mon … `6`=Sun, default `6`)
-- `POE_WEEKLY_SUMMARY_HOUR` (`0..23`, default `12`; legacy `POE_DAILY_SUMMARY_HOUR`)
-- `POE_WEEKLY_SUMMARY_MINUTE` (`0..59`, default `0`; legacy `POE_DAILY_SUMMARY_MINUTE`)
-- `POE_WEEKLY_SUMMARY_TZ_OFFSET_MINUTES` (default `120`, GMT+2; legacy `POE_DAILY_SUMMARY_TZ_OFFSET_MINUTES`)
-- `POE_WEEKLY_SUMMARY_TOP_ITEMS` (default `8`, bar chart limit; legacy `POE_DAILY_SUMMARY_TOP_ITEMS`)
-
-Example (`.env.local`):
-
-```text
-DISCORD_WEBHOOK_URL_DAILY_SUMMARY=https://discord.com/api/webhooks/...
-POE_WEEKLY_SUMMARY_HOUR=12
-POE_WEEKLY_SUMMARY_MINUTE=15
-POE_WEEKLY_SUMMARY_TZ_OFFSET_MINUTES=120
-```
-
-Admin status endpoint:
-
-- `/api/admin/ml-retrain-status`
-
-Environment variables:
-
-- `POE_ML_RETRAIN_WEEKLY_ENABLED` (`1`/`0`, default `1`)
-- `POE_ML_RETRAIN_WEEKDAY` (`0..6`, Monday=0, default `6` for Sunday)
-- `POE_ML_RETRAIN_HOUR` (`0..23`, default `3`)
-- `POE_ML_RETRAIN_MINUTE` (`0..59`, default `30`)
-- `POE_ML_RETRAIN_TZ_OFFSET_MINUTES` (default `120`, GMT+2)
-- `POE_ML_RETRAIN_TIMEOUT_SECONDS` (default `7200`)
-- `POE_ML_RETRAIN_PYTHON` (optional explicit interpreter path)
-- `POE_ML_RETRAIN_SCRIPT` (optional script path, default `scripts/retrain_ml_pipeline.py`)
-
-Example (`.env.local`):
-
-```text
-POE_ML_RETRAIN_WEEKLY_ENABLED=1
-POE_ML_RETRAIN_WEEKDAY=0
-POE_ML_RETRAIN_HOUR=4
-POE_ML_RETRAIN_MINUTE=15
-POE_ML_RETRAIN_TZ_OFFSET_MINUTES=120
-POE_ML_RETRAIN_TIMEOUT_SECONDS=10800
-```
-
-## Poller CLI
-
-`python -m poller [options]`
-
-Options:
-
-- `--poll-interval <seconds>` (default `3600`; use `0` for back-to-back)
-- `--max-cycles <n>` (stop after `n` cycles)
-- `--inference-cap <n>` (`0` disables inference fetches; max clamped to PoE search cap)
-- `--only <substr...>` (prioritize matched item names first)
-
-Examples:
-
-```powershell
-python -m poller --max-cycles 1
-python -m poller --poll-interval 1800
-python -m poller --inference-cap 50 --max-cycles 1
-python -m poller --only Mokou "Demigod's" --max-cycles 1
-```
-
-## items.txt Format
-
-Each non-empty, non-comment line is parsed as:
-
-- `Item Name`
-- `Item Name|mode`
-- `Item Name|mode|category`
-- `Item Name|mode|category|image_name_filter`
-
-Where `mode` is one of:
-
-- `aa`
-- `normal`
-- `any`
-
-`category` is UI metadata.
-
-`image_name_filter` lets you track multiple art variants of the same base item (for example specific icon filename stems).
-
-Examples:
-
-```text
-Headhunter|aa|Belt
-Demigod's Touch|aa|Gloves|DemigodsTouchAlt.png
-Demigod's Touch|aa|Gloves|DemigodsTouch.png
-```
-
-## App Config (market)
-
-Runtime config lives under `app_config.key = "market"` in SQLite.
-
-The project can bootstrap this from `config.json` once if no DB config exists.
-
-`config.example.json` contains practical defaults. Current keys include:
-
-- alerting controls:
-  - `alert_enabled`
-  - `alert_require_flip_signal`
-  - `alert_threshold_pct`
-  - `alert_history_cycles`
-  - `alert_min_total_results`
-  - `alert_min_floor_listings`
-  - `alert_floor_band_pct`
-  - `alert_low_liquidity_extra_drop_pct`
-  - `alert_cooldown_cycles`
-- inference controls:
-  - `inference_listings_fetch_cap`
-  - `inference_truncation_safe_margin_pct`
-  - `inference_sale_baseline_history_cycles`
-  - `inference_sale_unlist_if_above_baseline_pct`
-  - `inference_sale_floor_ignore_if_floor_below_mirrors`
-  - `inference_sale_baseline_range_mirrors`
-  - `late_relist_window_days`
-- flip/notify behavior:
-  - `notify_flip_min_profit_mirrors_over_1`
-  - `notify_flip_min_profit_divines_at_or_below_1`
-  - `notify_always_if_cheap_enabled`
-  - `notify_always_if_cheap_max_buy_divines`
-  - `notify_always_if_cheap_if_next_price_at_least_mirrors`
-  - `notify_always_if_buy_currency_exalted`
-- other:
-  - `sales_discord_window_days`
-  - `discord_market_watch_users`
-  - `trade_status_option`
-  - ops health settings (`ops_health_enabled`, `ops_stale_poll_seconds`, etc.)
-
-## HTTP API (Current)
-
-Public GET routes:
-
-- `/api/prices` — optional `?sinceMs=<epoch_ms>` (windowed history + latest poll per item) or `?full=1` (all history; used when chart preset is “all time”). Poll history in each item is LTTB-downsampled (default 250 points/variant; `POE_PRICES_CHART_MAX_POINTS`) with `inferenceWindow` pre-aggregates for the chart span. Responses are cached in-process per window bucket (`server/price_cache.py`).
-- `/api/config` (GET)
-- `/api/listings?queryId=...` (or `variantId`)
-- `/api/account-compare`
-- `/api/companion/auth`
-
-Companion route:
-
-- `POST /api/companion/recommend`
-  - input fields: `wealth`, `currency` (`mirror|divine`), `risk` (`safe|balanced|speculative`), `mode` (`ranked|portfolio`), optional `limit`
-
-Admin route groups (require auth when `ADMIN_TOKEN` is set):
-
-- DB explorer and query:
-  - `/api/admin/db/overview`
-  - `/api/admin/db/tables`
-  - `/api/admin/db/er`
-  - `/api/admin/db/table`
-  - `/api/admin/db/preview`
-  - `POST /api/admin/db/query` (read-only SQL)
-- Config/admin operations:
-  - `/api/admin/app-config`
-  - `/api/admin/app-config/get`
-  - `POST /api/admin/app-config/set`
-  - `/api/admin/ml-retrain-status`
-  - `/api/admin/stats`
-  - `/api/admin/logs`
-  - `/api/admin/visitor-map`
-  - `/api/admin/download/market.db`
-  - `POST /api/admin/clear-data`
-  - `POST /api/admin/restart-poller`
-  - `POST /api/admin/stop-poller`
-  - `POST /api/admin/run-db-export`
-- Sales/inference admin tools:
-  - `/api/admin/market/variants-sales`
-  - `/api/admin/market/sales`
-  - `POST /api/admin/sales/delete`
-  - `POST /api/admin/sales/resend-alert`
-  - `POST /api/admin/inference/reset-counters`
-  - `POST /api/admin/market/wipe-variant`
-  - `POST /api/admin/alerts/test`
-
-## Admin Auth Model
-
-If `ADMIN_TOKEN` is set:
-
-- admin UI and admin API endpoints require auth
-- accepted credentials:
-  - `?token=...` (can establish a session cookie)
-  - `Authorization: Bearer <token>`
-  - `admin_session` cookie (HMAC-derived from token)
-- lockout protection is enabled for repeated failed credential attempts
-
-If `ADMIN_TOKEN` is not set, admin security is effectively disabled.
-
-## Discord Notifications
-
-Webhook routing:
-
-- main alerts: `DISCORD_WEBHOOK_URL` (or `POE_DISCORD_WEBHOOK_URL`)
-- estimated sales: `DISCORD_WEBHOOK_URL_SALES` (fallback to main)
-- reprices/new-item watch: `DISCORD_WEBHOOK_URL_REPRICES` (fallback to sales/main)
-- all new listings (classified, no pings): `DISCORD_WEBHOOK_URL_NEW_ITEMS` (dedicated channel only; no fallback)
-- likely account bans: `DISCORD_WEBHOOK_URL_BANS` (dedicated channel only; no fallback)
-- DB export uploads: `DISCORD_WEBHOOK_URL_DB_EXPORT` (or `POE_DISCORD_WEBHOOK_URL_DB_EXPORT`)
-- ops health alerts: `DISCORD_WEBHOOK_URL_OPS` (or `POE_DISCORD_WEBHOOK_URL_OPS`) — poller stale/DB/API checks plus VPS cron probe (`python -m server.ops_health_probe`) for slow or oversized `/api/prices`
-- weekly recap (charts + stats): `DISCORD_WEBHOOK_URL_WEEKLY_SUMMARY` or `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (fallback to main)
-
-`discord_market_watch_users` in market config supports mention tagging by seller prefix match.
-
-The weekly recap embed includes est. sales, mirrors moved (sales), reprices, top items, and biggest risers/fallers for the rolling 7-day window.
-For forum (or media) channels, each run creates a new forum post (`thread_name` = `Weekly recap · YYYY-Www`); chart PNGs and the stats embed are posted inside that thread. Dashboard-themed charts: top items, reprice activity, and mirrors moved (sales only, cumulative from zero at window start).
-
-## Logging and Runtime Files
-
-- app logs directory: `logs/`
-- server log: `logs/server.log`
-- poller log: `logs/poller.log`
-- poller stdio log (when managed by server subprocess mode): `logs/poller-stdio.log`
-- admin lockout state: `logs/admin_auth_lockout.json`
-- DB file: `data/market.db`
-
-## VPS Deployment
-
-Main docs:
-
-- `VPS_DEPLOYMENT.md`
-
-Runtime unit files in repo:
-
-- `deploy/systemd/poe-market-server.service`
-- `deploy/systemd/poe-market-poller.service`
-
-Current service entrypoints:
-
-- server: `python -m server.server`
-- poller: `python -m poller --poll-interval 0`
-
-Deployment helper script:
-
-- `deploy/deploy_on_vps.sh`
-
-It pulls latest code, installs dependencies, syncs secrets, updates systemd units, restarts services, and reloads Caddy.
-
-## Caddy Setup
-
-Template config:
-
-- `deploy/caddy/Caddyfile`
-
-Pattern:
-
-- serve static assets directly from `/opt/poe-market-flips/web`
-- reverse proxy dynamic/API traffic to `127.0.0.1:8080`
-
-## ML Ranking Status
-
-ML artifacts are consolidated under `ML/`.
-
-Current baseline and assets:
-
-- `ML/ML_FEATURE_BASELINE.md`
-- `ML/build_training_dataset.py`
-- `ML/training_30d.csv`
-- `ML/training_30d.meta.json`
-
-Runtime recommendations support:
-
-- heuristic ranking (default-safe path)
-- ML shadow inference fields in API responses
-- hybrid ranking gate (`ml_hybrid_enabled`, alpha blending, confidence-tier gating)
-
-Runtime scoring logic is in `server/recommendation_service.py`.
-
-## Known Limitations / Notes
-
-- Poller currently targets `Standard` league (`DEFAULT_LEAGUE = "Standard"`).
-- This tracker is built around unique/equipment market queries and item-name search payloads from PoE Trade.
-- Admin DB query endpoint intentionally allows read-only SQL only.
-
-## Development Notes
-
-- Run commands from repository root.
-- Server and poller both handle `Ctrl+C` for local shutdown.
-- If you edit `items.txt`, startup sync/upsert keeps tracked variants aligned in DB.
+- CI runs the syntax check and tests on Python 3.10 and 3.12 for every PR and every push to
+  `develop`; pushes to `main` are tested by the deploy workflow before deploying.
+- `data/market.db` is the source of truth; treat it as production data.
+- See [`CLAUDE.md`](CLAUDE.md) for repository rules (schema migrations, inference and auth safety).
+
+## Deployment
+
+Merging to `main` deploys automatically. The [Deploy to VPS](.github/workflows/deploy-vps.yml)
+workflow runs the tests, then SSHes into the VPS and runs `deploy/deploy_on_vps.sh`: pull, install
+requirements, sync secrets, restart the systemd services and reload Caddy. The workflow can also be
+started manually on any branch.
+
+First-time server setup (systemd units, Caddy, HTTPS) is described in
+[`VPS_DEPLOYMENT.md`](VPS_DEPLOYMENT.md).
+
+<details>
+<summary>HTTP API</summary>
+
+Public:
+
+| Route | Purpose |
+|---|---|
+| `GET /api/prices` | Price history + latest poll per item (`?sinceMs=` window or `?full=1`) |
+| `GET /api/config` | Dashboard config |
+| `GET /api/listings?queryId=` | Current listings for an item |
+| `GET /api/account-compare` | Compare seller accounts |
+| `GET /api/market/aa-price-points` | AA ladder data |
+| `GET /api/companion/auth` | Whether the companion is available to this visitor |
+| `POST /api/companion/recommend` | Picks for `wealth`, `currency` (`mirror`/`divine`), `risk` (`safe`/`balanced`/`speculative`), `mode` (`ranked`/`portfolio`) |
+
+Admin (require `ADMIN_TOKEN` via `?token=`, `Authorization: Bearer` or the session cookie; repeated
+failures lock out the IP):
+
+- DB explorer: `/api/admin/db/overview`, `tables`, `er`, `table`, `preview`, `POST query` (read-only SQL)
+- Config and ops: `/api/admin/app-config` (+ `get`, `POST set`), `stats`, `logs`, `visitor-map`,
+  `download/market.db`, `POST clear-data`, `POST restart-poller`, `POST stop-poller`, `POST run-db-export`
+- ML: `/api/admin/ml-retrain-status`, `POST trigger-ml-retrain`
+- Market tools: `/api/admin/market/variants-sales`, `sales`, `price-points`, `aa-price-points`,
+  `POST wipe-variant`, `POST /api/admin/sales/delete`, `POST sales/resend-alert`,
+  `POST inference/reset-counters`, `POST alerts/test`
+
+</details>
+
+## Notes
+
+- Tracks the **Standard** league only.
+- Built for unique items; currency items are not supported.
+- Logs are written to `logs/` (`server.log`, `poller.log`).

@@ -40,10 +40,9 @@
   "account_ban_min_vanishes": 2,
   "account_ban_cycle_lookback": 1,
 
-  "ml_shadow_enabled": true,
-  "ml_hybrid_enabled": true,
-  "ml_hybrid_alpha_heuristic": 0.5,
-  "ml_hybrid_min_confidence_tier": "medium",
+  "invest_horizon_days": 60,
+  "invest_fee_pct": 0.0,
+  "invest_undercut_pct": 5.0,
   "discord_market_watch_users": [
     {
       "seller_name": "iNeoxiz",

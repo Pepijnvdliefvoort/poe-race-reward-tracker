@@ -1798,12 +1798,25 @@ function setupMlRetrain() {
     hint.style.color = isWarn ? "var(--warn)" : "var(--ink-soft)";
   };
 
-  const renderStatus = (status) => {
+  const fmtPerDay = (v) => (typeof v === "number" ? `${v > 0 ? "+" : ""}${v.toFixed(3)}%/day` : "—");
+
+  const renderStatus = (status, model) => {
     if (!status || Object.keys(status).length === 0) {
       statusEl.innerHTML = '<p class="admin-muted" style="margin:0">No retrain has run yet.</p>';
       return;
     }
+    const perDay = model?.returnPerDayPct || {};
+    const modelRows = model
+      ? [
+          ["Ranking", model.enabled ? "Learned model" : "Estimator formula"],
+          ["Model gate", model.enabled ? "Passed" : model.disabledReason || "—"],
+          ["Backtest estimator", fmtPerDay(perDay.estimator)],
+          ["Backtest random", fmtPerDay(perDay.random)],
+          ["Model vs estimator", `${fmtPerDay(perDay.modelOnActiveWeeks)} vs ${fmtPerDay(perDay.estimatorOnActiveWeeks)} (${model.data?.modelActiveWeeks ?? 0} weeks)`],
+        ]
+      : [];
     const rows = [
+      ...modelRows,
       ["Status", status.last_status ?? "—"],
       ["Running", status.running ? "Yes" : "No"],
       ["Last run week", status.last_run_week_key || "—"],
@@ -1823,7 +1836,7 @@ function setupMlRetrain() {
 
   // Load status on page load.
   fetchJson("/api/admin/ml-retrain-status")
-    .then((d) => renderStatus(d?.status ?? {}))
+    .then((d) => renderStatus(d?.status ?? {}, d?.model))
     .catch((e) => {
       statusEl.innerHTML = `<p class="admin-muted" style="margin:0;color:var(--warn)">${adminEndpointErrorMessage(e, "ML retrain status")}</p>`;
     });
@@ -1846,7 +1859,7 @@ function setupMlRetrain() {
       // Refresh status after a short delay.
       setTimeout(() => {
         fetchJson("/api/admin/ml-retrain-status")
-          .then((d) => renderStatus(d?.status ?? {}))
+          .then((d) => renderStatus(d?.status ?? {}, d?.model))
           .catch(() => {});
       }, 3000);
     } catch (e) {

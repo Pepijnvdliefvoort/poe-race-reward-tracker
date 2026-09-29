@@ -1,0 +1,269 @@
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from statistics import median
+from typing import Any
+
+from ML.market import Market, VariantHistory
+
+DAY = 86400.0
+
+# Point-in-time window lengths (days).
+SALE_WINDOW_DAYS = 90
+RECENT_SALE_DAYS = 30
+LISTING_ANCHOR_DAYS = 30
+MAX_FLOOR_AGE_DAYS = 7  # older floors are not a buyable price any more
+SALE_HALF_LIFE_DAYS = 30.0
+FAIR_VALUE_SHRINK_K = 3.0  # sales needed before the sale anchor outweighs listing floors
+
+# Two sales channels per item, split by listing currency: the "divine" channel (divines or fractional
+# mirrors) and the "mirror" channel (exactly k whole mirrors). Buyers paying in mirrors take
+# whole-mirror listings without comparing them to divine listings, so the channels have their own
+# prices, sale rates and queues. The fields without a prefix below describe the divine channel.
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """Everything known about one variant at time `ts`, using data <= ts only."""
+
+    variant_id: int
+    ts: float
+    entry_price: float  # cheapest instant listing in any currency (what you'd pay now)
+    entry_age_days: float
+    listing_anchor: float | None  # divine channel: median cheapest divine listing over the last 30 days
+    sale_anchor: float | None  # divine channel: recency-weighted median sale price over the last 90 days
+    fair_value: float  # divine channel: sale anchor shrunk toward the listing anchor when sales are sparse
+    sales_30d: int  # divine channel
+    sales_90d: int  # divine channel
+    recent_sale_prices: tuple[float, ...]  # divine channel, last 90 days, for "sales at >= my ask" counts
+    days_since_last_sale: float | None  # any channel
+    total_listings: int
+    listings_change_30d: float | None  # listings now / listings ~30 days ago - 1
+    new_listings_per_day_30d: float
+    sale_momentum: float | None  # sale anchor (last 30d) / sale median (30-90d ago) - 1
+    floor_momentum: float | None  # entry price / median floor 30-60 days ago - 1
+    market_sale_rate_per_day: float  # divine channel: pooled sales/day per variant (prior for sparse items)
+    # Divine-channel instant listings at the entry poll, mirror-equivalent, ascending.
+    divine_ladder: tuple[float, ...] = ()
+    # Instant listing episodes overlapping the last 90 days: (price, days listed in window, sold by ts).
+    listing_evidence: tuple[tuple[float, float, bool], ...] = ()
+    # Mirror channel: whole-mirror listings at the entry poll ((k, count), ...), the k of each
+    # whole-mirror sale in the last 90 days, and the pooled mirror-channel sale rate (prior).
+    mirror_listings: tuple[tuple[int, int], ...] = ()
+    mirror_sale_amounts: tuple[int, ...] = ()
+    market_mirror_rate_per_day: float = 0.0  # among variants on the same side of 1 mirror as this one
+    # Which listing we would buy: its whole-mirror price k, or 0 when it is a divine listing.
+    entry_whole_mirrors: int = 0
+
+    def as_feature_row(self) -> dict[str, float]:
+        """Numeric model inputs (NaN = unknown; the model handles missing values)."""
+
+        def f(x: Any) -> float:
+            return float(x) if x is not None and math.isfinite(float(x)) else float("nan")
+
+        return {
+            "log_entry_price": math.log(self.entry_price),
+            "entry_to_fair": self.entry_price / self.fair_value - 1.0,
+            "entry_to_sale_anchor": f(self.entry_price / self.sale_anchor - 1.0) if self.sale_anchor else float("nan"),
+            "sales_30d": float(self.sales_30d),
+            "sales_90d": float(self.sales_90d),
+            "days_since_last_sale": f(min(self.days_since_last_sale, 365.0)) if self.days_since_last_sale is not None else float("nan"),
+            "log1p_listings": math.log1p(self.total_listings),
+            "listings_change_30d": f(self.listings_change_30d),
+            "new_listings_per_day_30d": self.new_listings_per_day_30d,
+            "sale_momentum": f(self.sale_momentum),
+            "floor_momentum": f(self.floor_momentum),
+            "entry_age_days": self.entry_age_days,
+            "market_sale_rate_per_day": self.market_sale_rate_per_day,
+            "mirror_sales_90d": float(len(self.mirror_sale_amounts)),
+            "whole_mirror_listings": float(sum(c for _, c in self.mirror_listings)),
+            "market_mirror_rate_per_day": self.market_mirror_rate_per_day,
+        }
+
+
+FEATURE_NAMES: list[str] = [
+    "log_entry_price",
+    "entry_to_fair",
+    "entry_to_sale_anchor",
+    "sales_30d",
+    "sales_90d",
+    "days_since_last_sale",
+    "log1p_listings",
+    "listings_change_30d",
+    "new_listings_per_day_30d",
+    "sale_momentum",
+    "floor_momentum",
+    "entry_age_days",
+    "market_sale_rate_per_day",
+    "mirror_sales_90d",
+    "whole_mirror_listings",
+    "market_mirror_rate_per_day",
+]
+
+
+def _weighted_median(values: list[tuple[float, float]]) -> float | None:
+    clean = sorted((v, w) for v, w in values if w > 0)
+    if not clean:
+        return None
+    half = sum(w for _, w in clean) / 2.0
+    acc = 0.0
+    for v, w in clean:
+        acc += w
+        if acc >= half:
+            return v
+    return clean[-1][0]
+
+
+def _median_or_none(values: list[float]) -> float | None:
+    return median(values) if values else None
+
+
+def _pooled_rate(market: Market, ts: float, *, mirror_channel: bool, below_one_mirror: bool | None = None) -> float:
+    """Average channel sales/day per variant over the last 90 days, optionally only among variants
+    whose latest instant floor is below (or at/above) 1 mirror."""
+    lo = ts - SALE_WINDOW_DAYS * DAY
+    n_variants = 0
+    n_sales = 0
+    for hist in market.variants.values():
+        n_polls = hist.polls_upto(ts)
+        if n_polls == 0:
+            continue
+        if below_one_mirror is not None:
+            floor = next((p.instant_floor for p in reversed(hist.polls[:n_polls]) if p.instant_floor is not None), None)
+            if floor is None or (floor < 1.0) != below_one_mirror:
+                continue
+        n_variants += 1
+        n_sales += sum(1 for s in hist.sales[hist.sales_upto(lo):hist.sales_upto(ts)] if s.mirror_channel == mirror_channel)
+    return n_sales / (n_variants * SALE_WINDOW_DAYS) if n_variants else 0.0
+
+
+def market_sale_rate(market: Market, ts: float) -> float:
+    """Pooled divine-channel sales/day per variant (prior for sparse items)."""
+    return max(1.0 / 365.0, _pooled_rate(market, ts, mirror_channel=False))
+
+
+def market_mirror_rate(market: Market, ts: float) -> tuple[float, float]:
+    """Pooled mirror-channel sales/day per variant (prior for the whole-mirror plan), as (items worth
+    under 1 mirror, items worth 1 mirror or more). Below 1 mirror a whole-mirror listing is a slow
+    premium; above it, whole mirrors are the usual currency, so the two rates differ a lot."""
+    return (
+        _pooled_rate(market, ts, mirror_channel=True, below_one_mirror=True),
+        _pooled_rate(market, ts, mirror_channel=True, below_one_mirror=False),
+    )
+
+
+def snapshot(
+    hist: VariantHistory, ts: float, *, market_rate: float, market_mirror: tuple[float, float] = (0.0, 0.0)
+) -> Snapshot | None:
+    """Point-in-time view of `hist` at `ts`, or None if there is no recent buyable price."""
+    n_polls = hist.polls_upto(ts)
+    if n_polls == 0:
+        return None
+    polls = hist.polls[:n_polls]
+
+    # Buy price = cheapest instant-buyout listing: non-instant floors are often unresponsive sellers.
+    latest_buyable = next((p for p in reversed(polls) if p.instant_floor is not None), None)
+    if latest_buyable is None:
+        return None
+    entry_age = (ts - latest_buyable.ts) / DAY
+    if entry_age > MAX_FLOOR_AGE_DAYS:
+        return None
+    entry = float(latest_buyable.instant_floor)
+    divine_ladder = tuple(float(p) for p in latest_buyable.divine_ladder)
+    mirror_listings = tuple(latest_buyable.mirror_listings)
+    entry_whole = 0
+    if mirror_listings and abs(mirror_listings[0][0] - entry) < 1e-6 and (not divine_ladder or divine_ladder[0] > entry + 1e-9):
+        entry_whole = mirror_listings[0][0]
+
+    def divine_floors_between(lo_days: float, hi_days: float) -> list[float]:
+        lo, hi = ts - lo_days * DAY, ts - hi_days * DAY
+        return [float(p.divine_ladder[0]) for p in polls if lo < p.ts <= hi and p.divine_ladder]
+
+    def floors_between(lo_days: float, hi_days: float) -> list[float]:
+        lo, hi = ts - lo_days * DAY, ts - hi_days * DAY
+        return [p.instant_floor for p in polls if lo < p.ts <= hi and p.instant_floor is not None]
+
+    listing_anchor = _median_or_none(divine_floors_between(LISTING_ANCHOR_DAYS, 0))
+    older_floor = _median_or_none(floors_between(60, 30))
+
+    n_sales = hist.sales_upto(ts)
+    lo90 = ts - SALE_WINDOW_DAYS * DAY
+    window = hist.sales[hist.sales_upto(lo90):n_sales]
+    recent = [s for s in window if not s.mirror_channel]
+    mirror_amounts = tuple(s.whole_mirrors for s in window if s.mirror_channel)
+    recent_30 = [s for s in recent if s.ts > ts - RECENT_SALE_DAYS * DAY]
+    older_sales = [s.price_mirror for s in recent if s.ts <= ts - RECENT_SALE_DAYS * DAY]
+
+    sale_anchor = _weighted_median(
+        [(s.price_mirror, 0.5 ** (((ts - s.ts) / DAY) / SALE_HALF_LIFE_DAYS)) for s in recent]
+    )
+    recent_anchor = _median_or_none([s.price_mirror for s in recent_30])
+    older_anchor = _median_or_none(older_sales)
+    sale_momentum = (recent_anchor / older_anchor - 1.0) if recent_anchor and older_anchor else None
+
+    listing_ref = listing_anchor if listing_anchor is not None else entry
+    if sale_anchor is not None:
+        w = len(recent) / (len(recent) + FAIR_VALUE_SHRINK_K)
+        fair = w * sale_anchor + (1.0 - w) * listing_ref
+    else:
+        fair = listing_ref
+
+    days_since_last_sale = (ts - hist.sales[n_sales - 1].ts) / DAY if n_sales else None
+
+    listings_now = polls[-1].total_results
+    past_listings = [p.total_results for p in polls if ts - 37 * DAY < p.ts <= ts - 23 * DAY]
+    past_median = _median_or_none([float(x) for x in past_listings])
+    listings_change = (listings_now / past_median - 1.0) if past_median else None
+
+    new_rows_30 = sum(p.new_listing_rows for p in polls if p.ts > ts - 30 * DAY)
+    first_ts = polls[0].ts
+    observed_days = max(1.0, min(30.0, (ts - first_ts) / DAY))
+
+    evidence = []
+    for ep in hist.episodes:
+        if ep.start_ts > ts:
+            break  # episodes are sorted by start
+        if not ep.instant:
+            continue
+        lo, hi = max(ep.start_ts, lo90), min(ep.end_ts, ts)
+        if hi <= lo:
+            continue
+        evidence.append((ep.price_mirror, (hi - lo) / DAY, ep.sold and ep.end_ts <= ts))
+
+    return Snapshot(
+        variant_id=hist.variant_id,
+        ts=ts,
+        entry_price=entry,
+        entry_age_days=round(entry_age, 4),
+        listing_anchor=listing_anchor,
+        sale_anchor=sale_anchor,
+        fair_value=fair,
+        sales_30d=len(recent_30),
+        sales_90d=len(recent),
+        recent_sale_prices=tuple(s.price_mirror for s in recent),
+        days_since_last_sale=days_since_last_sale,
+        total_listings=listings_now,
+        listings_change_30d=listings_change,
+        new_listings_per_day_30d=new_rows_30 / observed_days,
+        sale_momentum=sale_momentum,
+        floor_momentum=(entry / older_floor - 1.0) if older_floor else None,
+        market_sale_rate_per_day=market_rate,
+        divine_ladder=divine_ladder,
+        listing_evidence=tuple(evidence),
+        mirror_listings=mirror_listings,
+        mirror_sale_amounts=mirror_amounts,
+        market_mirror_rate_per_day=market_mirror[0] if entry < 1.0 else market_mirror[1],
+        entry_whole_mirrors=entry_whole,
+    )
+
+
+def snapshots_at(market: Market, ts: float) -> list[Snapshot]:
+    rate = market_sale_rate(market, ts)
+    mirror_rate = market_mirror_rate(market, ts)
+    out = []
+    for hist in market.variants.values():
+        snap = snapshot(hist, ts, market_rate=rate, market_mirror=mirror_rate)
+        if snap is not None:
+            out.append(snap)
+    return out

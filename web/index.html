@@ -136,7 +136,7 @@
       ↑ Top
     </button>
 
-    <div id="companionWidget" class="companion-widget companion-widget-collapsed" hidden>
+    <div id="companionWidget" class="companion" hidden>
       <button
         type="button"
         id="companionToggle"
@@ -144,57 +144,79 @@
         aria-controls="companionPanel"
         aria-expanded="false"
       >
-        <span class="companion-launcher-mark" aria-hidden="true">IC</span>
-        <span class="companion-launcher-text">Investment Companion</span>
+        <span class="companion-launcher-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 17 9 11 13 15 21 7"></polyline>
+            <polyline points="15 7 21 7 21 13"></polyline>
+          </svg>
+        </span>
+        <span class="companion-launcher-text">Invest</span>
       </button>
-      <section id="companionPanel" class="companion-panel" aria-labelledby="companionTitle" role="dialog" hidden>
-        <button type="button" id="companionResize" class="companion-resize" aria-label="Resize companion window" title="Resize"></button>
-        <header class="companion-header">
+
+      <aside id="companionPanel" class="companion-drawer" role="dialog" aria-labelledby="companionTitle" hidden>
+        <div id="companionResize" class="companion-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" title="Drag to resize, double-click to reset"></div>
+
+        <header class="companion-head">
           <div>
-            <p class="eyebrow">Investment Companion</p>
-            <h2 id="companionTitle">Find investment fits</h2>
+            <p class="companion-eyebrow">Investment companion</p>
+            <h2 id="companionTitle">Best return per day</h2>
           </div>
-          <button type="button" id="companionClose" class="companion-close" aria-label="Close companion">&times;</button>
+          <button type="button" id="companionClose" class="companion-icon-btn" aria-label="Close investment companion">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+            </svg>
+          </button>
         </header>
-        <div class="companion-thread">
-          <p id="companionStatus" class="companion-status" aria-live="polite">
-            Results are estimates from inferred market data, not guaranteed returns.
-          </p>
-          <div class="companion-message companion-message-bot">
-            Enter your wealth and I will rank market opportunities from price, trend, supply, and inferred sale signals.
-          </div>
-          <form id="companionForm" class="companion-form">
-            <div class="filter-group">
-              <label for="companionWealth">Wealth</label>
-              <input type="number" id="companionWealth" min="0" step="1" placeholder="12" inputmode="numeric" required />
+
+        <div class="companion-body">
+          <form id="companionForm" class="companion-controls" novalidate>
+            <div class="companion-field">
+              <label for="companionWealth">Budget</label>
+              <div class="companion-budget">
+                <input type="number" id="companionWealth" min="0" step="any" placeholder="50" inputmode="decimal" required />
+                <select id="companionCurrency" aria-label="Budget currency">
+                  <option value="mirror">Mirrors</option>
+                  <option value="divine">Divines</option>
+                </select>
+              </div>
             </div>
-            <div class="filter-group">
-              <label for="companionCurrency">Currency</label>
-              <select id="companionCurrency">
-                <option value="mirror">Mirrors</option>
-                <option value="divine">Divines</option>
-              </select>
-            </div>
-            <div class="filter-group">
-              <label for="companionRisk">Risk</label>
-              <select id="companionRisk">
-                <option value="safe">Safe</option>
-                <option value="balanced" selected>Balanced</option>
-                <option value="speculative">Speculative</option>
-              </select>
-            </div>
-            <div class="filter-group companion-mode-group">
-              <label for="companionMode">Mode</label>
-              <select id="companionMode">
-                <option value="ranked" selected>Ranked picks</option>
-                <option value="portfolio">Portfolio plan</option>
-              </select>
-            </div>
-            <button type="submit" id="companionSubmit" class="companion-submit">Estimate</button>
+
+            <fieldset class="companion-field companion-segment">
+              <legend>Risk</legend>
+              <div class="companion-segment-options">
+                <label><input type="radio" name="companionRisk" value="safe" /><span>Safe</span></label>
+                <label><input type="radio" name="companionRisk" value="balanced" checked /><span>Balanced</span></label>
+                <label><input type="radio" name="companionRisk" value="speculative" /><span>Speculative</span></label>
+              </div>
+            </fieldset>
+
+            <fieldset class="companion-field companion-segment">
+              <legend>View</legend>
+              <div class="companion-segment-options">
+                <label><input type="radio" name="companionMode" value="ranked" checked /><span>Ranked picks</span></label>
+                <label><input type="radio" name="companionMode" value="portfolio" /><span>Portfolio</span></label>
+              </div>
+            </fieldset>
+
+            <p id="companionRiskHelp" class="companion-hint"></p>
+            <button type="submit" id="companionSubmit" class="companion-submit">Find picks</button>
           </form>
-          <div id="companionResults" class="companion-results" hidden></div>
+
+          <p id="companionStatus" class="companion-status" aria-live="polite"></p>
+          <div id="companionResults" class="companion-results">
+            <div class="companion-empty">
+              <p class="companion-empty-title">Where should your mirrors go?</p>
+              <p>
+                Enter a budget to rank items by expected % return per day: buy at the cheapest instant listing,
+                resell just under recent sale prices. Quick small gains rank above slow big ones.
+              </p>
+            </div>
+          </div>
         </div>
-      </section>
+
+        <footer class="companion-foot">Estimates from inferred sales and listings, not guaranteed returns.</footer>
+      </aside>
     </div>
 
     <div id="filtersOverlay" class="filters-overlay" aria-hidden="true">

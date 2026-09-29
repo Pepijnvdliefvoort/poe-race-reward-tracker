@@ -1,37 +1,51 @@
+"""
+Companion recommendations: rank affordable items by expected % return per day held.
+
+The ranking comes from ML.estimator (a transparent formula over recent sales, listing floors and
+sale rates). When the weekly retrain has enabled the learned model (it beat the estimator in the
+walk-forward trading simulation), the model's predicted return/day is used for ordering instead.
+The same ML.features / ML.estimator code runs in the backtest, so what is shown here is what was
+evaluated.
+"""
+
 from __future__ import annotations
 
 import math
-import pickle
+import sqlite3
+import threading
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ML import model as model_mod
+from ML.estimator import Estimate, EstimatorParams, estimate, params_from_config
+from ML.features import Snapshot, market_mirror_rate, market_sale_rate, snapshot
+from ML.market import Market, load_market
 from server.data_service import _get_image_path
 from server.storage_service import ServerStorage
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-ML_DIR = ROOT_DIR / "ML"
-DEFAULT_CLASSIFIER_PATH = ML_DIR / "model_sellprob_30d.pkl"
-DEFAULT_REGRESSOR_PATH = ML_DIR / "model_execprice_30d.pkl"
 
 VALID_CURRENCIES = {"mirror", "divine"}
 VALID_RISKS = {"safe", "balanced", "speculative"}
 VALID_MODES = {"ranked", "portfolio"}
-STALE_PRICE_DAYS = 90
-RECENT_WINDOW_DAYS = 30
 MAX_RECOMMENDATIONS = 8
 MIN_FLIP_PROFIT_MIRRORS = 1.0
-ML_CONFIDENCE_ORDER = {"sparse": 0, "medium": 1, "strong": 2}
+MARKET_CACHE_TTL_SECONDS = 300.0
+# Features look back at most ~90 days; load a margin on top.
+MARKET_HISTORY_DAYS = 130
 
-_ML_MODEL_CACHE: dict[str, Any] = {
-    "classifier": None,
-    "regressor": None,
-    "classifierMtime": None,
-    "regressorMtime": None,
-    "modelVersion": None,
-    "loadError": None,
+# Per risk profile: minimum sell chance within the horizon and allowed confidence tiers.
+RISK_FILTERS: dict[str, dict[str, Any]] = {
+    "safe": {"min_sell_probability": 0.5, "confidence": {"medium", "strong"}},
+    "balanced": {"min_sell_probability": 0.25, "confidence": {"sparse", "medium", "strong"}},
+    "speculative": {"min_sell_probability": 0.0, "confidence": {"sparse", "medium", "strong"}},
 }
+
+_market_cache_lock = threading.Lock()
+_market_cache: dict[str, Any] = {"key": None, "loaded_at": 0.0, "market": None}
 
 
 class RecommendationInputError(ValueError):
@@ -40,18 +54,6 @@ class RecommendationInputError(ValueError):
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _parse_iso(value: Any) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value))
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
 
 
 def _finite_positive(value: Any) -> float | None:
@@ -68,171 +70,10 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
 
-def _as_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    raw = str(value or "").strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
-        return True
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
-def _as_float(value: Any, default: float) -> float:
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return default
-    if not math.isfinite(f):
-        return default
-    return f
-
-
-def _as_confidence_tier(value: Any, default: str = "medium") -> str:
-    raw = str(value or "").strip().lower()
-    if raw in ML_CONFIDENCE_ORDER:
-        return raw
-    return default
-
-
-def _tier_rank(tier: str | None) -> int:
-    if not tier:
-        return -1
-    return ML_CONFIDENCE_ORDER.get(str(tier).strip().lower(), -1)
-
-
-def _load_ml_rollout_config(storage: ServerStorage) -> dict[str, Any]:
-    cfg: dict[str, Any] = {}
-    try:
-        loaded = storage.get_market_config()
-        if isinstance(loaded, dict):
-            cfg = loaded
-    except Exception:
-        cfg = {}
-
-    shadow_enabled = _as_bool(cfg.get("ml_shadow_enabled"), True)
-    hybrid_enabled = _as_bool(cfg.get("ml_hybrid_enabled"), False)
-    alpha_heuristic = _clamp(_as_float(cfg.get("ml_hybrid_alpha_heuristic"), 0.85), 0.0, 1.0)
-    min_conf = _as_confidence_tier(cfg.get("ml_hybrid_min_confidence_tier"), "medium")
-
-    return {
-        "shadowEnabled": shadow_enabled,
-        "hybridEnabled": hybrid_enabled,
-        "alphaHeuristic": alpha_heuristic,
-        "minConfidenceTier": min_conf,
-    }
-
-
-def _ml_score_from_expected_value(expected_value_mirror: float | None, entry_price_mirror: float) -> float | None:
-    if expected_value_mirror is None or not math.isfinite(expected_value_mirror):
+def _pct(value: float | None, digits: int = 2) -> float | None:
+    if value is None or not math.isfinite(value):
         return None
-    denom = max(1.0, entry_price_mirror)
-    edge_ratio = expected_value_mirror / denom
-    # Smoothly map EV ratio to [0,1] for blending with normalized heuristic score.
-    return _clamp(0.5 + 0.5 * math.tanh(edge_ratio))
-
-
-def _ratio(numer: float | None, denom: float | None) -> float | None:
-    if numer is None or denom is None or denom == 0:
-        return None
-    return numer / denom
-
-
-def _gap_pct(current: float | None, anchor: float | None) -> float | None:
-    if current is None or anchor is None or anchor <= 0:
-        return None
-    return (current - anchor) / anchor
-
-
-def _tier_ordinal(tier: str) -> float:
-    if tier == "strong":
-        return 2.0
-    if tier == "medium":
-        return 1.0
-    return 0.0
-
-
-def _safe_model_predictor_array(values: list[float | None]) -> list[list[float]]:
-    row: list[float] = []
-    for v in values:
-        if v is None or not math.isfinite(v):
-            row.append(float("nan"))
-        else:
-            row.append(float(v))
-    return [row]
-
-
-def _model_version_for_mtime(classifier_mtime: float, regressor_mtime: float) -> str:
-    c = int(classifier_mtime)
-    r = int(regressor_mtime)
-    return f"sellprob@{c}-execprice@{r}"
-
-
-def _load_shadow_models(root_dir: Path | None = None) -> dict[str, Any]:
-    base_dir = Path(root_dir) if root_dir is not None else ROOT_DIR
-    cls_path = base_dir / "ML" / "model_sellprob_30d.pkl"
-    reg_path = base_dir / "ML" / "model_execprice_30d.pkl"
-
-    if not cls_path.is_file() or not reg_path.is_file():
-        return {
-            "enabled": False,
-            "classifier": None,
-            "regressor": None,
-            "modelVersion": None,
-            "fallbackReason": "ml-model-files-missing",
-        }
-
-    cls_mtime = cls_path.stat().st_mtime
-    reg_mtime = reg_path.stat().st_mtime
-
-    cached_ok = (
-        _ML_MODEL_CACHE.get("classifier") is not None
-        and _ML_MODEL_CACHE.get("regressor") is not None
-        and _ML_MODEL_CACHE.get("classifierMtime") == cls_mtime
-        and _ML_MODEL_CACHE.get("regressorMtime") == reg_mtime
-    )
-    if cached_ok:
-        return {
-            "enabled": True,
-            "classifier": _ML_MODEL_CACHE["classifier"],
-            "regressor": _ML_MODEL_CACHE["regressor"],
-            "modelVersion": _ML_MODEL_CACHE["modelVersion"],
-            "fallbackReason": None,
-        }
-
-    try:
-        with cls_path.open("rb") as fh:
-            classifier = pickle.load(fh)
-        with reg_path.open("rb") as fh:
-            regressor = pickle.load(fh)
-    except Exception as exc:
-        _ML_MODEL_CACHE["loadError"] = str(exc)
-        return {
-            "enabled": False,
-            "classifier": None,
-            "regressor": None,
-            "modelVersion": None,
-            "fallbackReason": f"ml-model-load-failed: {exc}",
-        }
-
-    model_version = _model_version_for_mtime(cls_mtime, reg_mtime)
-    _ML_MODEL_CACHE["classifier"] = classifier
-    _ML_MODEL_CACHE["regressor"] = regressor
-    _ML_MODEL_CACHE["classifierMtime"] = cls_mtime
-    _ML_MODEL_CACHE["regressorMtime"] = reg_mtime
-    _ML_MODEL_CACHE["modelVersion"] = model_version
-    _ML_MODEL_CACHE["loadError"] = None
-
-    return {
-        "enabled": True,
-        "classifier": classifier,
-        "regressor": regressor,
-        "modelVersion": model_version,
-        "fallbackReason": None,
-    }
+    return round(value * 100.0, digits)
 
 
 def _latest_divines_per_mirror(storage: ServerStorage) -> float | None:
@@ -252,49 +93,46 @@ def _latest_divines_per_mirror(storage: ServerStorage) -> float | None:
         con.close()
 
 
-def _load_variant_history(storage: ServerStorage) -> dict[int, list[dict[str, Any]]]:
+def _load_market_cached(storage: ServerStorage, *, with_episodes: bool) -> Market:
+    """
+    History load is the expensive part; reuse it for a few minutes. Light mode (no listing
+    episodes) is enough for the estimator; the learned model also needs listing episodes.
+    """
+    key = (str(storage.db_path), with_episodes)
+    now = time.monotonic()
+    with _market_cache_lock:
+        if _market_cache["key"] == key and now - _market_cache["loaded_at"] < MARKET_CACHE_TTL_SECONDS:
+            return _market_cache["market"]
+    con = storage.connect()
+    try:
+        market = load_market(con, since_ts=time.time() - MARKET_HISTORY_DAYS * 86400, episodes=with_episodes)
+    finally:
+        con.close()
+    with _market_cache_lock:
+        _market_cache.update({"key": key, "loaded_at": now, "market": market})
+    return market
+
+
+def _load_latest_poll_rows(storage: ServerStorage) -> dict[int, dict[str, Any]]:
+    """Latest poll per variant with display fields (name, image, query id, league)."""
     con = storage.connect()
     try:
         rows = con.execute(
             """
             SELECT
-              v.id AS variant_id,
-              i.name AS base_item_name,
-              v.display_name,
-              v.mode,
-                            v.image_name_filter,
-              v.sort_order,
-              i.icon_path,
-              ip.id AS item_poll_id,
-              pr.league,
-              pr.cycle_number,
-              pr.started_at_utc,
-              ip.requested_at_utc,
-              ip.query_id,
-              ip.total_results,
-              ip.used_results,
-              ip.lowest_mirror,
-              ip.median_mirror,
-              ip.highest_mirror,
-              ip.inf_confirmed_transfer,
-              ip.inf_likely_instant_sale,
-              ip.inf_likely_non_instant_online,
-              ip.inf_relist_same_seller,
-              ip.inf_reprice_same_seller
+              v.id AS variant_id, i.name AS base_item_name, v.display_name, v.mode, v.image_name_filter,
+              v.sort_order, i.icon_path, ip.id AS item_poll_id, ip.query_id, ip.requested_at_utc, pr.league
             FROM item_polls ip
+            JOIN (SELECT item_variant_id, MAX(id) AS max_id FROM item_polls GROUP BY item_variant_id) latest
+              ON latest.max_id = ip.id
             JOIN poll_runs pr ON pr.id = ip.poll_run_id
             JOIN item_variants v ON v.id = ip.item_variant_id
             JOIN items i ON i.id = v.item_id
-            ORDER BY v.sort_order ASC, v.display_name ASC, ip.requested_at_utc ASC
             """
         ).fetchall()
     finally:
         con.close()
-
-    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        grouped[int(row["variant_id"])].append(dict(row))
-    return grouped
+    return {int(r["variant_id"]): dict(r) for r in rows}
 
 
 def _load_latest_listing_ladders(storage: ServerStorage, item_poll_ids: list[int]) -> dict[int, list[float]]:
@@ -309,7 +147,7 @@ def _load_latest_listing_ladders(storage: ServerStorage, item_poll_ids: list[int
             SELECT ip.item_variant_id, ls.amount, ls.currency, ls.is_instant_buyout
             FROM listing_snapshots ls
             JOIN item_polls ip ON ip.id = ls.item_poll_id
-            WHERE ls.item_poll_id IN ({placeholders})
+            WHERE ls.item_poll_id IN ({placeholders}) AND COALESCE(ls.is_corrupted, 0) = 0
             ORDER BY ip.item_variant_id ASC, ls.rank ASC
             """,
             ids,
@@ -335,339 +173,6 @@ def _load_latest_listing_ladders(storage: ServerStorage, item_poll_ids: list[int
     return dict(ladders)
 
 
-def _row_price(row: dict[str, Any]) -> float | None:
-    for key in ("lowest_mirror", "median_mirror", "highest_mirror"):
-        value = _finite_positive(row.get(key))
-        if value is not None:
-            return value
-    return None
-
-
-def _current_price(rows: list[dict[str, Any]], now: datetime) -> tuple[float | None, bool, float | None]:
-    latest = rows[-1] if rows else {}
-    live_low = _finite_positive(latest.get("lowest_mirror"))
-    if live_low is not None:
-        latest_dt = _parse_iso(latest.get("requested_at_utc"))
-        age_days = (now - latest_dt).total_seconds() / 86400 if latest_dt else None
-        return live_low, False, age_days
-
-    for row in reversed(rows):
-        price = _row_price(row)
-        if price is None:
-            continue
-        price_dt = _parse_iso(row.get("requested_at_utc"))
-        age_days = (now - price_dt).total_seconds() / 86400 if price_dt else None
-        if age_days is None or age_days <= STALE_PRICE_DAYS:
-            return price, True, age_days
-    return None, False, None
-
-
-def _trend_pct(rows: list[dict[str, Any]], current_price: float, now: datetime) -> float | None:
-    cutoff = now.timestamp() - RECENT_WINDOW_DAYS * 86400
-    baseline: float | None = None
-    for row in rows:
-        row_dt = _parse_iso(row.get("requested_at_utc"))
-        if not row_dt or row_dt.timestamp() < cutoff:
-            continue
-        price = _row_price(row)
-        if price is not None:
-            baseline = price
-            break
-    if baseline is None or baseline <= 0:
-        return None
-    return ((current_price - baseline) / baseline) * 100.0
-
-
-def _recent_sales(rows: list[dict[str, Any]], now: datetime) -> int:
-    return _recent_sales_window(rows, now, RECENT_WINDOW_DAYS)
-
-
-def _recent_sales_window(rows: list[dict[str, Any]], now: datetime, days: int) -> int:
-    cutoff = now.timestamp() - days * 86400
-    total = 0
-    for row in rows:
-        row_dt = _parse_iso(row.get("requested_at_utc"))
-        if not row_dt or row_dt.timestamp() < cutoff:
-            continue
-        total += int(row.get("inf_confirmed_transfer") or 0)
-        total += int(row.get("inf_likely_instant_sale") or 0)
-        total += int(row.get("inf_likely_non_instant_online") or 0)
-    return max(0, total)
-
-
-def _recent_inference_counts(rows: list[dict[str, Any]], now: datetime, days: int) -> tuple[int, int, int]:
-    cutoff = now.timestamp() - days * 86400
-    confirmed = 0
-    instant = 0
-    noninstant = 0
-    for row in rows:
-        row_dt = _parse_iso(row.get("requested_at_utc"))
-        if not row_dt or row_dt.timestamp() < cutoff:
-            continue
-        confirmed += int(row.get("inf_confirmed_transfer") or 0)
-        instant += int(row.get("inf_likely_instant_sale") or 0)
-        noninstant += int(row.get("inf_likely_non_instant_online") or 0)
-    return max(0, confirmed), max(0, instant), max(0, noninstant)
-
-
-def _days_since_last_inferred_sale(rows: list[dict[str, Any]], now: datetime) -> float | None:
-    last_sale_dt: datetime | None = None
-    for row in reversed(rows):
-        sale_count = int(row.get("inf_confirmed_transfer") or 0)
-        sale_count += int(row.get("inf_likely_instant_sale") or 0)
-        sale_count += int(row.get("inf_likely_non_instant_online") or 0)
-        if sale_count <= 0:
-            continue
-        row_dt = _parse_iso(row.get("requested_at_utc"))
-        if row_dt is not None:
-            last_sale_dt = row_dt
-            break
-    if last_sale_dt is None:
-        return None
-    return max(0.0, (now - last_sale_dt).total_seconds() / 86400.0)
-
-
-def _listing_anchor_from_rows(rows: list[dict[str, Any]], now: datetime, days: int = 30) -> float | None:
-    cutoff = now.timestamp() - days * 86400
-    prices: list[float] = []
-    for row in rows:
-        row_dt = _parse_iso(row.get("requested_at_utc"))
-        if not row_dt or row_dt.timestamp() < cutoff:
-            continue
-        p = _row_price(row)
-        if p is not None:
-            prices.append(p)
-    if not prices:
-        return None
-    prices.sort()
-    n = len(prices)
-    mid = n // 2
-    if n % 2 == 1:
-        return prices[mid]
-    return (prices[mid - 1] + prices[mid]) / 2.0
-
-
-def _sales_support_tier(sales_90d: int) -> str:
-    if sales_90d <= 1:
-        return "sparse"
-    if sales_90d <= 4:
-        return "medium"
-    return "strong"
-
-
-def _ml_shadow_fields(
-    *,
-    ml_ctx: dict[str, Any],
-    rows: list[dict[str, Any]],
-    now: datetime,
-    entry_price: float,
-    total_results: int,
-    used_results_raw: int,
-    stale_price_flag: int,
-) -> dict[str, Any]:
-    if not ml_ctx.get("enabled"):
-        return {
-            "mlEnabled": False,
-            "mlModelVersion": ml_ctx.get("modelVersion"),
-            "mlConfidenceTier": None,
-            "sellProb30d": None,
-            "expectedExecPrice30d": None,
-            "expectedValue30d": None,
-            "mlFallbackReason": ml_ctx.get("fallbackReason") or "ml-disabled",
-        }
-
-    sales_30d = _recent_sales_window(rows, now, 30)
-    sales_90d = _recent_sales_window(rows, now, 90)
-    inf_confirmed_30d, inf_instant_30d, inf_noninstant_30d = _recent_inference_counts(rows, now, 30)
-    signal_total = inf_confirmed_30d + inf_instant_30d + inf_noninstant_30d
-    confirmed_share = (inf_confirmed_30d / signal_total) if signal_total > 0 else None
-    days_since_last_sale = _days_since_last_inferred_sale(rows, now)
-
-    listing_anchor = _listing_anchor_from_rows(rows, now, 30)
-    fair_value = listing_anchor if listing_anchor is not None else entry_price
-    sale_anchor = None
-
-    total_results_clean = max(0, int(total_results))
-    used_results_clean = max(0, int(used_results_raw))
-    used_exceeds_total_flag = 1 if used_results_clean > total_results_clean else 0
-    used_results_bounded = min(used_results_clean, total_results_clean)
-
-    tier = _sales_support_tier(sales_90d)
-    feature_values = [
-        entry_price,
-        listing_anchor,
-        sale_anchor,
-        fair_value,
-        _gap_pct(entry_price, fair_value),
-        _gap_pct(entry_price, sale_anchor),
-        float(sales_30d),
-        float(sales_90d),
-        days_since_last_sale,
-        None,  # acceptance_ratio_10pct
-        None,  # acceptance_ratio_20pct
-        float(total_results_clean),
-        float(used_results_bounded),
-        float(used_results_clean),
-        float(used_exceeds_total_flag),
-        _ratio(float(used_results_bounded), float(total_results_clean) if total_results_clean > 0 else None),
-        float(inf_confirmed_30d),
-        float(inf_instant_30d),
-        float(inf_noninstant_30d),
-        confirmed_share,
-        float(stale_price_flag),
-        _tier_ordinal(tier),
-    ]
-
-    classifier = ml_ctx.get("classifier")
-    regressor = ml_ctx.get("regressor")
-    if classifier is None or regressor is None:
-        return {
-            "mlEnabled": False,
-            "mlModelVersion": ml_ctx.get("modelVersion"),
-            "mlConfidenceTier": tier,
-            "sellProb30d": None,
-            "expectedExecPrice30d": None,
-            "expectedValue30d": None,
-            "mlFallbackReason": "ml-model-unavailable",
-        }
-
-    try:
-        X = _safe_model_predictor_array(feature_values)
-        sell_prob = float(classifier.predict_proba(X)[0][1])
-        expected_exec = float(regressor.predict(X)[0])
-        expected_value = float((sell_prob * expected_exec) - entry_price)
-    except Exception as exc:
-        return {
-            "mlEnabled": False,
-            "mlModelVersion": ml_ctx.get("modelVersion"),
-            "mlConfidenceTier": tier,
-            "sellProb30d": None,
-            "expectedExecPrice30d": None,
-            "expectedValue30d": None,
-            "mlFallbackReason": f"ml-inference-failed: {exc}",
-        }
-
-    return {
-        "mlEnabled": True,
-        "mlModelVersion": ml_ctx.get("modelVersion"),
-        "mlConfidenceTier": tier,
-        "sellProb30d": round(max(0.0, min(1.0, sell_prob)), 4),
-        "expectedExecPrice30d": round(max(0.0, expected_exec), 2),
-        "expectedValue30d": round(expected_value, 2),
-        "mlFallbackReason": None,
-    }
-
-
-def _fit_score(price: float, wealth_mirror: float, risk: str) -> tuple[float, float]:
-    ratio = price / wealth_mirror
-    ideal = {"safe": 0.18, "balanced": 0.32, "speculative": 0.55}[risk]
-    width = {"safe": 0.24, "balanced": 0.38, "speculative": 0.55}[risk]
-    score = 1.0 - abs(ratio - ideal) / width
-    if ratio > 0.92:
-        score -= 0.35
-    if ratio < 0.03:
-        score -= 0.15
-    return _clamp(score), ratio
-
-
-def _trend_score(trend: float | None, risk: str) -> float:
-    if trend is None:
-        return 0.28
-    if risk == "safe":
-        # Stable is useful, but it should not outrank actual demand or a clean ladder gap.
-        return _clamp(0.62 - abs(trend) / 70.0)
-    if risk == "balanced":
-        if -8.0 <= trend <= 8.0:
-            return 0.42
-        if 8.0 < trend <= 25.0:
-            return _clamp(0.5 + trend / 70.0)
-        if trend < -18.0:
-            return _clamp(0.42 + min(abs(trend), 45.0) / 180.0)
-        return _clamp(0.62 - (trend - 25.0) / 100.0)
-    if trend < 0:
-        return _clamp(0.36 + min(abs(trend), 60.0) / 95.0)
-    return _clamp(0.38 + min(trend, 55.0) / 75.0)
-
-
-def _demand_score(sales_30d: int, trend: float | None) -> float:
-    sales_score = _clamp(sales_30d / 5.0)
-    trend_bonus = 0.0 if trend is None else _clamp(trend / 40.0, 0.0, 0.35)
-    return _clamp(sales_score + trend_bonus)
-
-
-def _market_penalty(*, sales_30d: int, trend: float | None, flip: dict[str, Any], ladder_prices: list[float]) -> float:
-    penalty = 0.0
-    flat_or_unknown = trend is None or abs(trend) < 1.0
-    if sales_30d == 0 and flat_or_unknown and not flip.get("viable"):
-        penalty += 0.34
-    floor_stock = int(flip.get("floorStock") or 0)
-    if floor_stock > 1:
-        penalty += min(0.22, 0.07 * (floor_stock - 1))
-    if len(ladder_prices) < 2:
-        penalty += 0.08
-    return penalty
-
-
-def _category(score: float, risk: str, sales_30d: int, trend: float | None, flip_viable: bool) -> str:
-    flat_or_unknown = trend is None or abs(trend) < 1.0
-    if flip_viable:
-        return "Best fit" if score >= 72 else "Value watch"
-    if sales_30d == 0 and flat_or_unknown:
-        return "Watchlist"
-    if risk == "speculative" or (trend is not None and abs(trend) >= 25):
-        return "Speculative"
-    if sales_30d >= 5:
-        return "Liquid"
-    if score >= 72:
-        return "Best fit"
-    if trend is not None and trend < -10:
-        return "Value watch"
-    return "Watchlist"
-
-
-def _reasons(
-    *,
-    ratio: float,
-    trend: float | None,
-    sales_30d: int,
-    total_results: int,
-    used_results: int,
-    price_is_last_known: bool,
-) -> list[str]:
-    reasons: list[str] = []
-    reasons.append(f"Uses {ratio * 100:.0f}% of your available wealth.")
-    if sales_30d > 0:
-        reasons.append(f"About {sales_30d} inferred sale signals in the last {RECENT_WINDOW_DAYS} days.")
-    else:
-        reasons.append("No inferred sale signals in the recent window, so demand is unproven.")
-
-    if trend is not None:
-        if trend <= -10:
-            reasons.append(f"Price is down {abs(trend):.0f}% over the recent window.")
-        elif trend >= 10:
-            reasons.append(f"Price is up {trend:.0f}% over the recent window.")
-        else:
-            reasons.append("Recent price trend is relatively stable.")
-    if used_results > 0:
-        reasons.append(f"Latest poll used {used_results} listings for pricing.")
-    if price_is_last_known:
-        reasons.append("Current floor was missing, so this uses the last known price.")
-    return reasons[:4]
-
-
-def _warnings(*, age_days: float | None, total_results: int, price_is_last_known: bool, ratio: float) -> list[str]:
-    warnings: list[str] = []
-    if price_is_last_known:
-        warnings.append("Price is carried forward from an earlier poll.")
-    if age_days is not None and age_days > 1:
-        warnings.append(f"Latest usable price is {age_days:.0f} days old.")
-    if total_results == 0:
-        warnings.append("No live listings were reported in the latest poll.")
-    if ratio > 0.75:
-        warnings.append("This would concentrate most of your wealth in one item.")
-    return warnings
-
-
 def _whole_mirror_relist_price(next_market_price: float) -> float | None:
     if next_market_price <= 1:
         return None
@@ -678,6 +183,7 @@ def _whole_mirror_relist_price(next_market_price: float) -> float | None:
 
 
 def _flip_opportunity(ladder_prices: list[float]) -> dict[str, Any]:
+    """Immediate ladder gap: buy the only floor listing, relist just under the next one."""
     prices = sorted(p for p in ladder_prices if p > 0)
     if len(prices) < 2:
         return {
@@ -734,85 +240,94 @@ def _flip_opportunity(ladder_prices: list[float]) -> dict[str, Any]:
     }
 
 
-def _hold_30d_estimate(
-    *,
-    price: float,
-    trend: float | None,
-    sales_30d: int,
-    total_results: int,
-    risk: str,
-) -> dict[str, Any]:
-    trend_component = 0.0 if trend is None else _clamp(trend / 100.0, -0.35, 0.35)
-    risk_multiplier = {"safe": 0.45, "balanced": 0.65, "speculative": 0.9}[risk]
-    liquidity_bonus = min(sales_30d, 8) * 0.006
-    supply_penalty = 0.04 if total_results >= 20 else 0.02 if total_results >= 12 else 0.0
-    expected_return = _clamp((trend_component * risk_multiplier) + liquidity_bonus - supply_penalty, -0.25, 0.35)
-    model_price = max(0.0, price * (1.0 + expected_return))
-    expected_sell_price = float(max(1, math.floor(model_price))) if model_price > 0 else 0.0
-    whole_mirror_profit = expected_sell_price - price
+def _max_units(snap: Snapshot, est: Estimate, params: EstimatorParams) -> int:
+    """
+    Copies worth buying at once: no more than are listed, and no more than the market is expected
+    to absorb in half the horizon at our ask (each extra copy waits behind the previous one).
+    """
+    absorbable = int(est.sale_rate_per_day * params.horizon_days / 2.0)
+    return max(1, min(snap.total_listings or 1, absorbable))
 
-    if whole_mirror_profit > 0:
-        sell_timing = "Hold up to 30 days, then list into strength if demand and sales remain active."
-    elif whole_mirror_profit < 0:
-        sell_timing = "Avoid a 30-day hold unless the ladder tightens or league-merge demand starts to show."
+
+def _category(est: Estimate) -> str:
+    if est.confidence == "sparse":
+        return "Speculative"
+    if est.expected_days <= 14:
+        return "Quick flip"
+    if est.expected_days <= 45:
+        return "Steady"
+    return "Slow hold"
+
+
+def _reasons(snap: Snapshot, est: Estimate, params: EstimatorParams) -> list[str]:
+    reasons: list[str] = []
+    if snap.sale_anchor is not None:
+        reasons.append(
+            f"Recent divine sales put fair value near {snap.fair_value:.2f} mirrors "
+            f"({snap.sales_90d} sale{'s' if snap.sales_90d != 1 else ''} in 90 days)."
+        )
     else:
-        sell_timing = "Treat this as flat over 30 days; profit depends more on a good entry than passive appreciation."
-
-    if sales_30d >= 5 and expected_return >= 0:
-        cycle_note = "Recent sale signals suggest healthier demand, similar to periods with more Standard activity."
-    elif sales_30d <= 1:
-        cycle_note = "Demand looks quiet; if this is far from a league merge, prices can drift lower while activity is low."
+        reasons.append(f"No recent divine sales; fair value falls back to divine listing floors ({snap.fair_value:.2f} mirrors).")
+    if est.plan == "mirror":
+        k = est.ask_whole_mirrors
+        n_mirror = len(snap.mirror_sale_amounts)
+        reasons.append(
+            f"Buy at {snap.entry_price:.2f} and list at exactly {k} mirror{'s' if k != 1 else ''}: "
+            f"{est.return_if_sold * 100:+.0f}% if a mirror buyer takes it "
+            f"({est.sales_at_or_above_ask_90d} of {n_mirror} whole-mirror sale{'s' if n_mirror != 1 else ''} in 90 days were at "
+            f"{k}+ mirrors; "
+            + (
+                f"{est.queue_ahead} other listing{'s' if est.queue_ahead != 1 else ''} at exactly {k} mirrors, buyers pick among them at random)."
+                if est.queue_ahead
+                else f"no other listing at {k} mirrors or less)."
+            )
+        )
     else:
-        cycle_note = "This does not know the exact league-merge date, so it uses recent trend and sales as the activity proxy."
-
-    return {
-        "horizonDays": 30,
-        "expectedPriceMirror": round(expected_sell_price, 2),
-        "modelPriceMirror": round(model_price, 2),
-        "expectedProfitMirror": round(whole_mirror_profit, 2),
-        "expectedReturnPct": round((whole_mirror_profit / price) * 100.0, 1) if price > 0 else None,
-        "sellTiming": sell_timing,
-        "cycleNote": f"{cycle_note} The sell estimate is rounded down to a whole-mirror listing price.",
-    }
-
-
-def _mode_to_is_aa(mode: Any) -> bool | None:
-    if mode == "aa":
-        return True
-    if mode == "normal":
-        return False
-    return None
+        reasons.append(
+            f"Buy at {snap.entry_price:.2f}, list at {est.ask_price:.2f}: {est.return_if_sold * 100:+.1f}% if it sells"
+            + (
+                f" ({est.queue_ahead} listing{'s' if est.queue_ahead != 1 else ''} at or below your price ahead of yours)."
+                if est.queue_ahead
+                else " (yours would be the cheapest listing)."
+            )
+        )
+    reasons.append(
+        f"About {est.expected_days:.0f} days to sell at that price "
+        f"({est.sell_probability * 100:.0f}% chance within {params.horizon_days:.0f} days)."
+    )
+    if snap.listings_change_30d is not None and abs(snap.listings_change_30d) >= 0.2:
+        direction = "down" if snap.listings_change_30d < 0 else "up"
+        reasons.append(f"Listings are {direction} {abs(snap.listings_change_30d) * 100:.0f}% versus a month ago.")
+    return reasons
 
 
-def _recommendation_image_path(row: dict[str, Any]) -> str | None:
-    base_name = str(row.get("base_item_name") or "").strip()
-    mode = str(row.get("mode") or "").strip()
-    image_name_filter = str(row.get("image_name_filter") or "").strip() or None
-    resolved = _get_image_path(base_name, _mode_to_is_aa(mode), image_name_filter)
-    if resolved:
-        return resolved
-    raw = str(row.get("icon_path") or "").strip()
-    return raw or None
+def _warnings(snap: Snapshot, est: Estimate, wealth_share: float) -> list[str]:
+    warnings: list[str] = []
+    if est.plan == "mirror":
+        warnings.append("Whole-mirror listings sell only to buyers paying in mirrors; these sales are rare and slow.")
+    if est.confidence == "sparse":
+        warnings.append("Very few recent sales, so the sell-time estimate leans on market-wide averages.")
+    if snap.entry_age_days > 1:
+        warnings.append(f"Latest buyable price is {snap.entry_age_days:.0f} days old.")
+    if snap.entry_price > snap.fair_value:
+        warnings.append("The cheapest listing is above recent sale-based value.")
+    if wealth_share > 0.75:
+        warnings.append("This would concentrate most of your wealth in one item.")
+    return warnings
 
 
 def _portfolio_targets(risk: str) -> dict[str, float]:
     return {
-        "safe": {"deploy": 0.60, "position": 0.22, "min_score": 48},
-        "balanced": {"deploy": 0.75, "position": 0.30, "min_score": 42},
-        "speculative": {"deploy": 0.85, "position": 0.40, "min_score": 35},
+        "safe": {"deploy": 0.60, "position": 0.22},
+        "balanced": {"deploy": 0.75, "position": 0.30},
+        "speculative": {"deploy": 0.85, "position": 0.40},
     }[risk]
 
 
-def _build_portfolio_plan(
-    *,
-    recommendations: list[dict[str, Any]],
-    wealth_mirror: float,
-    risk: str,
-) -> dict[str, Any]:
+def _build_portfolio_plan(*, recommendations: list[dict[str, Any]], wealth_mirror: float, risk: str) -> dict[str, Any]:
     targets = _portfolio_targets(risk)
     deploy_target = wealth_mirror * targets["deploy"]
     max_position = wealth_mirror * targets["position"]
-    min_score = int(targets["min_score"])
 
     positions: list[dict[str, Any]] = []
     deployed = 0.0
@@ -821,29 +336,22 @@ def _build_portfolio_plan(
     for rec in recommendations:
         if deployed >= deploy_target:
             break
-        if int(rec.get("score") or 0) < min_score:
-            continue
-
         base_key = str(rec.get("baseItemName") or rec.get("itemName") or "").strip().lower()
         if base_key and base_key in used_bases:
             continue
-
         price = _finite_positive(rec.get("priceMirror"))
         if price is None:
             continue
 
         remaining_target = max(0.0, deploy_target - deployed)
         position_cap = min(max_position, remaining_target)
-        units = int(position_cap // price)
+        units = min(int(position_cap // price), int(rec.get("maxUnits") or 1))
         if units <= 0 and price <= remaining_target and price <= max_position:
             units = 1
         if units <= 0:
             continue
 
         allocation = round(units * price, 2)
-        if allocation <= 0:
-            continue
-
         item = dict(rec)
         item["portfolioUnits"] = units
         item["portfolioAllocationMirror"] = allocation
@@ -858,24 +366,33 @@ def _build_portfolio_plan(
             used_bases.add(base_key)
 
     deployed = round(deployed, 2)
-    cash = round(max(0.0, wealth_mirror - deployed), 2)
     target = round(deploy_target, 2)
     notes = [
         f"Targets about {targets['deploy'] * 100:.0f}% deployed for a {risk} profile.",
-        f"Keeps about {max(0.0, 1.0 - targets['deploy']) * 100:.0f}% liquid for stale data, repricing, or better entries.",
         f"Caps each position near {targets['position'] * 100:.0f}% of wealth to reduce concentration.",
     ]
     if deployed < target * 0.75:
-        notes.append("Could not deploy the full target without forcing low-score, stale, or oversized positions.")
-
+        notes.append("Could not deploy the full target without positions that have no positive expected return.")
     return {
         "targetDeployedMirror": target,
         "deployedMirror": deployed,
-        "cashReserveMirror": cash,
+        "cashReserveMirror": round(max(0.0, wealth_mirror - deployed), 2),
         "deploymentPct": round(deployed / wealth_mirror, 3) if wealth_mirror > 0 else 0,
         "positions": positions,
         "notes": notes,
     }
+
+
+def _recommendation_image_path(row: dict[str, Any]) -> str | None:
+    mode = str(row.get("mode") or "").strip()
+    is_aa = True if mode == "aa" else False if mode == "normal" else None
+    resolved = _get_image_path(
+        str(row.get("base_item_name") or "").strip(), is_aa, str(row.get("image_name_filter") or "").strip() or None
+    )
+    if resolved:
+        return resolved
+    raw = str(row.get("icon_path") or "").strip()
+    return raw or None
 
 
 def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = None) -> dict[str, Any]:
@@ -895,14 +412,14 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
     if mode not in VALID_MODES:
         raise RecommendationInputError("mode must be ranked or portfolio")
 
-    limit_raw = request.get("limit", MAX_RECOMMENDATIONS)
     try:
-        limit = int(limit_raw)
+        limit = int(request.get("limit", MAX_RECOMMENDATIONS))
     except (TypeError, ValueError):
         limit = MAX_RECOMMENDATIONS
     limit = max(1, min(MAX_RECOMMENDATIONS, limit))
 
-    storage = ServerStorage(root_dir or ROOT_DIR)
+    base_dir = Path(root_dir) if root_dir is not None else ROOT_DIR
+    storage = ServerStorage(base_dir)
     divines_per_mirror = _latest_divines_per_mirror(storage)
     if currency == "divine":
         if divines_per_mirror is None:
@@ -910,212 +427,117 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
         wealth_mirror = wealth / divines_per_mirror
     else:
         wealth_mirror = wealth
-
     if wealth_mirror <= 0:
         raise RecommendationInputError("wealth converts to zero mirrors")
 
+    try:
+        params = params_from_config(storage.get_market_config())
+    except (sqlite3.Error, ValueError):
+        params = EstimatorParams()
+    model, model_meta, model_reason = model_mod.load_for_serving(base_dir)
+
     now = _utc_now()
-    ml_ctx = _load_shadow_models(root_dir=root_dir)
-    ml_rollout = _load_ml_rollout_config(storage)
-    histories = _load_variant_history(storage)
-    latest_poll_ids = [int(rows[-1]["item_poll_id"]) for rows in histories.values() if rows and rows[-1].get("item_poll_id")]
-    listing_ladders = _load_latest_listing_ladders(storage, latest_poll_ids)
-    weights = {
-        "safe": {"fit": 0.30, "demand": 0.35, "trend": 0.20, "flip": 0.15},
-        "balanced": {"fit": 0.25, "demand": 0.30, "trend": 0.25, "flip": 0.20},
-        "speculative": {"fit": 0.20, "demand": 0.20, "trend": 0.35, "flip": 0.25},
-    }[risk]
+    now_ts = now.timestamp()
+    market = _load_market_cached(storage, with_episodes=model is not None)
+    latest_rows = _load_latest_poll_rows(storage)
+    ladders = _load_latest_listing_ladders(storage, [int(r["item_poll_id"]) for r in latest_rows.values()])
+    rate = market_sale_rate(market, now_ts)
+    mirror_rate = market_mirror_rate(market, now_ts)
+    filters = RISK_FILTERS[risk]
 
-    recommendations: list[dict[str, Any]] = []
-    skipped = {"unaffordable": 0, "no_price": 0, "stale": 0}
-    ml_telemetry: dict[str, Any] = {
-        "totalCandidates": 0,
-        "shadowEnabledCandidates": 0,
-        "hybridAppliedCandidates": 0,
-        "fallbackReasonCounts": {},
-        "confidenceTierCounts": {},
-        "hybridSkippedReasonCounts": {},
-    }
-
-    def _telemetry_inc(bucket: str, key: str | None) -> None:
-        if not key:
-            return
-        mapping = ml_telemetry.get(bucket)
-        if not isinstance(mapping, dict):
-            return
-        mapping[key] = int(mapping.get(key) or 0) + 1
-
-    for rows in histories.values():
-        if not rows:
+    skipped = {"unaffordable": 0, "no_price": 0, "not_profitable": 0, "risk_filtered": 0}
+    candidates: list[tuple[Snapshot, Estimate]] = []
+    for vid, hist in market.variants.items():
+        if vid not in latest_rows:
             continue
-        latest = rows[-1]
-        price, price_is_last_known, age_days = _current_price(rows, now)
-        if price is None:
+        snap = snapshot(hist, now_ts, market_rate=rate, market_mirror=mirror_rate)
+        if snap is None:
             skipped["no_price"] += 1
             continue
-        if age_days is not None and age_days > STALE_PRICE_DAYS:
-            skipped["stale"] += 1
-            continue
-
-        total_results = int(latest.get("total_results") or 0)
-        used_results = int(latest.get("used_results") or 0)
-        sales_30d = _recent_sales(rows, now)
-        trend = _trend_pct(rows, price, now)
-        variant_id = int(latest.get("variant_id") or 0)
-        ladder_prices = listing_ladders.get(variant_id, [])
-        ladder_floor = min(ladder_prices) if ladder_prices else None
-        entry_price = ladder_floor if ladder_floor is not None else price
-        if entry_price > wealth_mirror * 0.98:
+        if snap.entry_price > wealth_mirror * 0.98:
             skipped["unaffordable"] += 1
             continue
+        est = estimate(snap, params)
+        if est.return_per_day <= 0:
+            skipped["not_profitable"] += 1
+            continue
+        if est.sell_probability < filters["min_sell_probability"] or est.confidence not in filters["confidence"]:
+            skipped["risk_filtered"] += 1
+            continue
+        candidates.append((snap, est))
 
-        flip = _flip_opportunity(ladder_prices)
-        hold_30d = _hold_30d_estimate(
-            price=entry_price,
-            trend=trend,
-            sales_30d=sales_30d,
-            total_results=total_results,
-            risk=risk,
-        )
-        fit_score, ratio = _fit_score(entry_price, wealth_mirror, risk)
-        demand_score = _demand_score(sales_30d, trend)
-        trend_score = _trend_score(trend, risk)
-        flip_score = 1.0 if flip.get("viable") else 0.0
-        market_penalty = _market_penalty(sales_30d=sales_30d, trend=trend, flip=flip, ladder_prices=ladder_prices)
-        score = (
-            fit_score * weights["fit"]
-            + demand_score * weights["demand"]
-            + trend_score * weights["trend"]
-            + flip_score * weights["flip"]
-            - market_penalty
-        )
-        score = _clamp(score)
-        heuristic_score_100 = round(score * 100)
+    model_scores: dict[int, float] = {}
+    if model is not None and candidates:
+        try:
+            model_scores = model_mod.predict(model, [s for s, _ in candidates], params)
+        except Exception as exc:  # noqa: BLE001
+            model_scores, model_reason = {}, f"model-inference-failed: {exc}"
+    use_model = bool(model_scores)
 
-        target_allocation = {"safe": 0.35, "balanced": 0.55, "speculative": 0.75}[risk] * wealth_mirror
-        units = max(1, int(target_allocation // entry_price))
-        max_units = max(1, int((wealth_mirror * 0.95) // entry_price))
-        units = min(units, max_units)
-        allocation_mirror = round(units * entry_price, 2)
-        reasons = _reasons(
-            ratio=ratio,
-            trend=trend,
-            sales_30d=sales_30d,
-            total_results=total_results,
-            used_results=used_results,
-            price_is_last_known=price_is_last_known,
-        )
-        if ladder_floor is not None:
-            reasons.append("Entry price uses the latest instant whole-mirror listing ladder.")
+    def rank_key(item: tuple[Snapshot, Estimate]) -> tuple[float, float, str]:
+        snap, est = item
+        primary = model_scores.get(snap.variant_id, est.return_per_day) if use_model else est.return_per_day
+        return (-primary, -est.sell_probability, str(latest_rows[snap.variant_id].get("display_name") or ""))
 
-        ml_fields = _ml_shadow_fields(
-            ml_ctx=ml_ctx,
-            rows=rows,
-            now=now,
-            entry_price=entry_price,
-            total_results=total_results,
-            used_results_raw=used_results,
-            stale_price_flag=1 if price_is_last_known else 0,
-        )
+    candidates.sort(key=rank_key)
+    n = len(candidates)
+    target_share = {"safe": 0.35, "balanced": 0.55, "speculative": 0.75}[risk]
 
-        if not ml_rollout["shadowEnabled"]:
-            ml_fields = {
-                "mlEnabled": False,
-                "mlModelVersion": ml_fields.get("mlModelVersion"),
-                "mlConfidenceTier": ml_fields.get("mlConfidenceTier"),
-                "sellProb30d": None,
-                "expectedExecPrice30d": None,
-                "expectedValue30d": None,
-                "mlFallbackReason": "ml-shadow-disabled-by-config",
-            }
-
-        ml_telemetry["totalCandidates"] = int(ml_telemetry["totalCandidates"]) + 1
-        if ml_fields.get("mlEnabled"):
-            ml_telemetry["shadowEnabledCandidates"] = int(ml_telemetry["shadowEnabledCandidates"]) + 1
-        _telemetry_inc("fallbackReasonCounts", str(ml_fields.get("mlFallbackReason") or ""))
-        _telemetry_inc("confidenceTierCounts", str(ml_fields.get("mlConfidenceTier") or "unknown"))
-
-        ranking_source = "heuristic"
-        ranking_score_100 = heuristic_score_100
-        hybrid_score_100: int | None = None
-        if ml_rollout["hybridEnabled"]:
-            skip_reason: str | None = None
-            if not ml_fields.get("mlEnabled"):
-                skip_reason = "ml-disabled"
-            elif _tier_rank(str(ml_fields.get("mlConfidenceTier") or "")) < _tier_rank(ml_rollout["minConfidenceTier"]):
-                skip_reason = "below-min-confidence"
-            else:
-                expected_value = ml_fields.get("expectedValue30d")
-                if expected_value is None:
-                    skip_reason = "missing-expected-value"
-                else:
-                    ml_norm = _ml_score_from_expected_value(float(expected_value), entry_price)
-                    if ml_norm is None:
-                        skip_reason = "invalid-ml-score"
-                    else:
-                        heuristic_norm = _clamp(heuristic_score_100 / 100.0)
-                        alpha = float(ml_rollout["alphaHeuristic"])
-                        hybrid_norm = _clamp((alpha * heuristic_norm) + ((1.0 - alpha) * ml_norm))
-                        hybrid_score_100 = round(hybrid_norm * 100)
-                        ranking_score_100 = hybrid_score_100
-                        ranking_source = "hybrid"
-                        ml_telemetry["hybridAppliedCandidates"] = int(ml_telemetry["hybridAppliedCandidates"]) + 1
-            if skip_reason:
-                _telemetry_inc("hybridSkippedReasonCounts", skip_reason)
-
-        category_score = ranking_score_100
-
+    recommendations: list[dict[str, Any]] = []
+    for rank, (snap, est) in enumerate(candidates):
+        row = latest_rows[snap.variant_id]
+        wealth_share = snap.entry_price / wealth_mirror
+        max_units = _max_units(snap, est, params)
+        units = max(1, min(int((target_share * wealth_mirror) // snap.entry_price), max_units))
         recommendations.append(
             {
-                "itemName": str(latest.get("display_name") or latest.get("base_item_name") or ""),
-                "baseItemName": str(latest.get("base_item_name") or ""),
-                "mode": str(latest.get("mode") or ""),
-                "imagePath": _recommendation_image_path(latest),
-                "queryId": str(latest.get("query_id") or ""),
-                "league": str(latest.get("league") or "Standard"),
-                "priceMirror": round(entry_price, 2),
-                "pricingSource": "instant whole-mirror ladder" if ladder_floor is not None else "latest price history",
-                "priceIsLastKnown": price_is_last_known,
-                "wealthShare": round(ratio, 3),
+                "itemName": str(row.get("display_name") or row.get("base_item_name") or ""),
+                "baseItemName": str(row.get("base_item_name") or ""),
+                "mode": str(row.get("mode") or ""),
+                "imagePath": _recommendation_image_path(row),
+                "queryId": str(row.get("query_id") or ""),
+                "league": str(row.get("league") or "Standard"),
+                "priceMirror": round(snap.entry_price, 2),
+                "wealthShare": round(wealth_share, 3),
                 "suggestedUnits": units,
-                "suggestedAllocationMirror": allocation_mirror,
-                "score": ranking_score_100,
-                "heuristicScore": heuristic_score_100,
-                "hybridScore": hybrid_score_100,
-                "rankingSource": ranking_source,
-                "category": _category(category_score, risk, sales_30d, trend, bool(flip.get("viable"))),
-                "trendPct30d": round(trend, 1) if trend is not None else None,
-                "inferredSales30d": sales_30d,
-                "totalListings": total_results,
-                "usedListings": used_results,
-                "latestPollAt": str(latest.get("requested_at_utc") or ""),
-                "flip": flip,
-                "hold30d": hold_30d,
-                "reasons": reasons[:5],
-                "warnings": _warnings(
-                    age_days=age_days,
-                    total_results=total_results,
-                    price_is_last_known=price_is_last_known,
-                    ratio=ratio,
-                ),
-                "mlEnabled": ml_fields["mlEnabled"],
-                "mlModelVersion": ml_fields["mlModelVersion"],
-                "mlConfidenceTier": ml_fields["mlConfidenceTier"],
-                "sellProb30d": ml_fields["sellProb30d"],
-                "expectedExecPrice30d": ml_fields["expectedExecPrice30d"],
-                "expectedValue30d": ml_fields["expectedValue30d"],
-                "mlFallbackReason": ml_fields["mlFallbackReason"],
+                "maxUnits": max_units,
+                "suggestedAllocationMirror": round(units * snap.entry_price, 2),
+                # Percentile of this item among today's candidates (100 = best).
+                "score": round(100 * (n - rank) / n),
+                "rankingSource": "model" if use_model else "estimator",
+                "category": _category(est),
+                "confidence": est.confidence,
+                "estimate": {
+                    "askPriceMirror": round(est.ask_price, 2),
+                    # Divine plan: list in divines. Mirror plan: list at exactly askWholeMirrors mirrors.
+                    "askDivines": (
+                        round(est.ask_price * divines_per_mirror) if est.plan != "mirror" and divines_per_mirror else None
+                    ),
+                    "askWholeMirrors": est.ask_whole_mirrors or None,
+                    "fairValueMirror": round(snap.fair_value, 2),
+                    "saleAnchorMirror": round(snap.sale_anchor, 2) if snap.sale_anchor is not None else None,
+                    "returnIfSoldPct": _pct(est.return_if_sold, 1),
+                    "expectedReturnPct": _pct(est.expected_return, 1),
+                    "expectedDays": round(est.expected_days, 1),
+                    "returnPerDayPct": _pct(est.return_per_day, 3),
+                    "sellProbability": round(est.sell_probability, 3),
+                    "horizonDays": params.horizon_days,
+                    "sales90d": snap.sales_90d,
+                    "salesAtOrAboveAsk90d": est.sales_at_or_above_ask_90d,
+                    "plan": est.plan,
+                    "queueAhead": est.queue_ahead,
+                    "mirrorSales90d": len(snap.mirror_sale_amounts),
+                },
+                "modelReturnPerDayPct": _pct(model_scores.get(snap.variant_id), 3) if use_model else None,
+                "trendPct30d": _pct(snap.floor_momentum, 1),
+                "inferredSales30d": snap.sales_30d,
+                "totalListings": snap.total_listings,
+                "latestPollAt": str(row.get("requested_at_utc") or ""),
+                "flip": _flip_opportunity(ladders.get(snap.variant_id, [])),
+                "reasons": _reasons(snap, est, params),
+                "warnings": _warnings(snap, est, wealth_share),
             }
         )
-
-    recommendations.sort(
-        key=lambda rec: (
-            -int(rec["score"]),
-            -int(rec["inferredSales30d"]),
-            float(rec["priceMirror"]),
-            str(rec["itemName"]),
-        )
-    )
 
     portfolio = _build_portfolio_plan(recommendations=recommendations, wealth_mirror=wealth_mirror, risk=risk)
 
@@ -1128,18 +550,19 @@ def recommend_investments(request: dict[str, Any], *, root_dir: Path | None = No
         "divinesPerMirror": divines_per_mirror,
         "risk": risk,
         "mode": mode,
-        "mlShadow": {
-            "enabled": bool(ml_ctx.get("enabled")) and bool(ml_rollout.get("shadowEnabled")),
-            "modelVersion": ml_ctx.get("modelVersion"),
-            "fallbackReason": ml_ctx.get("fallbackReason"),
-            "hybridEnabled": bool(ml_rollout.get("hybridEnabled")),
-            "alphaHeuristic": float(ml_rollout.get("alphaHeuristic") or 0.0),
-            "minConfidenceTier": str(ml_rollout.get("minConfidenceTier") or "medium"),
-            "rankingApplied": bool(ml_rollout.get("hybridEnabled")) and int(ml_telemetry["hybridAppliedCandidates"]) > 0,
+        "ranking": {
+            "method": "model" if use_model else "estimator",
+            "metric": "expected % return per day held",
+            "modelEnabled": use_model,
+            "modelReason": None if use_model else model_reason,
+            "modelTrainedAt": (model_meta or {}).get("trainedAtUtc"),
+            "horizonDays": params.horizon_days,
+            "feePct": params.fee_pct,
+            "undercutPct": params.undercut_pct,
+            "marketSaleRatePerDay": round(rate, 5),
         },
-        "mlTelemetry": ml_telemetry,
         "recommendations": recommendations[:limit],
         "portfolio": portfolio if mode == "portfolio" else None,
         "skipped": skipped,
-        "disclaimer": "These are market estimates from inferred listing data, not guaranteed returns.",
+        "disclaimer": "These are market estimates from inferred sales and listings, not guaranteed returns.",
     }
