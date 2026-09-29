@@ -65,6 +65,11 @@ Listing plans are evaluated per item and the best return/day wins:
   That removed 1,277 of 2,664 recorded sales.
 - **Transfer ping-pong is excluded.** When the same two sellers "transfer" a roll to each other more
   than once, those `confirmed_transfer` sales are traders relisting interchangeable copies (38 of 85).
+- **Corrupted copies are excluded.** A sale whose vanished listing was corrupted says nothing about
+  uncorrupted prices (83 sales). Corrupted listings are also never the buy price or part of the queue.
+- **Seller bursts count once.** Several "sales" from one seller in the same poll are a stack of
+  listings pulled at once (e.g. 16 copies at 800 div on 2026-07-26), not several buyers (56 sales).
+- A listing row can hold several copies (`listing_count`); each copy counts in the queue.
 - Everything else is kept (`sale_filter="none"`). Alternative filters ("roll": same roll listed
   cheaper by someone else; "floor_ratio": above 1.5x the cheapest listing) remain available for
   experiments; with whole-mirror buyers being real, they removed genuine sales.
@@ -103,12 +108,13 @@ different scikit-learn version, the transparent estimator ranks.
 
 | | Return/day | Per trade | Sold within 60d |
 |---|---|---|---|
-| Estimator | +0.26% | +10.4% (median +5.0%) | 62% |
-| Estimator, divine plan only (picks in 7 of 10 weeks) | +0.28% | +8.4% | 76% |
-| Random picks (20 seeds) | median -0.14% (best +0.05%) | | |
+| Estimator | +0.27% | +10.1% (median +6.2%) | 65% |
+| Estimator, divine plan only (picks in 7 of 10 weeks) | +0.40% | +10.1% | 79% |
+| Random picks (20 seeds) | median -0.15% (best -0.08%) | | |
 
-Sell-chance calibration on the picks with a positive estimate: whole-mirror plan predicted 48%,
-actual 47%; divine plan predicted 83%, actual 81%. Over all item-weeks: predicted 17%, actual 15%.
+Sell-chance calibration on the picks with a positive estimate: whole-mirror plan predicted 51%,
+actual 58%; divine plan predicted 70%, actual 85% (both slightly conservative). Over all
+item-weeks: predicted 16%, actual 13%.
 Earlier, much higher numbers (+0.4 to +1.5%/day) came from the July mass-vanish artifact and from
 mixing whole-mirror sales into divine prices; they were not real.
 

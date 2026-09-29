@@ -150,6 +150,25 @@ class MarketLoaderTests(unittest.TestCase):
         self.assertEqual(market.sales_dropped_anomaly_days, 40)
         self.assertEqual(market.sales_kept, 16 * 3 + 1)
 
+    def test_corrupted_copies_multi_copy_rows_and_seller_bursts(self) -> None:
+        day0 = [("A", "R", 0.4, 1), ("B", "R", 0.5, 1), ("C", "R", 0.6, 1)]
+        day1 = [("B", "R", 0.5, 1), ("C", "R", 0.6, 1)]
+        sales = [(1, "A", "R", 0.4), (2, "D", "Q1", 0.7), (2, "D", "Q2", 0.7)]
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _poll_db(Path(tmp), [day0, day1, day1], sales)
+            con = sqlite3.connect(db)
+            con.execute("UPDATE listing_snapshots SET is_corrupted = 1 WHERE seller_name = 'A'")
+            con.execute("UPDATE listing_snapshots SET listing_count = 3 WHERE seller_name = 'B'")
+            con.commit()
+            con.close()
+            market = _load(db)
+        hist = next(iter(market.variants.values()))
+        # The corrupted 0.4 copy is not the buy price, and B's row holds three copies.
+        self.assertAlmostEqual(hist.polls[0].instant_floor, 0.5)
+        self.assertEqual([round(p, 6) for p in hist.polls[0].divine_ladder], [0.5, 0.5, 0.5, 0.6])
+        # A's corrupted copy selling says nothing about uncorrupted prices; D's two same-poll sales count once.
+        self.assertEqual((market.sales_dropped_corrupted, market.sales_dropped_seller_burst, market.sales_kept), (1, 1, 1))
+
     def test_repeated_transfers_between_same_sellers_are_dropped(self) -> None:
         polls = [[("A", "R", 2.0, 1)] for _ in range(6)]
         with tempfile.TemporaryDirectory() as tmp:

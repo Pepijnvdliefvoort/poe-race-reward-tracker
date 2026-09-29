@@ -161,12 +161,14 @@ class Market:
     sales_kept: int = 0
     sales_dropped_anomaly_days: int = 0
     sales_dropped_ping_pong: int = 0
+    sales_dropped_corrupted: int = 0
+    sales_dropped_seller_burst: int = 0
     anomaly_days: tuple[str, ...] = ()
     sale_filter: str = DEFAULT_SALE_FILTER
 
 
 _LISTING_COLUMNS = """ip.item_variant_id, ls.item_poll_id, ls.seller_name, ls.fingerprint, ls.amount, ls.currency,
-               ls.is_instant_buyout, pr.divines_per_mirror"""
+               ls.is_instant_buyout, pr.divines_per_mirror, COALESCE(ls.is_corrupted, 0), COALESCE(ls.listing_count, 1)"""
 RECENT_LADDER_DAYS = 7  # light mode: listings kept for the last week of polls (buy price + queue)
 
 
@@ -302,7 +304,7 @@ def load_market(
     # Note: advancing a groupby invalidates its current group, so the outer stream only moves on
     # after a variant's listings have been fully consumed.
     stream = groupby(_listing_stream(con, since_iso), key=lambda row: int(row[0])) if episodes else iter(())
-    dropped = kept = 0
+    dropped = kept = dropped_corrupted = dropped_burst = 0
     current = next(stream, None)
 
     for vid in sorted(poll_rows):
@@ -314,7 +316,7 @@ def load_market(
         hist = variants[vid]
         pending = next(per_poll, None)
         active: dict[tuple[str, str], list] = {}  # key -> [start_ts, last_ts, price, instant]
-        prev_listings: list[tuple[str, str, float | None, bool]] = []
+        prev_listings: list[tuple[str, str, float | None, bool, bool]] = []
 
         for poll_id, point in poll_rows[vid]:
             raw_rows: list[tuple] = []
@@ -325,33 +327,49 @@ def load_market(
                 pending = next(per_poll, None)
             while pending is not None and pending[0] < poll_id:  # listings for polls outside the window
                 pending = next(per_poll, None)
+            # (seller, fingerprint, mirror price, instant, corrupted)
             listings = [
-                (str(row[2] or ""), str(row[3] or ""), mirror_equivalent(row[4], row[5], positive_or_none(row[7])), bool(row[6]))
+                (str(row[2] or ""), str(row[3] or ""), mirror_equivalent(row[4], row[5], positive_or_none(row[7])), bool(row[6]),
+                 bool(row[8]))
                 for row in raw_rows
             ]
 
-            instant_prices = [p for _, _, p, inst in listings if inst and p is not None]
+            # Buy price and queue: corrupted copies are worth less (not what we'd buy or compete with),
+            # and a row can hold several copies from one seller (the trade site's listing_count).
+            instant_prices = [p for _, _, p, inst, corrupt in listings if inst and not corrupt and p is not None]
             point.instant_floor = min(instant_prices) if instant_prices else None
             mirror_counts: dict[int, int] = {}
             divine_prices: list[float] = []
-            for row, (_s, _f, price, inst) in zip(raw_rows, listings):
-                if not inst or price is None:
+            for row, (_s, _f, price, inst, corrupt) in zip(raw_rows, listings):
+                if not inst or corrupt or price is None:
                     continue
+                copies = max(1, min(LADDER_DEPTH, int(row[9] or 1)))
                 k = whole_mirrors(row[4], row[5])
                 if k:
-                    mirror_counts[k] = mirror_counts.get(k, 0) + 1
+                    mirror_counts[k] = mirror_counts.get(k, 0) + copies
                 else:
-                    divine_prices.append(price)
+                    divine_prices.extend([price] * copies)
             point.divine_ladder = array("f", sorted(divine_prices)[:LADDER_DEPTH])
             point.mirror_listings = tuple(sorted(mirror_counts.items()))
             hist.polls.append(point)
 
             credible_keys: set[tuple[str, str]] = set()
+            sellers_seen: set[str] = set()
             for s in sales_by_poll.get(poll_id, []):
                 price = positive_or_none(s["mirror_equiv"])
                 dt = parse_utc(s["occurred_at_utc"])
                 if price is None or dt is None:
                     continue
+                seller = str(s["seller"] or "")
+                if _sold_listing_was_corrupted(s, prev_listings):
+                    dropped_corrupted += 1
+                    continue
+                # Several "sales" from one seller in one poll is a stack of listings pulled at once
+                # (e.g. 16 copies at 800 div on 2026-07-26), not several buyers: count one.
+                if seller and seller in sellers_seen:
+                    dropped_burst += 1
+                    continue
+                sellers_seen.add(seller)
                 if not _sale_is_credible(s, price, prev_listings, sale_filter):
                     dropped += 1
                     continue
@@ -365,7 +383,7 @@ def load_market(
                 prev_listings = listings
                 continue
             seen: dict[tuple[str, str], tuple[float, bool]] = {}
-            for seller, fp, price, inst in listings:
+            for seller, fp, price, inst, _corrupt in listings:
                 if price is not None and (seller, fp) not in seen:
                     seen[(seller, fp)] = (price, inst)
             for key, ep in list(active.items()):
@@ -399,6 +417,8 @@ def load_market(
         sales_kept=kept,
         sales_dropped_anomaly_days=dropped_anomaly,
         sales_dropped_ping_pong=dropped_ping_pong,
+        sales_dropped_corrupted=dropped_corrupted,
+        sales_dropped_seller_burst=dropped_burst,
         anomaly_days=tuple(sorted(anomaly_days)),
         sale_filter=sale_filter,
     )
@@ -446,5 +466,12 @@ def _sale_is_credible(sale: sqlite3.Row, price: float, prev_listings: list, sale
         return True
     cutoff = price * (1.0 - CHEAPER_SAME_ROLL_MARGIN)
     return not any(
-        lf == fp and ls != seller and lp is not None and lp < cutoff for ls, lf, lp, _inst in prev_listings
+        lf == fp and ls != seller and lp is not None and lp < cutoff for ls, lf, lp, _inst, _c in prev_listings
     )
+
+
+def _sold_listing_was_corrupted(sale: sqlite3.Row, prev_listings: list) -> bool:
+    """True when the seller's listings of this roll in the previous poll were all corrupted."""
+    seller, fp = str(sale["seller"] or ""), str(sale["fingerprint"] or "")
+    flags = [corrupt for ls, lf, _p, _i, corrupt in prev_listings if ls == seller and lf == fp]
+    return bool(flags) and all(flags)

@@ -147,7 +147,7 @@ def _load_latest_listing_ladders(storage: ServerStorage, item_poll_ids: list[int
             SELECT ip.item_variant_id, ls.amount, ls.currency, ls.is_instant_buyout
             FROM listing_snapshots ls
             JOIN item_polls ip ON ip.id = ls.item_poll_id
-            WHERE ls.item_poll_id IN ({placeholders})
+            WHERE ls.item_poll_id IN ({placeholders}) AND COALESCE(ls.is_corrupted, 0) = 0
             ORDER BY ip.item_variant_id ASC, ls.rank ASC
             """,
             ids,
