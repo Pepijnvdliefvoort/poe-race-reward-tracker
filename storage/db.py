@@ -26,6 +26,7 @@ from .schema import (
     migration_015_account_ban_alert_cooldown,
     migration_016_inference_signal_count,
     migration_017_backfill_online_pending_counted_immediate,
+    migration_018_companion_picks,
 )
 
 
@@ -133,6 +134,7 @@ class Database:
             (15, migration_015_account_ban_alert_cooldown()),
             (16, migration_016_inference_signal_count()),
             (17, migration_017_backfill_online_pending_counted_immediate()),
+            (18, migration_018_companion_picks()),
         ]
 
         for version, sql in migrations:

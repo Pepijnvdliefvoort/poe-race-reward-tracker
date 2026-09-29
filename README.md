@@ -35,7 +35,7 @@ PoE trade API ──► poller ──► SQLite (data/market.db) ──► serve
 |---|---|---|
 | `poller/` | `python -m poller` | Polls prices, infers sales, sends alerts, runs weekly jobs |
 | `server/` | `python -m server.server` | HTTP API, dashboard, admin, companion recommendations |
-| `storage/` | | Schema (version 17), migrations, repositories |
+| `storage/` | | Schema (version 18), migrations, repositories |
 | `ML/` | `python scripts/retrain_ml_pipeline.py` | Return-per-day ranking, backtest, gated learned model |
 | `web/` | | Plain HTML/CSS/JS pages served by the server |
 
@@ -124,8 +124,10 @@ level, and it ranks items by expected % return per day held:
 - **Sell chance and days** come from recent sales, the listings ahead of yours, and the separate
   divine and whole-mirror buyers.
 
-The ranking is backtested on recorded history every week. See [`ML/README.md`](ML/README.md) for the
-model, data cleaning and backtest results.
+The ranking is backtested on recorded history every week, and every pick the companion shows is
+logged and checked once its 60 days have passed: the admin page's **Companion track record** shows
+predicted vs actual sell rate and return. See [`ML/README.md`](ML/README.md) for the model, data
+cleaning and backtest results.
 
 ## Development
 
@@ -170,7 +172,7 @@ failures lock out the IP):
 - DB explorer: `/api/admin/db/overview`, `tables`, `er`, `table`, `preview`, `POST query` (read-only SQL)
 - Config and ops: `/api/admin/app-config` (+ `get`, `POST set`), `stats`, `logs`, `visitor-map`,
   `download/market.db`, `POST clear-data`, `POST restart-poller`, `POST stop-poller`, `POST run-db-export`
-- ML: `/api/admin/ml-retrain-status`, `POST trigger-ml-retrain`
+- ML: `/api/admin/ml-retrain-status`, `POST trigger-ml-retrain`, `/api/admin/companion/track-record`
 - Market tools: `/api/admin/market/variants-sales`, `sales`, `price-points`, `aa-price-points`,
   `POST wipe-variant`, `POST /api/admin/sales/delete`, `POST sales/resend-alert`,
   `POST inference/reset-counters`, `POST alerts/test`

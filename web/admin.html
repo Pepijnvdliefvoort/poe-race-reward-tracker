@@ -237,6 +237,24 @@
 
     <section class="admin-section">
       <div class="admin-section-head">
+        <h2>Companion track record</h2>
+        <p class="admin-muted">Picks the investment companion showed, replayed on later market data: would they have sold at the suggested ask within the horizon? Logged once per item per week.</p>
+      </div>
+      <div class="admin-appconfig-card" id="companionTrackRecord" aria-label="Companion track record summary">
+        <p class="admin-muted" style="margin:0">Loading…</p>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="companionPicksTable" aria-label="Recent companion picks">
+          <thead>
+            <tr><th>Week</th><th>Item</th><th>Rank</th><th>Buy → ask</th><th>Predicted</th><th>Outcome</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-section">
+      <div class="admin-section-head">
         <h2>Visitors</h2>
         <p class="admin-muted" id="visitorStats"></p>
       </div>

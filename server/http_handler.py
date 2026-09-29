@@ -46,7 +46,7 @@ from .data_service import (
 )
 from .price_cache import get_cached_prices_body, since_ms_for_load
 from .db_admin_service import db_overview, er_schema, list_tables, preview_table, run_query, table_details
-from .recommendation_service import RecommendationInputError, recommend_investments
+from .recommendation_service import RecommendationInputError, companion_track_record_summary, recommend_investments
 from .sales_discord_notify import (
     send_estimated_sales_change_notification,
     send_new_item_notification,
@@ -874,6 +874,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     cfg = {}
                 body = json.dumps({"ok": True, "status": cfg, "model": _profit_model_summary()}, allow_nan=False).encode("utf-8")
                 self._send_json_body(200, body)
+                return
+
+            if req_path == "/api/admin/companion/track-record":
+                try:
+                    payload = companion_track_record_summary(root_dir=ROOT_DIR)
+                    status = 200
+                except Exception as exc:  # noqa: BLE001
+                    payload, status = {"ok": False, "error": f"track record failed: {exc}"}, 500
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self._send_json_body(status, body)
                 return
 
             if req_path.rstrip("/").endswith("/stats"):
