@@ -260,6 +260,18 @@ class EstimatorTests(unittest.TestCase):
         self.assertLessEqual(estimate(edge).return_per_day, 0.0)
         self.assertEqual(estimate(edge, EstimatorParams(front_of_queue=False)).ask_whole_mirrors, 13)
 
+    def test_whole_mirror_price_with_a_crowd_is_not_joined(self) -> None:
+        # Death Rush: bought at 1.24 (divines); 2 mirrors is the cheapest whole-mirror price.
+        def death_rush(listed_at_two: int):
+            return _snap(
+                entry_price=1.24, listing_anchor=1.24, sale_anchor=1.36, fair_value=1.27, sales_30d=0, sales_90d=1,
+                recent_sale_prices=(1.36,), divine_ladder=(1.24, 1.24), mirror_listings=((2, listed_at_two), (3, 3)),
+                mirror_sale_amounts=(2,) * 12, market_mirror_rate_per_day=0.04,
+            )
+        few = estimate(death_rush(2))
+        self.assertEqual((few.plan, few.ask_whole_mirrors, few.queue_ahead), ("mirror", 2, 2))
+        self.assertNotEqual(estimate(death_rush(6)).plan, "mirror")
+
     def test_unsold_listings_at_similar_price_slow_the_sale(self) -> None:
         on = EstimatorParams(use_listing_evidence=True)
         base = estimate(_snap(), on)

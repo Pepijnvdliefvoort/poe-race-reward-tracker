@@ -71,6 +71,11 @@ class EstimatorParams:
     # still cap the ask (fair value) and set how fast buyers come. Prices drop in this market, and a
     # copy behind cheaper ones mostly waits for them.
     front_of_queue: bool = True
+    # With front_of_queue: join a whole-mirror price only when at most this many other copies are
+    # listed at it. Buyers pick among equal listings at random, but per the market owner a crowd at the
+    # same price (e.g. 6+ Death Rush at 2 mirrors) mostly doesn't sell. The backtest preferred allowing
+    # any tie (+0.32%/day vs +0.21%, 75% vs 82% sold); this follows the owner's read of the market.
+    max_equal_whole_mirror_listings: int = 2
 
 
 @dataclass(frozen=True)
@@ -283,9 +288,10 @@ def estimate(snap: Snapshot, params: EstimatorParams = EstimatorParams()) -> Est
     best = _undercut_plan(snap, params)
     # No whole-mirror sales anywhere means no evidence that mirror buyers exist.
     if params.consider_mirror_plan and (snap.mirror_sale_amounts or snap.market_mirror_rate_per_day > 0):
-        max_k = min((k for k, _ in _competing_whole(snap)), default=None) if params.front_of_queue else None
+        competing = dict(_competing_whole(snap))
+        max_k = min(competing, default=None) if params.front_of_queue else None
         for k in mirror_candidates(snap):
-            if max_k is not None and k > max_k:
+            if max_k is not None and (k > max_k or competing.get(k, 0) > params.max_equal_whole_mirror_listings):
                 continue
             alt = _mirror_plan(snap, params, k)
             if alt.return_per_day > best.return_per_day:

@@ -47,9 +47,11 @@ Sparse items borrow the market-wide sale rate, so one lucky sale doesn't make a 
 listed behind cheaper ones mostly waits for them (e.g. Edge of Madness bought at 10 with other copies
 at 10, 11, 11: past sales at 13 said "list at 13", but those sales were from when 13 was the floor).
 A divine ask is at most just under the cheapest competing listing (0.2% below); a whole-mirror ask is
-at most the cheapest competing whole-mirror price. Ties are allowed there, because buyers pick among
-equal whole-mirror listings at random; disallowing them sold slightly faster (82% vs 75%) but cut
-return/day from +0.32% to +0.21%. Past sales still cap the ask (fair value) and set the sell speed.
+at most the cheapest competing whole-mirror price, and only when at most 2 other copies are listed at
+that price (`max_equal_whole_mirror_listings`). Buyers pick among equal whole-mirror listings at
+random, but per the market owner a crowd at one price (e.g. 6+ Death Rush at 2 mirrors) mostly
+doesn't sell. The backtest preferred allowing any tie (+0.32%/day, 75% sold, vs +0.20%, 80% sold);
+the limit follows the owner's read of the market. Past sales still cap the ask and set the sell speed.
 
 The unsold markdown was measured: marking every copy at min(later floor, entry) after 60 days lost
 ~10% on average (median 0). Without it, long-shot listings looked like free lottery tickets.
@@ -116,12 +118,12 @@ different scikit-learn version, the transparent estimator ranks.
 
 | | Return/day | Per trade | Sold within 60d |
 |---|---|---|---|
-| Estimator | +0.32% | +10.9% (median +6.2%) | 75% |
+| Estimator | +0.20% | +5.9% (median +4.8%) | 80% (avg 29 days held) |
+| Estimator, any whole-mirror tie allowed | +0.32% | +10.9% | 75% |
 | Estimator, asks from past sales only (`front_of_queue=False`) | +0.27% | +10.1% | 65% |
-| Random picks (20 seeds) | median -0.15% (best -0.08%) | | |
+| Random picks (20 seeds) | median -0.21% | | |
 
-Sell-chance calibration on the picks with a positive estimate: predicted 63%, actual 72% (slightly
-conservative). Weighting recent sales more (half-life 14-45 days) in the share of sales at >= ask
+Sell-chance calibration on the picks with a positive estimate: predicted 77%, actual 79%. Weighting recent sales more (half-life 14-45 days) in the share of sales at >= ask
 made the backtest worse (+0.20 to +0.26%/day), so all 90 days count equally.
 Earlier, much higher numbers (+0.4 to +1.5%/day) came from the July mass-vanish artifact and from
 mixing whole-mirror sales into divine prices; they were not real.
