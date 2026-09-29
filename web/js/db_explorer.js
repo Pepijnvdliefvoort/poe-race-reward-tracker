@@ -1,3 +1,7 @@
+import { setupMacWindow } from "./core/macWindow.js";
+
+setupMacWindow({ appName: "DB explorer" });
+
 const fetchOpts = { credentials: "same-origin" };
 
 async function fetchJson(path, init) {

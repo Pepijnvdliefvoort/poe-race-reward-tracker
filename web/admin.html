@@ -6,13 +6,14 @@
     <title>Admin — PoE Race Rewards</title>
     <meta name="robots" content="noindex,nofollow" />
     <script>
-      // Follow the dashboard's saved theme before first paint (no flash).
+      // Apply saved appearance and window zoom before first paint (no flash).
       try {
         if (localStorage.getItem("poe-market-theme") === "light") document.documentElement.classList.add("light-theme");
+        if (localStorage.getItem("admin.window.zoomed.v1") === "1") document.documentElement.classList.add("mac-zoomed");
       } catch (e) {}
     </script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
-    <link rel="stylesheet" href="/css/admin-mac.css?v=20260930-2" />
+    <link rel="stylesheet" href="/css/admin-mac.css?v=20260930-3" />
     <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
     <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -22,7 +23,19 @@
   <body>
     <div class="mac-app">
       <aside class="mac-sidebar" aria-label="Admin navigation">
-        <div class="mac-sidebar-head">
+        <div class="mac-traffic-lights" role="group" aria-label="Window">
+          <button type="button" class="mac-tl mac-tl--close" data-window="close" aria-label="Close and go to the dashboard" title="Close (go to the dashboard)">
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5" /></svg>
+          </button>
+          <button type="button" class="mac-tl mac-tl--minimize" data-window="minimize" aria-label="Minimize to the dock" title="Minimize to the dock">
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.8 6h6.4" /></svg>
+          </button>
+          <button type="button" class="mac-tl mac-tl--zoom" data-window="zoom" aria-label="Toggle full window" aria-pressed="false" title="Fill the browser window">
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.3 8.7V5.2l3.5 3.5zM8.7 3.3v3.5L5.2 3.3z" /></svg>
+          </button>
+        </div>
+
+        <div class="mac-sidebar-head" title="Double-click to toggle full window">
           <img class="mac-app-icon" src="/assets/icons/FairgravesTricorneAlt.png" alt="" />
           <div>
             <p class="mac-app-name">Admin</p>
@@ -30,7 +43,11 @@
           </div>
         </div>
 
-        <nav class="mac-nav" aria-label="Admin sections">
+        <p class="mac-nav-caption mac-nav-caption--admin">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1" /><path d="M4 5.5V4a2 2 0 014 0v1.5" fill="none" /></svg>
+          Admin <span class="mac-nav-caption-note">token required</span>
+        </p>
+        <nav class="mac-nav" aria-label="Admin pages">
           <button type="button" class="mac-nav-item" data-pane="overview">
             <span class="mac-nav-icon mac-nav-icon--gray" aria-hidden="true">
               <svg viewBox="0 0 20 20"><path d="M3 11h4v6H3zM8 3h4v14H8zM13 7h4v10h-4z" /></svg>
@@ -67,12 +84,17 @@
             </span>
             Data
           </button>
+          <a class="mac-nav-item" href="/admin/db">
+            <span class="mac-nav-icon mac-nav-icon--teal" aria-hidden="true">
+              <svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2" fill="none" stroke-width="1.8" /><path d="M3 8h14M8 8v8" fill="none" stroke-width="1.6" /></svg>
+            </span>
+            DB explorer
+          </a>
         </nav>
 
-        <p class="mac-nav-caption">Site</p>
-        <nav class="mac-nav mac-nav--links" aria-label="Site navigation">
+        <p class="mac-nav-caption">Public site</p>
+        <nav class="mac-nav mac-nav--public" aria-label="Public pages">
           <a class="mac-nav-link" href="/">Dashboard</a>
-          <a class="mac-nav-link" href="/admin/db">DB explorer</a>
           <a class="mac-nav-link" href="/compare">Compare</a>
           <a class="mac-nav-link" href="/aa-ladder">AA ladder</a>
           <a class="mac-nav-link" href="/alt-arts">Alt arts</a>

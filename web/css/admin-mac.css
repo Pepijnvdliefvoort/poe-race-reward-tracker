@@ -1,4 +1,4 @@
-/* Admin page: macOS System Settings–style layout (admin.html only; db.html keeps admin.css). */
+/* Admin pages (admin.html, db.html): macOS System Settings-style window, sidebar and controls. */
 
 :root {
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -115,6 +115,37 @@ a {
   border-radius: 14px;
   overflow: hidden;
   box-shadow: var(--window-shadow);
+  transform-origin: 50% 100%;
+  transition:
+    margin 0.28s ease,
+    height 0.28s ease,
+    border-radius 0.28s ease,
+    transform 0.38s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.3s ease;
+}
+
+/* Green button: fill the browser window. */
+:root.mac-zoomed .mac-app {
+  height: 100vh;
+  margin: 0;
+  border-radius: 0;
+}
+
+/* Red button: shrink and fade, then the page navigates to the dashboard. */
+.mac-app--closing {
+  transform: scale(0.94);
+  opacity: 0;
+  transition-duration: 0.2s;
+}
+
+/* Yellow button: drop into the dock. */
+.mac-app--minimized {
+  transform: translateY(48vh) scale(0.06);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.42s cubic-bezier(0.55, 0, 0.75, 0),
+    opacity 0.38s ease-in;
 }
 
 .mac-sidebar {
@@ -131,16 +162,58 @@ a {
   overflow-y: auto;
 }
 
-/* Window traffic lights (decorative) */
-.mac-sidebar::before {
-  content: "";
-  flex: 0 0 auto;
+/* Window traffic lights */
+.mac-traffic-lights {
+  display: flex;
+  gap: 8px;
+  padding: 2px 8px 16px;
+}
+
+.mac-tl {
+  display: grid;
+  place-items: center;
   width: 12px;
   height: 12px;
-  margin: 2px 8px 16px;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
-  background: #ff5f57;
-  box-shadow: 20px 0 #febc2e, 40px 0 #28c840;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.22);
+}
+
+.mac-tl--close { background: #ff5f57; }
+.mac-tl--minimize { background: #febc2e; }
+.mac-tl--zoom { background: #28c840; }
+
+.mac-tl svg {
+  width: 8px;
+  height: 8px;
+  opacity: 0;
+  stroke: rgba(0, 0, 0, 0.6);
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  fill: none;
+  transition: opacity 0.1s;
+}
+
+.mac-tl--zoom svg {
+  fill: rgba(0, 0, 0, 0.6);
+  stroke: none;
+}
+
+/* Like macOS: hovering the group reveals all three symbols. */
+.mac-traffic-lights:hover .mac-tl svg,
+.mac-tl:focus-visible svg {
+  opacity: 1;
+}
+
+.mac-tl:active {
+  filter: brightness(0.85);
+}
+
+.mac-sidebar-head {
+  cursor: default;
+  user-select: none;
 }
 
 .mac-sidebar-head {
@@ -227,17 +300,66 @@ a {
 .mac-nav-icon--purple { background: linear-gradient(#c17dff, #8e44ec); }
 .mac-nav-icon--green { background: linear-gradient(#4cd964, #28b44a); }
 .mac-nav-icon--orange { background: linear-gradient(#ffb340, #ff8a00); }
+.mac-nav-icon--teal { background: linear-gradient(#4fd1d9, #1a9fb0); }
 
 .mac-nav-caption {
-  margin: 16px 8px 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 18px 8px 5px;
   color: var(--ink-faint);
   font-size: 11px;
   font-weight: 600;
 }
 
+.mac-nav-caption--admin {
+  margin-top: 4px;
+}
+
+.mac-nav-caption svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+
+.mac-nav-caption-note {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--fill);
+  font-weight: 500;
+  font-size: 10px;
+}
+
+.mac-nav--public {
+  margin: 0 2px;
+  padding: 4px;
+  border-radius: 9px;
+  background: var(--fill);
+}
+
 .mac-nav-link {
-  padding-left: 12px;
+  justify-content: space-between;
+  padding: 4px 8px;
   color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.mac-nav-link::after {
+  content: "↗";
+  opacity: 0;
+  font-size: 11px;
+  transition: opacity 0.12s;
+}
+
+.mac-nav-link:hover::after {
+  opacity: 0.8;
+}
+
+a.mac-nav-item[aria-current="page"] {
+  color: var(--accent-ink);
 }
 
 .mac-sidebar-foot {
@@ -296,6 +418,87 @@ a {
 .mac-main::-webkit-scrollbar-track,
 .mac-sidebar::-webkit-scrollbar-track {
   background: transparent;
+}
+
+.mac-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  z-index: 2000;
+  padding: 7px 9px 9px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, 140%);
+  transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.mac-dock--shown {
+  transform: translate(-50%, 0);
+}
+
+.mac-dock-item {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.mac-dock-item img {
+  width: 54px;
+  height: 54px;
+  border-radius: 13px;
+  object-fit: cover;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  transition: transform 0.18s ease;
+}
+
+.mac-dock-item:hover img,
+.mac-dock-item:focus-visible img {
+  transform: translateY(-6px) scale(1.12);
+}
+
+.mac-dock-label {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(30, 30, 32, 0.9);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.mac-dock-item:hover .mac-dock-label,
+.mac-dock-item:focus-visible .mac-dock-label {
+  opacity: 1;
+}
+
+.mac-dock-dot {
+  position: absolute;
+  bottom: -6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+:root.light-theme .mac-dock {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+:root.light-theme .mac-dock-dot {
+  background: rgba(0, 0, 0, 0.6);
 }
 
 .mac-banner {
@@ -1063,8 +1266,16 @@ th[aria-sort="descending"] .admin-table-sort::after { content: " ▼"; font-size
 
 /* ---------- small screens: sidebar becomes a top bar ---------- */
 
+@media (prefers-reduced-motion: reduce) {
+  .mac-app,
+  .mac-dock {
+    transition: none;
+  }
+}
+
 @media (max-width: 760px) {
-  .mac-app {
+  .mac-app,
+  :root.mac-zoomed .mac-app {
     grid-template-columns: 1fr;
     height: auto;
     min-height: 100vh;
@@ -1074,7 +1285,8 @@ th[aria-sort="descending"] .admin-table-sort::after { content: " ▼"; font-size
     box-shadow: none;
   }
 
-  .mac-sidebar::before {
+  .mac-traffic-lights,
+  .mac-dock {
     display: none;
   }
 
@@ -1099,7 +1311,7 @@ th[aria-sort="descending"] .admin-table-sort::after { content: " ▼"; font-size
 
   .mac-sidebar-head,
   .mac-nav-caption,
-  .mac-nav--links,
+  .mac-nav--public,
   .mac-sidebar-foot {
     display: none;
   }

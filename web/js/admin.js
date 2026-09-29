@@ -15,6 +15,8 @@
   };
 })();
 
+import { setupMacWindow } from "./core/macWindow.js";
+
 const fetchOpts = { credentials: "same-origin" };
 
 async function fetchJson(path) {
@@ -312,6 +314,7 @@ function renderVisitorTable(data) {
 const PANES = ["overview", "logs", "config", "ml", "visitors", "data"];
 const PANE_STORAGE_KEY = "admin.pane.v2";
 let activePane = null;
+let windowMinimized = false;
 
 function paneFromLocation() {
   const fromHash = (window.location.hash || "").replace(/^#/, "");
@@ -326,7 +329,7 @@ function paneFromLocation() {
 }
 
 function isPaneLive(name) {
-  return activePane === name && !document.hidden;
+  return activePane === name && !document.hidden && !windowMinimized;
 }
 
 function onPaneShown(name) {
@@ -348,7 +351,7 @@ function showPane(name, { updateHash = true } = {}) {
   document.querySelectorAll(".mac-pane").forEach((el) => {
     el.hidden = el.dataset.pane !== pane;
   });
-  document.querySelectorAll(".mac-nav-item").forEach((btn) => {
+  document.querySelectorAll(".mac-nav-item[data-pane]").forEach((btn) => {
     if (btn.dataset.pane === pane) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
   });
@@ -366,7 +369,7 @@ function showPane(name, { updateHash = true } = {}) {
 }
 
 function setupPanes() {
-  document.querySelectorAll(".mac-nav-item").forEach((btn) => {
+  document.querySelectorAll(".mac-nav-item[data-pane]").forEach((btn) => {
     btn.addEventListener("click", () => showPane(btn.dataset.pane));
     const head = document.querySelector(`.mac-pane[data-pane="${btn.dataset.pane}"] .mac-pane-head`);
     const icon = btn.querySelector(".mac-nav-icon");
@@ -381,20 +384,6 @@ function setupPanes() {
     if (!document.hidden && activePane) onPaneShown(activePane);
   });
   showPane(paneFromLocation());
-}
-
-function setupThemeToggle() {
-  const btn = document.getElementById("adminThemeToggle");
-  if (!btn) return;
-  btn.addEventListener("click", () => {
-    const light = document.documentElement.classList.toggle("light-theme");
-    try {
-      // Same key as the dashboard, so both pages follow the choice.
-      window.localStorage.setItem("poe-market-theme", light ? "light" : "dark");
-    } catch {
-      // storage unavailable
-    }
-  });
 }
 
 // ---- logs ------------------------------------------------------------------------------------
@@ -2048,7 +2037,13 @@ function setupMapResize() {
 }
 
 function main() {
-  setupThemeToggle();
+  setupMacWindow({
+    appName: "Admin",
+    onMinimizedChange: (minimized) => {
+      windowMinimized = minimized;
+      if (!minimized && activePane) onPaneShown(activePane); // catch up on what changed
+    },
+  });
   setupCsvDownload();
   setupDbDownload();
   setupRunDbExport();
