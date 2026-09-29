@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -612,12 +613,28 @@ def _vanished_alt_art_summary(vanished_items: list[Any]) -> list[tuple[str, int]
     return [(name, counts[name]) for name in order]
 
 
+PROFILE_URL_PREFIX = "https://www.pathofexile.com/account/view-profile/"
+
+
+def account_profile_url(account_name: str) -> str | None:
+    """PoE profile URL for an account name like `Dethklok#2196` (the `#` becomes `-`)."""
+    name = str(account_name or "").strip()
+    if not name:
+        return None
+    base, sep, discriminator = name.rpartition("#")
+    slug = f"{base}-{discriminator}" if sep and base else name
+    return PROFILE_URL_PREFIX + quote(slug, safe="-")
+
+
 def build_account_banned_embed(
     *,
     account_name: str,
     vanished_items: list[Any] | None = None,
 ) -> dict[str, Any]:
     lines = [f"**Account:** `{account_name}`"]
+    profile_url = account_profile_url(account_name)
+    if profile_url:
+        lines.append(f"**Profile:** [View on pathofexile.com]({profile_url})")
     alt_arts = _vanished_alt_art_summary(list(vanished_items or []))
     if alt_arts:
         lines.append("")
@@ -628,11 +645,14 @@ def build_account_banned_embed(
             lines.append(f"- {name}{suffix}")
         if len(alt_arts) > max_lines:
             lines.append(f"- ...and {len(alt_arts) - max_lines} more")
-    return {
+    embed: dict[str, Any] = {
         "title": "Account banned",
         "description": "\n".join(lines),
         "color": 0xE74C3C,
     }
+    if profile_url:
+        embed["url"] = profile_url  # makes the title a link to the profile
+    return embed
 
 
 def send_account_banned_notification(
