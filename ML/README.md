@@ -69,6 +69,10 @@ Listing plans are evaluated per item and the best return/day wins:
 
 ### Which recorded sales are used (`market.load_market`)
 
+Since Oct 2026 the poller itself ignores mass vanishes, seller bursts, transfer ping-pong and anomaly
+days (reverted with a reason; history via `scripts/revert_fake_sales.py`), so the rules below mostly
+act as a safety net for older data.
+
 - **Anomaly days are excluded.** When a day's market-wide sales exceed 4x the median of the previous
   14 days (min 30), listings vanished en masse rather than sold: 2026-07-21..25 around GGG's search
   rate-limit change (up to 594 "sales" from 196 sellers in a day, vs ~5-25 normally) and 2026-06-24.

@@ -3431,6 +3431,17 @@ def run_cycle(
             log_line=log_line,
         )
 
+    try:
+        today = datetime.now(timezone.utc).date().isoformat()
+        reverted_anomaly = storage.revert_anomaly_day_sales(day_utc=today)
+        if reverted_anomaly:
+            log_line(
+                "warn",
+                f"Sales spike on {today} looks like a mass vanish; reverted {reverted_anomaly} inferred sales (anomaly_day).",
+            )
+    except Exception as exc:  # noqa: BLE001
+        log_line("warn", f"Anomaly-day sale check failed: {exc}")
+
     return divines_per_mirror
 
 

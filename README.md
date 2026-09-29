@@ -14,8 +14,9 @@ that suggests which items to flip.
 ## Features
 
 - **Price tracking** for every item in [`items.txt`](items.txt), including separate alt-art variants.
-- **Sale inference**: detects sales, relists and reprices from listing changes, and reverts a "sale"
-  when the item comes back.
+- **Sale inference**: detects sales, relists and reprices from listing changes, reverts a "sale"
+  when the item comes back, and ignores fake sales: listings vanishing en masse, one seller pulling
+  a stack at once, transfers back and forth between two sellers, and whole spike days.
 - **Dashboard** with charts, filters, compare page, alt-art holdings and AA ladder.
 - **Investment companion**: ranks items by expected % return per day, with a buy price, a listing plan
   and the chance it sells ([how it works](ML/README.md)).
