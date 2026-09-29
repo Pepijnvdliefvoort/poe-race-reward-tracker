@@ -78,7 +78,7 @@ def build_synthetic_db(
                         price_mult = 0.8  # undercut supply lands a few days after it appears
             p_sale = 1 - math.exp(-s["daily_sales"] * step.total_seconds() / 86400)
             sold = rng.random() < p_sale
-            low = s["price"] * rng.uniform(0.97, 1.08)
+            low = s["price"] * rng.uniform(0.85, 1.08)
             con.execute(
                 """INSERT INTO item_polls(poll_run_id, item_variant_id, requested_at_utc, query_id, total_results,
                        used_results, mirror_count, lowest_mirror, median_mirror, highest_mirror,

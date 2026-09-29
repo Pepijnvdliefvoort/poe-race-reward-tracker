@@ -3,11 +3,12 @@ Trading simulation on recorded history.
 
 At each weekly decision time a strategy ranks the variants; we "buy" the top picks at their
 cheapest instant listing and list them with the estimator's plan:
-- undercut plan: listings cheaper than ours are shown and bought first, so our copy sells at the
-  (queue + 1)-th later sale in the normal channel, provided that sale was at or above our ask;
-- 1-mirror plan: buyers pick among equal 1-mirror listings at random (measured on the production
-  DB: the sold listing's position and age are uniform), so our copy sells at the (N + 1)-th later
-  1-mirror sale on average.
+- undercut plan (priced in divines): listings shown before ours are bought first, so our copy
+  sells at the (queue + 1)-th later sale among divine-channel sales and whole-mirror sales worth
+  <= our ask, provided that sale was a divine-channel sale at or above our ask;
+- mirror plan (exactly k mirrors): buyers pick among equal whole-mirror listings at random
+  (measured on the production DB: the sold listing's position and age are uniform), so our copy
+  sells at the (queue + 1)-th later whole-mirror sale, provided that sale was at >= k mirrors.
 If it doesn't sell within the horizon, the position is marked to market at the later floor, never
 above the purchase price.
 
@@ -73,15 +74,20 @@ def realize_trade(
     end = snap.ts + horizon_days * DAY
     first = hist.sales_upto(snap.ts)
     last = hist.sales_upto(end)
-    one_mirror_plan = plan == "one_mirror"
+    mirror_plan = plan == "mirror"
     needed = max(0, int(queue)) + 1
     seen = 0
     for sale in hist.sales[first:last]:
-        premium_1m = snap.one_mirror_premium and sale.one_mirror
-        if one_mirror_plan != premium_1m:
-            continue  # the other channel's buyers don't take our listing
+        if mirror_plan:
+            if not sale.mirror_channel:
+                continue  # divine buyers don't take whole-mirror listings
+            could_be_ours = sale.whole_mirrors >= ask - 1e-9
+        else:
+            if sale.mirror_channel and sale.whole_mirrors > ask + 1e-9:
+                continue  # a mirror buyer above our price, not in our queue
+            could_be_ours = not sale.mirror_channel
         seen += 1
-        if seen >= needed and sale.price_mirror >= ask - 1e-9:
+        if seen >= needed and could_be_ours and sale.price_mirror >= ask - 1e-9:
             days = max(MIN_HOLD_DAYS, (sale.ts - snap.ts) / DAY)
             return TradeOutcome(snap.variant_id, snap.ts, snap.entry_price, ask, True, days, ask * (1 - fee) / snap.entry_price - 1)
 

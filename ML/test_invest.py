@@ -28,7 +28,7 @@ def _hist(polls: list[tuple[float, float | None]], sales: list[tuple[float, floa
     h.polls = [
         PollPoint(
             ts=T0 + d * DAY, floor_mirror=p, total_results=listings, new_listing_rows=0,
-            instant_ladder=array("f", [p] if p is not None else []),
+            instant_floor=p, divine_ladder=array("f", [p] if p is not None else []),
         )
         for d, p in polls
     ]
@@ -135,8 +135,9 @@ class MarketLoaderTests(unittest.TestCase):
         # Default keeps every sale: 1-mirror sales are a real (slow) channel, not noise.
         self.assertEqual((default.sales_dropped_implausible, default.sales_kept), (0, 2))
         hist = next(iter(default.variants.values()))
-        self.assertTrue(all(sale.one_mirror for sale in hist.sales))
-        self.assertEqual(hist.polls[0].one_mirror_listings, 2)
+        self.assertTrue(all(sale.mirror_channel and sale.whole_mirrors == 1 for sale in hist.sales))
+        self.assertEqual(hist.polls[0].mirror_listings, ((1, 2),))
+        self.assertEqual([round(p, 6) for p in hist.polls[0].divine_ladder], [0.4, 0.4])
 
     def test_market_wide_sale_spike_days_are_excluded(self) -> None:
         polls = [[("A", "R", 2.0, 1)] for _ in range(20)]
@@ -179,7 +180,8 @@ class MarketLoaderTests(unittest.TestCase):
         self.assertFalse(by_price[3.0].still_listed)
         self.assertFalse(by_price[5.0].sold)  # ended by a reprice, not a sale
         self.assertTrue(by_price[4.5].still_listed)
-        self.assertEqual(list(hist.polls[0].instant_ladder), [2.0, 3.0, 5.0])
+        self.assertEqual(hist.polls[0].mirror_listings, ((2, 1), (3, 1), (5, 1)))
+        self.assertEqual(list(hist.polls[0].divine_ladder), [])
         self.assertAlmostEqual(hist.polls[0].instant_floor, 2.0)
 
 
@@ -212,10 +214,13 @@ class EstimatorTests(unittest.TestCase):
         self.assertLessEqual(est.expected_days, params.horizon_days + params.listing_lag_days + 1e-9)
 
     def test_listings_ahead_of_us_slow_the_sale(self) -> None:
-        alone = estimate(_snap(instant_ladder=(10.0,)))
-        behind_wall = estimate(_snap(instant_ladder=(10.0, 10.5, 11.0, 11.0)))
+        alone = estimate(_snap(divine_ladder=(10.0,)))
+        behind_wall = estimate(_snap(divine_ladder=(10.0, 10.5, 11.0, 11.0)))
         self.assertEqual(behind_wall.queue_ahead, 3)
         self.assertGreater(behind_wall.expected_days, alone.expected_days)
+        # Whole-mirror listings worth <= our ask are shown first too; pricier ones are not.
+        with_mirrors = estimate(_snap(divine_ladder=(10.0,), mirror_listings=((11, 2), (30, 5))))
+        self.assertEqual(with_mirrors.queue_ahead, 2)
 
     def test_unsold_listings_at_similar_price_slow_the_sale(self) -> None:
         on = EstimatorParams(use_listing_evidence=True)
@@ -232,32 +237,50 @@ class EstimatorTests(unittest.TestCase):
         self.assertAlmostEqual(default.sale_rate_per_day, estimate(_snap()).sale_rate_per_day)
         self.assertAlmostEqual(default.similar_listing_days_90d, 80.0)
 
-    def test_one_mirror_plan_used_when_its_channel_is_faster(self) -> None:
-        # Normal channel: bought at 0.5, fair 0.6 with steady sales at 0.6.
+    def test_death_rush_case_equal_divine_listing_and_mirror_buyers(self) -> None:
+        # Two copies at 1.24 (divines), whole-mirror listings 2 x5, 3 x3; mirror buyers paid 2 mirrors
+        # five times, divine buyers once at 1.36. Relisting in divines above the other 1.24 copy is not
+        # a +50% flip, and listing at 2 mirrors waits behind the five other 2-mirror listings.
+        snap = _snap(
+            entry_price=1.24, listing_anchor=1.24, sale_anchor=1.36, fair_value=1.27, sales_30d=0, sales_90d=1,
+            recent_sale_prices=(1.36,), divine_ladder=(1.24, 1.24), mirror_listings=((2, 5), (3, 3)),
+            mirror_sale_amounts=(2, 2, 2, 2, 2), market_mirror_rate_per_day=0.005,
+        )
+        undercut = estimate(snap, EstimatorParams(consider_mirror_plan=False))
+        self.assertLess(undercut.return_if_sold, 0.0)  # divine fair value sits at the 1.24 floor
+        best = estimate(snap)
+        if best.plan == "mirror":
+            self.assertEqual(best.ask_whole_mirrors, 2)
+            self.assertEqual(best.queue_ahead, 5)
+            self.assertLess(best.sell_probability, 0.5)
+
+    def test_mirror_plan_used_when_its_channel_is_faster(self) -> None:
+        # Divine channel: bought at 0.5, fair 0.6 with steady sales at 0.6.
         base = dict(entry_price=0.5, listing_anchor=0.55, sale_anchor=0.6, fair_value=0.6, sales_90d=10,
-                    recent_sale_prices=(0.6,) * 10, one_mirror_premium=True, one_mirror_listings=1)
-        busy = estimate(_snap(**base, one_mirror_sales_90d=60))
-        self.assertEqual(busy.plan, "one_mirror")
+                    recent_sale_prices=(0.6,) * 10, divine_ladder=(0.5,), mirror_listings=((1, 1),))
+        busy = estimate(_snap(**base, mirror_sale_amounts=(1,) * 60))
+        self.assertEqual((busy.plan, busy.ask_whole_mirrors), ("mirror", 1))
         self.assertAlmostEqual(busy.ask_price, 1.0)
         self.assertEqual(busy.queue_ahead, 1)
-        quiet = estimate(_snap(**{**base, "one_mirror_listings": 30}, one_mirror_sales_90d=0))
+        quiet = estimate(_snap(**{**base, "mirror_listings": ((1, 30),)}))
         self.assertEqual(quiet.plan, "undercut")
 
-    def test_one_mirror_plan_needs_premium_and_cheaper_entry(self) -> None:
-        self.assertEqual(estimate(_snap(one_mirror_premium=False, one_mirror_sales_90d=50)).plan, "undercut")
-        self.assertEqual(
-            estimate(_snap(entry_price=1.2, fair_value=1.5, one_mirror_premium=True, one_mirror_sales_90d=50)).plan,
-            "undercut",
-        )
+    def test_mirror_plan_candidates_are_above_entry(self) -> None:
+        from ML.estimator import mirror_candidates
 
-    def test_premium_one_mirror_sales_leave_normal_fair_value_alone(self) -> None:
+        self.assertEqual(mirror_candidates(_snap(entry_price=1.24, mirror_sale_amounts=(1, 2, 2, 4))), [2, 4])
+        self.assertEqual(mirror_candidates(_snap(entry_price=2.0, mirror_sale_amounts=(2,))), [3])
+        # A mirror plan needs mirror buyers at >= k: sales only at 1 mirror barely support 2 mirrors.
+        est = estimate(_snap(entry_price=1.5, fair_value=1.4, recent_sale_prices=(1.4,) * 6, mirror_sale_amounts=(1,) * 20))
+        self.assertLess(est.sales_at_or_above_ask_90d, 1)
+
+    def test_whole_mirror_sales_leave_divine_fair_value_alone(self) -> None:
         polls = [(d, 0.5) for d in range(0, 40)]
         h = _hist(polls, [(d, 0.5) for d in (5, 15, 25)])
-        h.sales += [SalePoint(ts=T0 + d * DAY, price_mirror=1.0, one_mirror=True) for d in (10, 20, 30, 35)]
+        h.sales += [SalePoint(ts=T0 + d * DAY, price_mirror=1.0, whole_mirrors=1) for d in (10, 20, 30, 35)]
         h.finalize()
         snap = snapshot(h, T0 + 39 * DAY, market_rate=0.01)
-        self.assertTrue(snap.one_mirror_premium)
-        self.assertEqual((snap.sales_90d, snap.one_mirror_sales_90d), (3, 4))
+        self.assertEqual((snap.sales_90d, snap.mirror_sale_amounts), (3, (1, 1, 1, 1)))
         self.assertAlmostEqual(snap.fair_value, 0.5)
 
     def test_params_from_config_clamps(self) -> None:
@@ -300,18 +323,31 @@ class SimulationTests(unittest.TestCase):
         self.assertTrue(out.sold)
         self.assertAlmostEqual(out.days, 8.0)  # 3rd later sale, and it was at our ask
 
-    def test_one_mirror_plan_only_sells_to_one_mirror_buyers(self) -> None:
+    def test_mirror_plan_only_sells_to_mirror_buyers_at_or_above_k(self) -> None:
         h = _hist([(d, 0.5) for d in range(0, 80)], [(2, 0.6), (4, 0.7)])
-        h.sales += [SalePoint(ts=T0 + d * DAY, price_mirror=1.0, one_mirror=True) for d in (6, 9, 12)]
+        h.sales += [SalePoint(ts=T0 + d * DAY, price_mirror=1.0, whole_mirrors=1) for d in (6, 9, 12)]
+        h.sales += [SalePoint(ts=T0 + 15 * DAY, price_mirror=2.0, whole_mirrors=2)]
         h.finalize()
-        snap = _snap(ts=T0, entry_price=0.5, fair_value=0.6, one_mirror_premium=True)
-        out = realize_trade(h, snap, ask=1.0, horizon_days=60, fee_pct=0.0, queue=1, plan="one_mirror")
+        snap = _snap(ts=T0, entry_price=0.5, fair_value=0.6)
+        out = realize_trade(h, snap, ask=1.0, horizon_days=60, fee_pct=0.0, queue=1, plan="mirror")
         self.assertTrue(out.sold)
-        self.assertAlmostEqual(out.days, 9.0)  # 2nd later 1-mirror sale
+        self.assertAlmostEqual(out.days, 9.0)  # 2nd later whole-mirror sale
         self.assertAlmostEqual(out.ret, 1.0)
-        # And undercut listings don't sell to 1-mirror buyers.
+        # Listed at 2 mirrors, only the 2-mirror buyer can take it (the 1-mirror sales clear the queue).
+        two = realize_trade(h, snap, ask=2.0, horizon_days=60, fee_pct=0.0, queue=1, plan="mirror")
+        self.assertTrue(two.sold)
+        self.assertAlmostEqual(two.days, 15.0)
+        # And divine listings don't sell to mirror buyers above them.
         normal = realize_trade(h, snap, ask=0.9, horizon_days=60, fee_pct=0.0)
         self.assertFalse(normal.sold)
+
+    def test_cheaper_whole_mirror_sales_clear_the_divine_queue(self) -> None:
+        h = _hist([(d, 1.0) for d in range(0, 80)], [(8, 1.3)])
+        h.sales += [SalePoint(ts=T0 + 3 * DAY, price_mirror=1.0, whole_mirrors=1)]
+        h.finalize()
+        out = realize_trade(h, _snap(ts=T0, entry_price=1.1), ask=1.25, horizon_days=60, fee_pct=0.0, queue=1)
+        self.assertTrue(out.sold)
+        self.assertAlmostEqual(out.days, 8.0)
 
     def test_decision_times_leave_room_for_full_horizon(self) -> None:
         market = Market(variants={}, start_ts=T0, end_ts=T0 + 200 * DAY)

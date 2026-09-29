@@ -18,16 +18,20 @@ MAX_SALE_TO_FLOOR_RATIO = 1.5
 # at 0.4 mirror elsewhere (about 60% of the 1-mirror "sales" in the Sep 2026 production DB).
 CHEAPER_SAME_ROLL_MARGIN = 0.10
 SALE_FILTERS = ("roll", "floor_ratio", "none")
-# Default: keep every non-reverted sale. Per the market owner, rolls rarely matter and "1 mirror"
-# listings do sell (buyers who don't compare prices), just slowly. They are modelled as a separate
-# sales channel (see is_one_mirror) instead of being filtered out.
+# Default: keep every non-reverted sale. Per the market owner, rolls rarely matter and listings priced
+# in whole mirrors sell to a separate group of buyers (the trade site sorts k mirrors roughly at the
+# market divine rate, and many buyers pay in mirrors without comparing to divine listings). Those
+# sales are modelled as their own channel (see whole_mirrors) instead of being filtered out.
 DEFAULT_SALE_FILTER = "none"
 
 
-def is_one_mirror(amount: Any, currency: Any) -> bool:
-    """A listing or sale priced at exactly 1 Mirror of Kalandra (its own, slower sales channel)."""
+def whole_mirrors(amount: Any, currency: Any) -> int:
+    """k when a listing or sale is priced at exactly k whole Mirrors of Kalandra, else 0 (divine channel)."""
     a = positive_or_none(amount)
-    return a is not None and abs(a - 1.0) < 1e-9 and str(currency or "").strip().lower() in _MIRROR
+    if a is None or str(currency or "").strip().lower() not in _MIRROR:
+        return 0
+    k = round(a)
+    return int(k) if k >= 1 and abs(a - k) < 1e-9 else 0
 
 # Market-wide anomaly days: when a day's recorded sales exceed this multiple of the median of the
 # previous 14 days, listings vanished en masse (e.g. 2026-07-21..25 around GGG's trade rate-limit
@@ -42,7 +46,7 @@ ANOMALY_LOOKBACK_DAYS = 14
 # "transfer" to each other more than once, none of those transfers are used (38 of 85 in Sep 2026).
 PING_PONG_MIN_TRANSFERS = 2
 
-LADDER_DEPTH = 15  # cheapest instant listings kept per poll (enough to count the queue ahead of us)
+LADDER_DEPTH = 15  # cheapest divine-channel instant listings kept per poll (enough to count the queue)
 
 _MIRROR = {"mirror", "mirrors", "mirror of kalandra"}
 _DIVINE = {"divine", "divines", "div", "divine orb", "divine orbs"}
@@ -89,20 +93,23 @@ class PollPoint:
     floor_mirror: float | None  # cheapest mirror-equivalent listing in this poll (any listing type)
     total_results: int
     new_listing_rows: int
-    instant_ladder: array = field(default_factory=lambda: array("f"))  # cheapest instant listings, ascending
-    one_mirror_listings: int = 0  # instant listings at exactly 1 mirror (all of them, not just the cheapest)
-
-    @property
-    def instant_floor(self) -> float | None:
-        """Cheapest instant-buyout listing: what you can actually buy."""
-        return float(self.instant_ladder[0]) if self.instant_ladder else None
+    # Cheapest instant-buyout listing in any currency: what you can actually buy.
+    instant_floor: float | None = None
+    # Divine-channel instant listings (priced in divines or fractional mirrors), mirror-equivalent, ascending.
+    divine_ladder: array = field(default_factory=lambda: array("f"))
+    # Whole-mirror instant listings as ((k, count), ...), ascending k: all of them, not just the cheapest.
+    mirror_listings: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass
 class SalePoint:
     ts: float
     price_mirror: float
-    one_mirror: bool = False  # sold from a listing at exactly 1 mirror
+    whole_mirrors: int = 0  # k when sold from a listing at exactly k mirrors (mirror channel), else 0
+
+    @property
+    def mirror_channel(self) -> bool:
+        return self.whole_mirrors > 0
 
 
 @dataclass(frozen=True)
@@ -323,8 +330,20 @@ def load_market(
                 for row in raw_rows
             ]
 
-            point.instant_ladder = array("f", sorted(p for _, _, p, inst in listings if inst and p is not None)[:LADDER_DEPTH])
-            point.one_mirror_listings = sum(1 for row in raw_rows if bool(row[6]) and is_one_mirror(row[4], row[5]))
+            instant_prices = [p for _, _, p, inst in listings if inst and p is not None]
+            point.instant_floor = min(instant_prices) if instant_prices else None
+            mirror_counts: dict[int, int] = {}
+            divine_prices: list[float] = []
+            for row, (_s, _f, price, inst) in zip(raw_rows, listings):
+                if not inst or price is None:
+                    continue
+                k = whole_mirrors(row[4], row[5])
+                if k:
+                    mirror_counts[k] = mirror_counts.get(k, 0) + 1
+                else:
+                    divine_prices.append(price)
+            point.divine_ladder = array("f", sorted(divine_prices)[:LADDER_DEPTH])
+            point.mirror_listings = tuple(sorted(mirror_counts.items()))
             hist.polls.append(point)
 
             credible_keys: set[tuple[str, str]] = set()
@@ -338,7 +357,7 @@ def load_market(
                     continue
                 kept += 1
                 hist.sales.append(
-                    SalePoint(ts=dt.timestamp(), price_mirror=price, one_mirror=is_one_mirror(s["price_amount"], s["price_currency"]))
+                    SalePoint(ts=dt.timestamp(), price_mirror=price, whole_mirrors=whole_mirrors(s["price_amount"], s["price_currency"]))
                 )
                 credible_keys.add((str(s["seller"] or ""), str(s["fingerprint"] or "")))
 
