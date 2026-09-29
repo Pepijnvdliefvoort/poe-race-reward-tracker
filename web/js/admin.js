@@ -335,7 +335,7 @@ function isPaneLive(name) {
 
 function onPaneShown(name) {
   if (name === "logs") {
-    requestLogRefresh();
+    requestLogSnapshot();
     [serverLogViewer, pollerLogViewer].forEach((v) => v?.follow && v.scrollToBottom());
   } else if (name === "overview") {
     void refreshStats();
@@ -392,6 +392,7 @@ function setupPanes() {
 // Lines kept per console. Each refresh only appends the new lines to the DOM and drops the oldest
 // past this cap, so a long session stays cheap (the old viewer rebuilt up to 20k lines every 2.5s).
 const LOG_MAX_LINES = 3000;
+const LOG_POLL_MS = 1500;
 const LOG_VIEW_STORAGE_KEY = "admin.logs.view.v2";
 const LOG_FOLLOW_STORAGE_KEY = "admin.logs.follow.v2";
 const logTimeFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -421,6 +422,8 @@ class LogViewer {
     this.level = "all"; // all | info | warn | error
     this.query = "";
     this.cursor = null; // null = next request is a full snapshot
+    this.needsSnapshot = false; // set when (re)opened, so it shows the latest lines, not a catch-up
+    this.counts = null;
     this._filterKey = "";
     this.lineCount = 0;
     this.placeholder = false;
@@ -637,8 +640,18 @@ class LogViewer {
     else if (this.jumpBtn) this.jumpBtn.hidden = false;
   }
 
+  addCounts(delta) {
+    if (!this.counts || !delta || typeof delta !== "object") return;
+    const next = { ...this.counts };
+    for (const key of ["all", "info", "warning", "error", "other"]) {
+      next[key] = (Number.isFinite(next[key]) ? next[key] : 0) + (Number.isFinite(delta[key]) ? delta[key] : 0);
+    }
+    this.setCounts(next);
+  }
+
   setCounts(counts) {
     if (!counts || typeof counts !== "object") return;
+    this.counts = counts;
     const n = (v) => (Number.isFinite(v) ? v : 0);
     const labels = {
       all: `All ${n(counts.all)}`,
@@ -660,7 +673,6 @@ function isEditingAdminDatalist() {
 
 let serverLogViewer;
 let pollerLogViewer;
-let logRefreshTick = 0;
 let logRefreshInFlight = false;
 let logsPaused = false;
 let logRefreshQueued = false;
@@ -676,8 +688,8 @@ function visibleLogViewers() {
 
 async function refreshLogStream(viewer) {
   const filterKey = viewer.filterKey;
-  const snapshot = viewer.cursor == null || viewer._filterKey !== filterKey;
-  const withCounts = snapshot || logRefreshTick % 8 === 1; // counts are a heavier query; refresh them now and then
+  const snapshot = viewer.needsSnapshot || viewer.cursor == null || viewer._filterKey !== filterKey;
+  if (snapshot) viewer.needsSnapshot = false;
   const params = new URLSearchParams({
     stream: viewer.name,
     format: "json",
@@ -685,16 +697,31 @@ async function refreshLogStream(viewer) {
     level: viewer.level,
     q: viewer.query,
     limit: String(LOG_MAX_LINES),
-    counts: withCounts ? "1" : "0",
+    counts: snapshot ? "1" : "0", // deltas carry deltaCounts, so counts stay live without a recount
   });
   if (!snapshot) params.set("cursor", String(viewer.cursor));
   const payload = await fetchJson(`/api/admin/logs?${params.toString()}`);
   if (payload?.format !== "jsonl" || viewer.filterKey !== filterKey) return; // filters changed meanwhile
   viewer.cursor = Number.isFinite(payload.cursor) ? payload.cursor : viewer.cursor ?? 0;
   viewer._filterKey = filterKey;
-  if (!snapshot && payload.delta) viewer.appendEntries(payload.entries);
-  else viewer.setEntries(payload.entries);
-  if (payload.counts) viewer.setCounts(payload.counts);
+  if (!snapshot && payload.delta) {
+    viewer.appendEntries(payload.entries);
+    viewer.addCounts(payload.deltaCounts);
+    if (payload.sessionRestarted) viewer.needsSnapshot = true; // new session: counts/lines start over
+    if (payload.sessionRestarted || payload.more) logRefreshQueued = true;
+  } else {
+    viewer.setEntries(payload.entries);
+    if (payload.counts) viewer.setCounts(payload.counts);
+  }
+}
+
+// Next refresh loads a fresh snapshot (latest lines + counts) instead of catching up from where
+// the viewer left off.
+function requestLogSnapshot(viewers = [serverLogViewer, pollerLogViewer]) {
+  viewers.forEach((v) => {
+    if (v) v.needsSnapshot = true;
+  });
+  requestLogRefresh();
 }
 
 async function refreshLogs() {
@@ -704,7 +731,6 @@ async function refreshLogs() {
     return;
   }
   logRefreshInFlight = true;
-  logRefreshTick += 1;
   const hint = document.getElementById("adminAuthHint");
   try {
     await Promise.all(visibleLogViewers().map((v) => refreshLogStream(v)));
@@ -752,7 +778,7 @@ function setupLogsWindow() {
     } catch {
       // storage unavailable
     }
-    requestLogRefresh();
+    requestLogSnapshot(visibleLogViewers());
     requestAnimationFrame(() => visibleLogViewers().forEach((lv) => lv.follow && lv.scrollToBottom()));
   };
   viewButtons.forEach((b) => b.addEventListener("click", () => setView(b.dataset.logView)));
@@ -2320,7 +2346,7 @@ function main() {
   setupMapResize();
   setupLogsWindow();
   setupPanes();
-  window.setInterval(refreshLogs, 2500);
+  window.setInterval(refreshLogs, LOG_POLL_MS);
   window.setInterval(() => isPaneLive("overview") && void refreshStats(), 10000);
   window.setInterval(() => isPaneLive("visitors") && void refreshVisitors(), 60000);
 }
