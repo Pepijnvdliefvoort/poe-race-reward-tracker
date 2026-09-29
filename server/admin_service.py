@@ -444,53 +444,96 @@ def tail_log_file(path: Path, max_bytes: int = 262_144) -> str:
         return ""
 
 
-def read_log_file_since(path: Path, cursor: int, max_bytes: int = 262_144) -> tuple[str, int]:
+def _read_log_tail(path: Path, max_bytes: int) -> tuple[str, int]:
     """
-    Read newly appended bytes since `cursor` (a file byte offset).
-    Returns (text, new_cursor). If the file shrank or cursor is invalid, starts from 0.
+    Read the last `max_bytes` of a log as complete lines.
+    Returns (text, end_offset): a partial first line is dropped, and a half-written last line is
+    left for the next incremental read (end_offset points just past the last newline).
+    """
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            start = max(0, size - max_bytes)
+            fh.seek(start)
+            data = fh.read(size - start)
+    except OSError:
+        return "", 0
+    end = data.rfind(b"\n") + 1
+    first = data.find(b"\n") + 1 if start > 0 else 0
+    first = min(first, end)
+    return data[first:end].decode("utf-8", errors="replace"), start + end
+
+
+def read_log_file_since(path: Path, cursor: int, max_bytes: int = 262_144) -> tuple[str, int, bool]:
+    """
+    Read complete lines appended since `cursor` (a file byte offset).
+    Returns (text, new_cursor, more). If the file shrank (rotation) or cursor is invalid, starts
+    from 0. `more` is True when a backlog larger than `max_bytes` is still unread.
     """
     if not path.exists():
-        return "", 0
+        return "", 0, False
     try:
         with path.open("rb") as fh:
             fh.seek(0, 2)
             size = fh.tell()
             if cursor < 0 or cursor > size:
                 cursor = 0
-            fh.seek(cursor)
             remaining = size - cursor
             if remaining <= 0:
-                return "", size
-            data = fh.read(min(remaining, max_bytes)).decode("utf-8", errors="replace")
-        return data, size
+                return "", size, False
+            fh.seek(cursor)
+            data = fh.read(min(remaining, max_bytes))
     except OSError:
-        return "", 0
+        return "", 0, False
+    end = data.rfind(b"\n") + 1
+    if end == 0 and remaining > max_bytes:
+        end = len(data)  # a single line longer than max_bytes; don't stall on it
+    new_cursor = cursor + end
+    return data[:end].decode("utf-8", errors="replace"), new_cursor, remaining > max_bytes
 
 
-def _is_important_log_entry(entry: dict[str, Any]) -> bool:
-    lvl = str(entry.get("level") or "").lower()
-    return lvl in {"warning", "warn", "error", "critical"}
+_IMPORTANT_LOG_LEVELS = {"warning", "warn", "error", "critical"}
+_LEVEL_MARKER = '"level": "'
 
 
-def _cap_log_entries(entries: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    """Keep warnings/errors when trimming; drop oldest routine info lines first."""
-    if len(entries) <= limit:
-        return entries
-    important: list[dict[str, Any]] = []
-    routine: list[dict[str, Any]] = []
-    for e in entries:
-        if _is_important_log_entry(e):
-            important.append(e)
-        else:
-            routine.append(e)
-    max_routine = max(0, limit - len(important))
-    if len(routine) > max_routine:
-        routine = routine[-max_routine:]
-    merged = important + routine
-    merged.sort(key=lambda e: str(e.get("ts") or ""))
-    if len(merged) > limit:
-        return merged[-limit:]
-    return merged
+def _raw_log_level(line: str) -> str | None:
+    """
+    Level of a JsonlFormatter line without json-parsing it (None for non-JSON lines).
+    Quotes inside messages are JSON-escaped, so the marker can only match the real key.
+    """
+    if not line.startswith("{"):
+        return None
+    i = line.find(_LEVEL_MARKER)
+    if i < 0:
+        return ""
+    i += len(_LEVEL_MARKER)
+    j = line.find('"', i)
+    return line[i:j].lower() if j > i else ""
+
+
+def _session_start_offset(text: str) -> int:
+    """Offset just past the last session-start line in `text` (0 if there is none)."""
+    idx = max(text.rfind('"event": "session_start"'), text.lower().rfind("session start"))
+    if idx < 0:
+        return 0
+    nl = text.find("\n", idx)
+    return len(text) if nl < 0 else nl + 1
+
+
+def _count_log_levels(text: str) -> dict[str, int]:
+    """Level counts over JSONL text via substring counts (no json parsing)."""
+    total = text.count("\n{") + (1 if text.startswith("{") else 0)
+    info = text.count(_LEVEL_MARKER + 'info"')
+    warning = text.count(_LEVEL_MARKER + 'warning"') + text.count(_LEVEL_MARKER + 'warn"')
+    error = text.count(_LEVEL_MARKER + 'error"')
+    return {
+        "info": info,
+        "warning": warning,
+        "error": error,
+        "other": max(0, total - info - warning - error),
+        "all": total,
+    }
 
 
 def _parse_jsonl_logs(text: str) -> list[dict[str, Any]]:
@@ -528,6 +571,10 @@ def query_log_entries(
 
     Levels are the standard python logging names lowercased (info/warning/error/critical),
     but the UI uses: all/info/warn/error. We normalize 'warn' -> 'warning'.
+
+    Snapshots only json-parse the lines they return (counts and session detection work on the
+    raw lines), so opening a large poller.log stays fast. Deltas (`cursor` given) return
+    `deltaCounts` for the new lines so the UI can keep its counts current without a recount.
     """
     wanted = (level or "all").strip().lower()
     if wanted == "warn":
@@ -552,77 +599,84 @@ def query_log_entries(
     limit = max(1, min(int(limit or ADMIN_LOG_DEFAULT_LIMIT), ADMIN_LOG_MAX_LIMIT))
     since_mode = (since or "session").strip().lower()
 
-    # Snapshot parsing (for counts + initial render).
-    snapshot_entries: list[dict[str, Any]] = []
-    counts: dict[str, int] | None = None
-    file_cursor: int | None = None
-    if include_counts or cursor is None:
-        raw = tail_log_file(path, max_bytes=max_bytes)
-        snapshot_entries = _parse_jsonl_logs(raw)
-        if not snapshot_entries:
-            return {
-                "format": "text",
-                "text": raw,
-                "counts": {},
-                "entries": [],
-                "cursor": 0,
-            }
-        snapshot_entries = _cap_log_entries(snapshot_entries, limit)
-
-        if since_mode == "session":
-            last_start_idx: int | None = None
-            for idx, e in enumerate(snapshot_entries):
-                # Prefer an explicit structured session marker, but also support
-                # older/plain logs that only emit a human line like "session start".
-                event = str(e.get("event") or "")
-                msg = str(e.get("msg") or "")
-                if event == "session_start" or "session start" in msg.strip().lower():
-                    last_start_idx = idx
-            if last_start_idx is not None:
-                snapshot_entries = snapshot_entries[last_start_idx + 1 :]
-
-        if include_counts:
-            counts = {"info": 0, "warning": 0, "error": 0, "other": 0, "all": 0}
-            for e in snapshot_entries:
-                lvl = str(e.get("level") or "").lower()
-                counts["all"] += 1
-                if lvl == "info":
-                    counts["info"] += 1
-                elif lvl in {"warn", "warning"}:
-                    counts["warning"] += 1
-                elif lvl == "error":
-                    counts["error"] += 1
-                else:
-                    counts["other"] += 1
-
-    # Incremental parsing (only new bytes).
+    # Incremental read (only new complete lines).
     if cursor is not None:
-        delta_text, file_cursor = read_log_file_since(path, cursor, max_bytes=262_144)
-        delta_entries = _parse_jsonl_logs(delta_text)
-        filtered = [e for e in delta_entries if isinstance(e, dict) and include(e)]
+        delta_text, file_cursor, more = read_log_file_since(path, cursor)
+        restarted = since_mode == "session" and _session_start_offset(delta_text) > 0
+        filtered = [e for e in _parse_jsonl_logs(delta_text) if include(e)]
         return {
             "format": "jsonl",
-            "counts": counts,
+            "counts": None,
+            "deltaCounts": _count_log_levels(delta_text),
             "entries": filtered,
             "limit": limit,
-            "cursor": file_cursor or 0,
+            "cursor": file_cursor,
             "delta": True,
+            "more": more,
+            "sessionRestarted": restarted,
             "since": since_mode,
         }
 
-    # Full response (filtered snapshot).
-    filtered_snapshot = [e for e in snapshot_entries if isinstance(e, dict) and include(e)]
-    # Best-effort cursor for subsequent incremental polls.
-    try:
-        file_cursor = path.stat().st_size
-    except OSError:
-        file_cursor = 0
+    # Snapshot.
+    if not path.exists():
+        raw, file_cursor = "", 0
+    else:
+        raw, file_cursor = _read_log_tail(path, max_bytes)
+    if "{" not in raw:
+        return {
+            "format": "text",
+            "text": raw,
+            "counts": {},
+            "entries": [],
+            "cursor": 0,
+        }
+
+    if since_mode == "session":
+        raw = raw[_session_start_offset(raw) :]
+
+    counts = _count_log_levels(raw) if include_counts else None
+    lines = raw.splitlines()
+
+    # Walk back from the newest line: keep every matching warning/error plus the newest matching
+    # routine lines, and json-parse only lines that can end up in the result.
+    level_prefilter = wanted if wanted != "all" else ""
+    # Raw lines are JSON-escaped, so a substring prefilter is only safe for queries without escapes.
+    query_prefilter = query if query and '"' not in query and "\\" not in query else ""
+    important: list[tuple[int, dict[str, Any]]] = []
+    routine: list[tuple[int, dict[str, Any]]] = []
+    for pos in range(len(lines) - 1, -1, -1):
+        line = lines[pos]
+        lvl = _raw_log_level(line)
+        if lvl is None:
+            continue
+        is_important = lvl in _IMPORTANT_LOG_LEVELS
+        if not is_important and len(routine) >= limit:
+            continue
+        if level_prefilter and ("warning" if lvl == "warn" else lvl) != level_prefilter:
+            continue
+        if query_prefilter and query_prefilter not in line.lower():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict) or not include(row):
+            continue
+        (important if is_important else routine).append((pos, row))
+
+    # Trim routine lines so warnings/errors survive; if warnings alone fill the limit, fall back
+    # to simply the newest lines so the console always shows what just happened.
+    max_routine = limit - len(important)
+    if max_routine > 0:
+        routine = routine[:max_routine]
+    merged = sorted(important + routine, key=lambda pr: pr[0])[-limit:]
+
     return {
         "format": "jsonl",
         "counts": counts,
-        "entries": filtered_snapshot,
+        "entries": [row for _, row in merged],
         "limit": limit,
-        "cursor": file_cursor or 0,
+        "cursor": file_cursor,
         "delta": False,
         "since": since_mode,
     }
