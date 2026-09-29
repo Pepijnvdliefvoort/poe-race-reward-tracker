@@ -1,0 +1,357 @@
+/* DB explorer (db.html): a standalone app window; workspace styles on top of admin-mac.css. */
+
+/* The workspace fills the window; the object list and the viewer scroll on their own. */
+.db-app {
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+}
+
+.db-app .mac-banner {
+  max-width: none;
+  margin: 0 0 12px;
+}
+
+.db-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.db-shell-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--sep);
+}
+
+.db-shell-db {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.db-shell-k {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.db-shell-v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-layout {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: 250px minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* Object list (like a Finder sidebar) */
+.db-objects {
+  padding: 10px 8px 14px;
+  border-right: 1px solid var(--sep);
+  background: var(--fill);
+  overflow-y: auto;
+}
+
+.db-objects-title {
+  margin: 10px 8px 5px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.db-objects-title:first-child {
+  margin-top: 2px;
+}
+
+.admin-db-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.admin-db-list-item,
+.admin-db-attach-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: 12.5px var(--font);
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-db-list-item code,
+.admin-db-attach-row code {
+  padding: 0;
+  background: none;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-db-list-item > span:last-child {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.admin-db-list-item:hover,
+.admin-db-attach-row:hover {
+  background: var(--fill-strong);
+}
+
+.admin-db-list-item--active,
+.admin-db-list-item--active:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.admin-db-list-item--active .admin-muted {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.admin-db-attach-name {
+  color: var(--ink);
+}
+
+.admin-db-attach-arrow {
+  flex: 0 0 auto;
+}
+
+.admin-db-attach-file {
+  color: var(--ink-soft);
+}
+
+/* Viewer */
+.db-main {
+  min-width: 0;
+  padding: 12px 16px 18px;
+  overflow-y: auto;
+}
+
+.db-tabs {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.db-panel > .mac-group-title:first-child,
+#dbStructureWrap > .mac-group-title:first-child {
+  margin-top: 4px;
+}
+
+.db-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.admin-table-wrap {
+  overflow: auto;
+  max-height: 70vh;
+  border: 1px solid var(--stroke);
+  border-radius: 9px;
+  background: var(--group);
+}
+
+.admin-table-wrap .admin-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--group);
+}
+
+.admin-table td code {
+  padding: 0;
+  background: none;
+  font-size: 12px;
+  white-space: pre;
+}
+
+/* ER diagram (Mermaid renders in its dark theme, so it sits on the terminal surface) */
+.db-er {
+  margin-top: 6px;
+}
+
+.admin-db-er-diagram {
+  padding: 14px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--term-bg);
+  color: #d7d7db;
+}
+
+.admin-db-er-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* SQL editor */
+.db-sqlbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.db-limit-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.admin-db-limit {
+  width: 84px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--stroke);
+  border-radius: 7px;
+  background: var(--fill);
+  color: var(--ink);
+  font: 12.5px var(--mono);
+}
+
+.admin-db-sqlwrap {
+  position: relative;
+  min-width: 0;
+}
+
+.admin-db-sql {
+  display: block;
+  width: 100%;
+  min-height: 200px;
+  padding: 12px 14px;
+  resize: vertical;
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  background: var(--term-bg);
+  color: #e5e5ea;
+  caret-color: #fff;
+  font: 12.5px/1.6 var(--mono);
+  outline: none;
+}
+
+.admin-db-sql::placeholder {
+  color: #6e6e73;
+}
+
+.admin-db-sql:focus {
+  border-color: var(--accent);
+  box-shadow: var(--focus);
+}
+
+/* Autocomplete popup (positioned at the caret by db_explorer.js) */
+.admin-db-suggest {
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  z-index: 50;
+  min-width: 220px;
+  max-width: min(520px, calc(100% - 24px));
+  max-height: 260px;
+  padding: 5px;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(40, 40, 44, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+.admin-db-suggest-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.admin-db-suggest-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.admin-db-suggest-item--active,
+.admin-db-suggest-item--active:hover {
+  background: var(--accent);
+}
+
+.admin-db-suggest-k {
+  overflow: hidden;
+  color: #f5f5f7;
+  font: 12.5px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-db-suggest-tag {
+  color: #a1a1a6;
+  font: 11px var(--mono);
+  white-space: nowrap;
+}
+
+.admin-db-suggest-item--active .admin-db-suggest-tag {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+#dbSqlHint:empty {
+  display: none;
+}
+
+#dbSqlHint {
+  margin-top: 10px;
+}
+
+@media (max-width: 760px) {
+  .mac-app--standalone {
+    height: auto;
+  }
+
+  .mac-titlebar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .db-app {
+    padding: 10px;
+  }
+
+  .db-layout {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .db-main {
+    overflow: visible;
+  }
+
+  .db-objects {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid var(--sep);
+  }
+
+  .db-main {
+    padding: 12px;
+  }
+}

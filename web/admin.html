@@ -5,15 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Admin — PoE Race Rewards</title>
     <meta name="robots" content="noindex,nofollow" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
-      rel="stylesheet"
-    />
+    <script>
+      // Apply saved appearance and window zoom before first paint (no flash).
+      try {
+        if (localStorage.getItem("poe-market-theme") === "light") document.documentElement.classList.add("light-theme");
+        if (localStorage.getItem("admin.window.zoomed.v1") === "1") document.documentElement.classList.add("mac-zoomed");
+      } catch (e) {}
+    </script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
-    <link rel="stylesheet" href="/css/variables.css" />
-    <link rel="stylesheet" href="/css/admin.css?v=20260429-1" />
+    <link rel="stylesheet" href="/css/admin-mac.css?v=20260930-4" />
     <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
     <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -21,397 +21,380 @@
     <script type="module" src="/js/admin.js"></script>
   </head>
   <body>
-    <div class="admin-bg" aria-hidden="true"></div>
-    <header class="admin-header">
-      <div class="admin-header-brand">
-        <p class="admin-eyebrow">Operations</p>
-        <h1>Admin panel</h1>
-      </div>
-      <nav class="admin-header-nav" aria-label="Site navigation">
-        <a href="/admin/db" class="admin-btn">DB explorer</a>
-        <a href="/compare" class="admin-btn">Compare</a>
-        <a href="/aa-ladder" class="admin-btn">AA ladder</a>
-        <a href="/alt-arts" class="admin-btn">Alt arts</a>
-        <a href="/" class="admin-btn">Dashboard</a>
-      </nav>
-    </header>
-
-    <p id="adminAuthHint" class="admin-hint"></p>
-
-    <section class="admin-section">
-      <div class="admin-section-head">
-        <h2>Logs</h2>
-        <p class="admin-muted">Server and poller output (tee to <code>logs/</code>).</p>
-      </div>
-      <div class="admin-console-split" id="adminLogSplit" aria-label="Log split view">
-        <div class="admin-console-wrap" id="serverConsolePane">
-          <div class="admin-console-titlebar">
-            <button
-              class="admin-console-dot admin-console-dot--red"
-              type="button"
-              data-console="server"
-              data-action="close"
-              aria-label="Close server console"
-              title="Close (disabled for server)"
-              disabled
-            ></button>
-            <button
-              class="admin-console-dot admin-console-dot--yellow"
-              type="button"
-              data-console="server"
-              data-action="minimize"
-              aria-label="Minimize server console"
-              title="Minimize"
-            ></button>
-            <button
-              class="admin-console-dot admin-console-dot--green"
-              type="button"
-              data-console="server"
-              data-action="maximize"
-              aria-label="Maximize server console"
-              title="Maximize"
-            ></button>
-            <span class="admin-console-title">server.log</span>
-          </div>
-          <div class="admin-console-toolbar" id="serverConsoleToolbar" aria-label="Server log filters"></div>
-          <pre id="serverConsole" class="admin-console" aria-live="polite"></pre>
+    <div class="mac-app">
+      <aside class="mac-sidebar" aria-label="Admin navigation">
+        <div class="mac-traffic-lights" role="group" aria-label="Window">
+          <button type="button" class="mac-tl mac-tl--close" data-window="close" aria-label="Close and go to the dashboard" title="Close (go to the dashboard)">
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5" /></svg>
+          </button>
+          <button type="button" class="mac-tl mac-tl--minimize" data-window="minimize" aria-label="Minimize to the dock" title="Minimize to the dock">
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.8 6h6.4" /></svg>
+          </button>
+          <button type="button" class="mac-tl mac-tl--zoom" data-window="zoom" aria-label="Toggle full window" aria-pressed="false" title="Fill the browser window">
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.3 8.7V5.2l3.5 3.5zM8.7 3.3v3.5L5.2 3.3z" /></svg>
+          </button>
         </div>
 
-        <div
-          class="admin-split-handle"
-          id="adminLogSplitHandleA"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize server and poller panes"
-          tabindex="0"
-        ></div>
-
-        <div class="admin-console-wrap" id="pollerConsolePane">
-          <div class="admin-console-titlebar">
-            <button
-              class="admin-console-dot admin-console-dot--red"
-              type="button"
-              data-console="poller"
-              data-action="close"
-              aria-label="Close poller console"
-              title="Close"
-            ></button>
-            <button
-              class="admin-console-dot admin-console-dot--yellow"
-              type="button"
-              data-console="poller"
-              data-action="minimize"
-              aria-label="Minimize poller console"
-              title="Minimize"
-            ></button>
-            <button
-              class="admin-console-dot admin-console-dot--green"
-              type="button"
-              data-console="poller"
-              data-action="maximize"
-              aria-label="Maximize poller console"
-              title="Maximize"
-            ></button>
-            <span class="admin-console-title">poller.log</span>
-          </div>
-          <div class="admin-console-toolbar" id="pollerConsoleToolbar" aria-label="Poller log filters"></div>
-          <pre id="pollerConsole" class="admin-console" aria-live="polite"></pre>
-        </div>
-
-        <div
-          class="admin-split-handle"
-          id="adminLogSplitHandleB"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize poller and stats panes"
-          tabindex="0"
-        ></div>
-
-        <div class="admin-console-wrap" id="statsConsolePane">
-          <div class="admin-console-titlebar">
-            <button
-              class="admin-console-dot admin-console-dot--red"
-              type="button"
-              data-console="stats"
-              data-action="close"
-              aria-label="Close stats panel"
-              title="Close"
-            ></button>
-            <button
-              class="admin-console-dot admin-console-dot--yellow"
-              type="button"
-              data-console="stats"
-              data-action="minimize"
-              aria-label="Minimize stats panel"
-              title="Minimize"
-            ></button>
-            <button
-              class="admin-console-dot admin-console-dot--green"
-              type="button"
-              data-console="stats"
-              data-action="maximize"
-              aria-label="Maximize stats panel"
-              title="Maximize"
-            ></button>
-            <span class="admin-console-title">stats</span>
-          </div>
-          <div class="admin-console-toolbar" id="statsConsoleToolbar" aria-label="Stats panel toolbar"></div>
-          <div class="admin-panel-body" aria-label="Server statistics">
-            <p id="adminStatsHint" class="admin-muted admin-panel-hint" aria-live="polite"></p>
-            <div class="admin-stats-grid admin-stats-grid--panel" id="adminStatsGrid"></div>
+        <div class="mac-sidebar-head" title="Double-click to toggle full window">
+          <img class="mac-app-icon" src="/assets/icons/FairgravesTricorneAlt.png" alt="" />
+          <div>
+            <p class="mac-app-name">Admin</p>
+            <p class="mac-app-sub">PoE Race Rewards</p>
           </div>
         </div>
 
-        <div class="admin-console-empty" id="adminLogEmpty" hidden>No console active</div>
-      </div>
-      <div class="admin-console-taskbar" id="adminLogTaskbar" aria-label="Console dock"></div>
-    </section>
+        <p class="mac-nav-caption mac-nav-caption--admin">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1" /><path d="M4 5.5V4a2 2 0 014 0v1.5" fill="none" /></svg>
+          Admin <span class="mac-nav-caption-note">token required</span>
+        </p>
+        <nav class="mac-nav" aria-label="Admin pages">
+          <button type="button" class="mac-nav-item" data-pane="overview">
+            <span class="mac-nav-icon mac-nav-icon--gray" aria-hidden="true">
+              <svg viewBox="0 0 20 20"><path d="M3 11h4v6H3zM8 3h4v14H8zM13 7h4v10h-4z" /></svg>
+            </span>
+            Overview
+          </button>
+          <button type="button" class="mac-nav-item" data-pane="logs">
+            <span class="mac-nav-icon mac-nav-icon--dark" aria-hidden="true">
+              <svg viewBox="0 0 20 20"><path d="M4 6l4 4-4 4M10 14h6" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </span>
+            Logs
+          </button>
+          <button type="button" class="mac-nav-item" data-pane="config">
+            <span class="mac-nav-icon mac-nav-icon--blue" aria-hidden="true">
+              <svg viewBox="0 0 20 20"><path d="M3 5h9M15 5h2M3 10h3M9 10h8M3 15h9M15 15h2" fill="none" stroke-width="2" stroke-linecap="round" /><circle cx="13.5" cy="5" r="1.8" /><circle cx="7.5" cy="10" r="1.8" /><circle cx="13.5" cy="15" r="1.8" /></svg>
+            </span>
+            Configuration
+          </button>
+          <button type="button" class="mac-nav-item" data-pane="ml">
+            <span class="mac-nav-icon mac-nav-icon--purple" aria-hidden="true">
+              <svg viewBox="0 0 20 20"><path d="M3 15l4-5 3 3 6-8" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </span>
+            ML &amp; Companion
+          </button>
+          <button type="button" class="mac-nav-item" data-pane="visitors">
+            <span class="mac-nav-icon mac-nav-icon--green" aria-hidden="true">
+              <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5" fill="none" stroke-width="1.8" /><path d="M3.5 10h13M10 3.5c2.2 2 2.2 11 0 13M10 3.5c-2.2 2-2.2 11 0 13" fill="none" stroke-width="1.5" /></svg>
+            </span>
+            Visitors
+          </button>
+          <button type="button" class="mac-nav-item" data-pane="data">
+            <span class="mac-nav-icon mac-nav-icon--orange" aria-hidden="true">
+              <svg viewBox="0 0 20 20"><ellipse cx="10" cy="5" rx="6" ry="2.3" /><path d="M4 5v10c0 1.3 2.7 2.3 6 2.3s6-1 6-2.3V5" fill="none" stroke-width="1.8" /><path d="M4 10c0 1.3 2.7 2.3 6 2.3s6-1 6-2.3" fill="none" stroke-width="1.5" /></svg>
+            </span>
+            Data
+          </button>
+        </nav>
 
-    <section class="admin-section">
-      <div class="admin-section-head admin-section-head-row">
-        <div>
-          <h2>App config</h2>
-          <p class="admin-muted">
-            This edits <code>app_config.&lt;key&gt;</code> (SQLite). Select a key to edit, then save.
+        <p class="mac-nav-caption">Public site</p>
+        <nav class="mac-nav mac-nav--public" aria-label="Public pages">
+          <a class="mac-nav-link" href="/">Dashboard</a>
+          <a class="mac-nav-link" href="/compare">Compare</a>
+          <a class="mac-nav-link" href="/aa-ladder">AA ladder</a>
+          <a class="mac-nav-link" href="/alt-arts">Alt arts</a>
+        </nav>
+
+        <div class="mac-sidebar-foot">
+          <button type="button" class="mac-theme-toggle" id="adminThemeToggle" aria-label="Toggle light or dark appearance">
+            <span aria-hidden="true">◐</span> Appearance
+          </button>
+        </div>
+      </aside>
+
+      <main class="mac-main" id="adminMain">
+        <p id="adminAuthHint" class="mac-banner" role="status"></p>
+
+        <!-- Overview -->
+        <section class="mac-pane" id="pane-overview" data-pane="overview" hidden>
+          <header class="mac-pane-head">
+            <h1>Overview</h1>
+            <p class="admin-muted">Server health and the poller process.</p>
+          </header>
+
+          <h2 class="mac-group-title">Server</h2>
+          <div class="mac-group mac-group--pad">
+            <p id="adminStatsHint" class="admin-muted mac-inline-hint" aria-live="polite"></p>
+            <div class="mac-tiles" id="adminStatsGrid" aria-label="Server statistics"></div>
+          </div>
+
+          <h2 class="mac-group-title">Poller</h2>
+          <div class="mac-group">
+            <div class="mac-row">
+              <div>
+                <p class="mac-row-label">Poller process</p>
+                <p id="adminPollerHint" class="admin-muted mac-row-sub" aria-live="polite">Stop pauses polling until it is restarted.</p>
+              </div>
+              <div class="mac-row-actions">
+                <button id="stopPollerBtn" class="admin-btn admin-btn-ghost" type="button">Stop</button>
+                <button id="restartPollerBtn" class="admin-btn" type="button">Restart</button>
+              </div>
+            </div>
+          </div>
+
+          <h2 class="mac-group-title">Access</h2>
+          <div class="mac-group mac-group--pad">
+            <p class="admin-muted mac-small">
+              Authentication uses <code>ADMIN_TOKEN</code> from the server environment. Open <code>/admin?token=…</code>
+              <strong>once</strong>; the server then sets an HttpOnly cookie so <code>/admin</code> works afterwards.
+            </p>
+          </div>
+        </section>
+
+        <!-- Logs -->
+        <section class="mac-pane mac-pane--wide" id="pane-logs" data-pane="logs" hidden>
+          <header class="mac-pane-head mac-pane-head--row">
+            <div>
+              <h1>Logs</h1>
+              <p class="admin-muted">Output of this session, from <code>logs/</code>. Updates every few seconds while this page is open.</p>
+            </div>
+          </header>
+
+          <div class="mac-window" id="adminLogWindow">
+            <div class="mac-window-bar">
+              <span class="mac-traffic" aria-hidden="true"><i></i><i></i><i></i></span>
+              <div class="mac-segmented" role="tablist" aria-label="Log view">
+                <button type="button" role="tab" data-log-view="server">server.log</button>
+                <button type="button" role="tab" data-log-view="poller">poller.log</button>
+                <button type="button" role="tab" data-log-view="split">Split</button>
+              </div>
+              <label class="mac-switch" title="Keep scrolling to the newest lines">
+                <input type="checkbox" id="adminLogFollow" checked />
+                <span class="mac-switch-track" aria-hidden="true"></span>
+                Follow
+              </label>
+            </div>
+            <div class="mac-log-panes" id="adminLogPanes" data-view="split">
+              <div class="mac-log" id="serverConsolePane" data-stream="server">
+                <div class="mac-log-toolbar" id="serverConsoleToolbar" aria-label="Server log filters"></div>
+                <pre id="serverConsole" class="admin-console" aria-label="server.log" tabindex="0"></pre>
+              </div>
+              <div class="mac-log" id="pollerConsolePane" data-stream="poller">
+                <div class="mac-log-toolbar" id="pollerConsoleToolbar" aria-label="Poller log filters"></div>
+                <pre id="pollerConsole" class="admin-console" aria-label="poller.log" tabindex="0"></pre>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Configuration -->
+        <section class="mac-pane" id="pane-config" data-pane="config" hidden>
+          <header class="mac-pane-head">
+            <h1>Configuration</h1>
+            <p class="admin-muted">Edits <code>app_config.&lt;key&gt;</code> in SQLite. Changes apply on the next poller cycle.</p>
+          </header>
+
+          <div class="mac-group">
+            <div class="mac-row">
+              <label class="mac-row-label" for="marketCfgKey">Key</label>
+              <select id="marketCfgKey" class="admin-appconfig-input mac-select">
+                <option value="market">market</option>
+                <option value="db_export">db_export</option>
+                <option value="ml_retrain">ml_retrain</option>
+              </select>
+            </div>
+            <div class="mac-row mac-row--stack">
+              <div class="admin-json-editor" aria-label="JSON editor">
+                <pre id="marketCfgJsonPretty" class="admin-json-pretty" aria-hidden="true"></pre>
+                <textarea
+                  id="marketCfgJson"
+                  class="admin-json-textarea"
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  aria-label="Config JSON"
+                ></textarea>
+              </div>
+            </div>
+            <div class="mac-row">
+              <span id="marketCfgHint" class="admin-muted mac-row-sub" aria-live="polite"></span>
+              <div class="mac-row-actions">
+                <button id="marketCfgFormatBtn" class="admin-btn admin-btn-ghost" type="button">Format</button>
+                <button id="marketCfgReloadBtn" class="admin-btn admin-btn-ghost" type="button">Reload</button>
+                <button id="marketCfgSaveBtn" class="admin-btn" type="button">Save</button>
+              </div>
+            </div>
+          </div>
+          <p class="mac-footnote">Tip: press <kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>⌘</kbd>+<kbd>S</kbd> in the editor to save.</p>
+        </section>
+
+        <!-- ML & Companion -->
+        <section class="mac-pane" id="pane-ml" data-pane="ml" hidden>
+          <header class="mac-pane-head">
+            <h1>ML &amp; Companion</h1>
+            <p class="admin-muted">How the investment ranking is trained, and how its picks turned out.</p>
+          </header>
+
+          <div class="mac-group-head">
+            <h2 class="mac-group-title">Weekly retrain</h2>
+            <div class="mac-row-actions">
+              <span id="mlRetrainHint" class="admin-muted mac-row-sub" aria-live="polite"></span>
+              <button id="mlRetrainTriggerBtn" class="admin-btn admin-btn-ghost" type="button">Retrain now</button>
+            </div>
+          </div>
+          <div class="mac-group mac-kv" id="mlRetrainStatus" aria-label="ML retrain status">
+            <p class="admin-muted mac-pad">Loading…</p>
+          </div>
+
+          <h2 class="mac-group-title">Companion track record</h2>
+          <p class="mac-group-note">
+            Picks the companion showed, replayed on later market data: would they have sold at the suggested ask within the
+            horizon? Logged once per item per week.
           </p>
-        </div>
-        <div class="admin-header-actions">
-          <label class="admin-muted" style="display: inline-flex; gap: 8px; align-items: center">
-            <span>Key</span>
-            <select id="marketCfgKey" class="admin-appconfig-input" style="min-width: 160px">
-              <option value="market">market</option>
-              <option value="db_export">db_export</option>
-              <option value="ml_retrain">ml_retrain</option>
-            </select>
-          </label>
-          <span id="marketCfgHint" class="admin-muted admin-marketcfg-status" aria-live="polite"></span>
-          <button id="marketCfgSaveBtn" class="admin-btn" type="button">Save</button>
-        </div>
-      </div>
+          <div class="mac-group mac-kv" id="companionTrackRecord" aria-label="Companion track record summary">
+            <p class="admin-muted mac-pad">Loading…</p>
+          </div>
+          <div class="mac-group mac-group--table">
+            <table class="admin-table" id="companionPicksTable" aria-label="Recent companion picks">
+              <thead>
+                <tr><th>Week</th><th>Item</th><th>Rank</th><th>Buy → ask</th><th>Predicted</th><th>Outcome</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
 
-      <div class="admin-marketcfg" aria-label="Market config editor">
-        <div class="admin-marketcfg-card admin-marketcfg-card--full">
-          <details class="admin-marketcfg-advanced" open>
-            <summary class="admin-marketcfg-summary">JSON editor</summary>
-            <p class="admin-muted admin-marketcfg-json-note">
-              Edit the selected config key directly as JSON, then save.
-            </p>
-            <div class="admin-json-editor" aria-label="JSON editor">
-              <pre id="marketCfgJsonPretty" class="admin-json-pretty" aria-hidden="true"></pre>
-              <textarea
-                id="marketCfgJson"
-                class="admin-json-textarea"
-                spellcheck="false"
-                autocomplete="off"
-                autocapitalize="off"
-                autocorrect="off"
-              ></textarea>
+        <!-- Visitors -->
+        <section class="mac-pane" id="pane-visitors" data-pane="visitors" hidden>
+          <header class="mac-pane-head">
+            <h1>Visitors</h1>
+            <p class="admin-muted" id="visitorStats"></p>
+          </header>
+          <div class="mac-group mac-group--map">
+            <div id="visitorMap" class="admin-map" role="img" aria-label="Visitor locations map"></div>
+          </div>
+          <div class="mac-group mac-group--table">
+            <table class="admin-table" id="visitorTable">
+              <thead>
+                <tr>
+                  <th aria-sort="none">
+                    <button type="button" class="admin-table-sort" data-visitor-sort-key="ip">IP address</button>
+                  </th>
+                  <th aria-sort="descending">
+                    <button type="button" class="admin-table-sort" data-visitor-sort-key="visits">Visits</button>
+                  </th>
+                  <th aria-sort="none">
+                    <button type="button" class="admin-table-sort" data-visitor-sort-key="lastSeen">Last seen</button>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="visitorTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Data -->
+        <section class="mac-pane" id="pane-data" data-pane="data" hidden>
+          <header class="mac-pane-head">
+            <h1>Data</h1>
+            <p class="admin-muted">Backups, sale moderation and alert testing.</p>
+          </header>
+
+          <h2 class="mac-group-title">Database</h2>
+          <div class="mac-group">
+            <div class="mac-row">
+              <div>
+                <p class="mac-row-label">Backup</p>
+                <p id="adminDataHint" class="admin-muted mac-row-sub" aria-live="polite">Upload a snapshot to Discord, or download the database file.</p>
+              </div>
+              <div class="mac-row-actions">
+                <button id="runDbExportBtn" class="admin-btn admin-btn-ghost" type="button">Export to Discord</button>
+                <button id="downloadDbBtn" class="admin-btn" type="button">Download</button>
+              </div>
             </div>
-            <div class="admin-marketcfg-advanced-actions">
-              <button id="marketCfgFormatBtn" class="admin-btn admin-btn-ghost" type="button">Format</button>
-              <button id="marketCfgReloadBtn" class="admin-btn admin-btn-ghost" type="button">Reload</button>
-            </div>
-            <p class="admin-muted" style="margin-top: 10px">
-              Tip: press <code>Ctrl+S</code> / <code>Cmd+S</code> in this box to save.
+          </div>
+
+          <div class="admin-data-tools">
+            <h2 class="mac-group-title">Sale moderation</h2>
+            <p class="mac-group-note">
+              Remove recorded sales or the price history of one item variant. This affects the sales chart and everything based on
+              recorded sales or poll history.
             </p>
-          </details>
-        </div>
-      </div>
-    </section>
+            <div class="mac-group">
+              <div class="mac-row">
+                <label class="mac-row-label" for="adminSalesItemSelect">Item</label>
+                <select id="adminSalesItemSelect" class="admin-appconfig-input mac-select" disabled>
+                  <option value="">Loading items…</option>
+                </select>
+              </div>
+              <div class="mac-row">
+                <label class="mac-row-label" for="adminSalesVariantSelect">Variant</label>
+                <select id="adminSalesVariantSelect" class="admin-appconfig-input mac-select" disabled>
+                  <option value="">Select an item first…</option>
+                </select>
+              </div>
+              <div class="mac-row">
+                <span class="mac-row-label">Preview</span>
+                <p id="adminSalesPreview" class="admin-muted mac-row-value">Loading…</p>
+              </div>
+              <div class="mac-row mac-row--stack">
+                <label class="mac-row-label" for="adminSalesEventSelect">Recorded sale</label>
+                <select id="adminSalesEventSelect" class="admin-appconfig-input mac-select mac-select--full" disabled>
+                  <option value="">Select a variant first…</option>
+                </select>
+                <p id="adminSalesEventPreview" class="admin-muted mac-row-sub">Select a sale to resend.</p>
+              </div>
+              <div class="mac-row">
+                <span id="adminSalesDeleteHint" class="admin-muted mac-row-sub" aria-live="polite"></span>
+                <div class="mac-row-actions">
+                  <button id="adminResendSaleAlertBtn" class="admin-btn admin-btn-ghost" type="button" disabled>Resend alert</button>
+                  <button id="adminWipePriceHistoryBtn" class="admin-btn admin-btn-danger" type="button" disabled>Delete price history</button>
+                  <button id="adminWipeVariantBtn" class="admin-btn admin-btn-danger" type="button" disabled>Delete all sales + fingerprints</button>
+                </div>
+              </div>
+            </div>
 
-    <section class="admin-section">
-      <div class="admin-section-head admin-section-head-row">
-        <div>
-          <h2>ML retrain</h2>
-          <p class="admin-muted">Weekly model retrain status. Clearing the week key forces the poller to retrain on its next cycle.</p>
-        </div>
-        <div class="admin-header-actions">
-          <span id="mlRetrainHint" class="admin-muted admin-marketcfg-status" aria-live="polite"></span>
-          <button id="mlRetrainTriggerBtn" class="admin-btn" type="button">Trigger retrain</button>
-        </div>
-      </div>
-      <div class="admin-appconfig-card" id="mlRetrainStatus" aria-label="ML retrain status">
-        <p class="admin-muted" style="margin:0">Loading…</p>
-      </div>
-    </section>
-
-    <section class="admin-section">
-      <div class="admin-section-head">
-        <h2>Companion track record</h2>
-        <p class="admin-muted">Picks the investment companion showed, replayed on later market data: would they have sold at the suggested ask within the horizon? Logged once per item per week.</p>
-      </div>
-      <div class="admin-appconfig-card" id="companionTrackRecord" aria-label="Companion track record summary">
-        <p class="admin-muted" style="margin:0">Loading…</p>
-      </div>
-      <div class="admin-table-wrap">
-        <table class="admin-table" id="companionPicksTable" aria-label="Recent companion picks">
-          <thead>
-            <tr><th>Week</th><th>Item</th><th>Rank</th><th>Buy → ask</th><th>Predicted</th><th>Outcome</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="admin-section">
-      <div class="admin-section-head">
-        <h2>Visitors</h2>
-        <p class="admin-muted" id="visitorStats"></p>
-      </div>
-      <div id="visitorMap" class="admin-map" role="img" aria-label="Visitor locations map"></div>
-      <div class="admin-table-wrap">
-        <table class="admin-table" id="visitorTable">
-          <thead>
-            <tr>
-              <th aria-sort="none">
-                <button type="button" class="admin-table-sort" data-visitor-sort-key="ip">IP address</button>
-              </th>
-              <th aria-sort="descending">
-                <button type="button" class="admin-table-sort" data-visitor-sort-key="visits">Visits</button>
-              </th>
-              <th aria-sort="none">
-                <button type="button" class="admin-table-sort" data-visitor-sort-key="lastSeen">Last seen</button>
-              </th>
-            </tr>
-          </thead>
-          <tbody id="visitorTableBody"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="admin-section">
-      <div class="admin-section-head admin-section-head-row">
-        <div>
-          <h2>Data</h2>
-          <p class="admin-muted">Clear market data from SQLite, or restart the poller process.</p>
-        </div>
-        <div class="admin-header-actions">
-          <button id="runDbExportBtn" class="admin-btn admin-btn-ghost" type="button">Run DB export now</button>
-          <button id="downloadDbBtn" class="admin-btn" type="button">Download DB file</button>
-          <button id="clearDataBtn" class="admin-btn admin-btn-danger" type="button">Clear data</button>
-        </div>
-      </div>
-      <p id="adminDataHint" class="admin-muted" aria-live="polite"></p>
-      <p id="adminPollerHint" class="admin-muted" aria-live="polite"></p>
-
-      <div class="admin-appconfig-card admin-data-tools" aria-label="Market data tools">
-        <h3 style="margin: 0 0 6px">Sale moderation</h3>
-        <p class="admin-muted" style="margin: 0 0 10px">
-          Remove persisted <code>sales</code> rows or clear the full price history for a specific item art variant. This affects the sales
-          chart and any features based on recorded sales or poll history.
-        </p>
-
-        <div class="admin-appconfig-row">
-          <label class="admin-appconfig-k" for="adminSalesItemSelect">Item</label>
-          <div>
-            <select id="adminSalesItemSelect" class="admin-appconfig-input" disabled>
-              <option value="">Loading items…</option>
-            </select>
+            <h2 class="mac-group-title">Alert testing</h2>
+            <p class="mac-group-note">Send realistic Discord test alerts built from stored data for one item variant.</p>
+            <div class="mac-group">
+              <div class="mac-row">
+                <label class="mac-row-label" for="adminAlertTestItemSelect">Item</label>
+                <select id="adminAlertTestItemSelect" class="admin-appconfig-input mac-select" disabled>
+                  <option value="">Loading items…</option>
+                </select>
+              </div>
+              <div class="mac-row">
+                <label class="mac-row-label" for="adminAlertTestVariantSelect">Variant</label>
+                <select id="adminAlertTestVariantSelect" class="admin-appconfig-input mac-select" disabled>
+                  <option value="">Select an item first…</option>
+                </select>
+              </div>
+              <div class="mac-row">
+                <span class="mac-row-label">Alert types</span>
+                <div class="mac-checks">
+                  <label><input id="adminAlertTypeSales" type="checkbox" checked /> Sales</label>
+                  <label><input id="adminAlertTypeSnipe" type="checkbox" checked /> Snipes</label>
+                  <label><input id="adminAlertTypeReprice" type="checkbox" checked /> Reprices</label>
+                  <label><input id="adminAlertTypeNewItems" type="checkbox" /> New items</label>
+                </div>
+              </div>
+              <div class="mac-row">
+                <span class="mac-row-label">Preview</span>
+                <p id="adminAlertTestPreview" class="admin-muted mac-row-value">Select item and variant.</p>
+              </div>
+              <div class="mac-row">
+                <span id="adminAlertTestHint" class="admin-muted mac-row-sub" aria-live="polite"></span>
+                <div class="mac-row-actions">
+                  <button id="adminAlertTestSendBtn" class="admin-btn" type="button" disabled>Send test alerts</button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="admin-appconfig-row">
-          <label class="admin-appconfig-k" for="adminSalesVariantSelect">Variant</label>
-          <div>
-            <select id="adminSalesVariantSelect" class="admin-appconfig-input" disabled>
-              <option value="">Select an item first…</option>
-            </select>
+          <h2 class="mac-group-title mac-group-title--danger">Danger zone</h2>
+          <div class="mac-group mac-group--danger">
+            <div class="mac-row">
+              <div>
+                <p class="mac-row-label">Clear market data</p>
+                <p class="admin-muted mac-row-sub">Deletes polls, listings and sales from SQLite. Cannot be undone.</p>
+              </div>
+              <div class="mac-row-actions">
+                <button id="clearDataBtn" class="admin-btn admin-btn-danger" type="button">Clear data</button>
+              </div>
+            </div>
           </div>
-        </div>
-
-        <div class="admin-appconfig-row">
-          <span class="admin-appconfig-k">Preview</span>
-          <p id="adminSalesPreview" class="admin-muted" style="margin: 0">Loading…</p>
-        </div>
-
-        <div class="admin-appconfig-row">
-          <label class="admin-appconfig-k" for="adminSalesEventSelect">Recorded sale</label>
-          <div>
-            <select id="adminSalesEventSelect" class="admin-appconfig-input" disabled>
-              <option value="">Select a variant first…</option>
-            </select>
-            <p id="adminSalesEventPreview" class="admin-muted" style="margin: 6px 0 0">Select a sale to resend.</p>
-          </div>
-        </div>
-
-        <div class="admin-appconfig-actions">
-          <button id="adminWipePriceHistoryBtn" class="admin-btn admin-btn-danger" type="button" disabled>
-            Delete price history
-          </button>
-          <button id="adminWipeVariantBtn" class="admin-btn admin-btn-danger" type="button" disabled>
-            Delete all sales + fingerprints
-          </button>
-          <button id="adminResendSaleAlertBtn" class="admin-btn admin-btn-ghost" type="button" disabled>
-            Resend selected sale alert
-          </button>
-          <span id="adminSalesDeleteHint" class="admin-muted" aria-live="polite"></span>
-        </div>
-
-        <hr style="border: 0; border-top: 1px solid var(--stroke); margin: 18px 0" />
-
-        <h3 style="margin: 0 0 6px">Alert testing</h3>
-        <p class="admin-muted" style="margin: 0 0 10px">
-          Trigger realistic Discord test alerts from DB-backed sample data. Choose the base item, then the exact
-          variant (mode and optional image filter), then which alert types to send.
-        </p>
-
-        <div class="admin-appconfig-row">
-          <label class="admin-appconfig-k" for="adminAlertTestItemSelect">Item</label>
-          <div>
-            <select id="adminAlertTestItemSelect" class="admin-appconfig-input" disabled>
-              <option value="">Loading items…</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="admin-appconfig-row">
-          <label class="admin-appconfig-k" for="adminAlertTestVariantSelect">Variant</label>
-          <div>
-            <select id="adminAlertTestVariantSelect" class="admin-appconfig-input" disabled>
-              <option value="">Select an item first…</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="admin-appconfig-row">
-          <span class="admin-appconfig-k">Alert types</span>
-          <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center">
-            <label class="admin-muted" style="display: inline-flex; gap: 6px; align-items: center">
-              <input id="adminAlertTypeSales" type="checkbox" checked /> Sales
-            </label>
-            <label class="admin-muted" style="display: inline-flex; gap: 6px; align-items: center">
-              <input id="adminAlertTypeSnipe" type="checkbox" checked /> Snipes/alerts
-            </label>
-            <label class="admin-muted" style="display: inline-flex; gap: 6px; align-items: center">
-              <input id="adminAlertTypeReprice" type="checkbox" checked /> Reprices
-            </label>
-            <label class="admin-muted" style="display: inline-flex; gap: 6px; align-items: center">
-              <input id="adminAlertTypeNewItems" type="checkbox" /> New-items channel
-            </label>
-          </div>
-        </div>
-
-        <div class="admin-appconfig-row">
-          <span class="admin-appconfig-k">Preview</span>
-          <p id="adminAlertTestPreview" class="admin-muted" style="margin: 0">Select item and variant.</p>
-        </div>
-
-        <div class="admin-appconfig-actions">
-          <button id="adminAlertTestSendBtn" class="admin-btn" type="button" disabled>
-            Send test alerts
-          </button>
-          <span id="adminAlertTestHint" class="admin-muted" aria-live="polite"></span>
-        </div>
-      </div>
-    </section>
-
-    <footer class="admin-footer">
-      <p class="admin-muted">
-        Authentication uses <code>ADMIN_TOKEN</code> from the server environment (e.g. GitHub Actions secret
-        <code>ADMIN_TOKEN</code> written to the VPS on deploy). Open
-        <code>/admin?token=…</code> <strong>once</strong> with that value; the server sets an HttpOnly cookie so you
-        can use <code>/admin</code> afterward. There is no token field on this page.
-      </p>
-    </footer>
+        </section>
+      </main>
+    </div>
   </body>
 </html>

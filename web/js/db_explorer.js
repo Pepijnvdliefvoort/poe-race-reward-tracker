@@ -1,3 +1,7 @@
+import { setupMacWindow } from "./core/macWindow.js";
+
+setupMacWindow();
+
 const fetchOpts = { credentials: "same-origin" };
 
 async function fetchJson(path, init) {
