@@ -42,6 +42,7 @@ _poller_log_lock = threading.Lock()
 ADMIN_LOG_DEFAULT_LIMIT = 20_000
 ADMIN_LOG_MAX_LIMIT = 20_000
 ADMIN_LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024  # 16 MiB tail window for snapshots
+ADMIN_LOG_PAGE_CHUNK_BYTES = 1024 * 1024  # read size per step when paging back through a log
 
 _DEFAULT_SYSTEMD_POLLER_SERVICE = "poe-market-poller"
 
@@ -444,11 +445,12 @@ def tail_log_file(path: Path, max_bytes: int = 262_144) -> str:
         return ""
 
 
-def _read_log_tail(path: Path, max_bytes: int) -> tuple[str, int]:
+def _read_log_tail(path: Path, max_bytes: int) -> tuple[str, int, int]:
     """
     Read the last `max_bytes` of a log as complete lines.
-    Returns (text, end_offset): a partial first line is dropped, and a half-written last line is
-    left for the next incremental read (end_offset points just past the last newline).
+    Returns (text, end_offset, start_offset): a partial first line is dropped, and a half-written
+    last line is left for the next incremental read (end_offset points just past the last newline).
+    start_offset is the file offset where `text` begins.
     """
     try:
         with path.open("rb") as fh:
@@ -458,11 +460,42 @@ def _read_log_tail(path: Path, max_bytes: int) -> tuple[str, int]:
             fh.seek(start)
             data = fh.read(size - start)
     except OSError:
-        return "", 0
+        return "", 0, 0
     end = data.rfind(b"\n") + 1
     first = data.find(b"\n") + 1 if start > 0 else 0
     first = min(first, end)
-    return data[first:end].decode("utf-8", errors="replace"), start + end
+    return data[first:end].decode("utf-8", errors="replace"), start + end, start + first
+
+
+def read_log_lines_before(path: Path, before: int, max_bytes: int) -> tuple[list[tuple[int, str]], int]:
+    """
+    Read the complete lines that end at or before file offset `before` (a line start), at most
+    about `max_bytes` back. Returns ([(line_offset, line), ...] oldest first, start_offset), where
+    start_offset is where the returned lines begin (0 once the start of the file is reached).
+    """
+    if before <= 0 or not path.exists():
+        return [], 0
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            before = min(before, fh.tell())
+            start = max(0, before - max_bytes)
+            fh.seek(start)
+            data = fh.read(before - start)
+    except OSError:
+        return [], 0
+    first = 0
+    if start > 0:
+        first = data.find(b"\n") + 1
+        if first == 0:
+            return [], start  # one line longer than max_bytes; skip past it
+    out: list[tuple[int, str]] = []
+    off = start + first
+    for chunk in data[first:].split(b"\n"):
+        if chunk:
+            out.append((off, chunk.decode("utf-8", errors="replace")))
+        off += len(chunk) + 1
+    return out, start + first
 
 
 def read_log_file_since(path: Path, cursor: int, max_bytes: int = 262_144) -> tuple[str, int, bool]:
@@ -565,6 +598,7 @@ def query_log_entries(
     cursor: int | None = None,
     include_counts: bool = True,
     since: str = "session",
+    before: int | None = None,
 ) -> dict[str, Any]:
     """
     Return structured log entries + level counts for the tailed window.
@@ -575,6 +609,11 @@ def query_log_entries(
     Snapshots only json-parse the lines they return (counts and session detection work on the
     raw lines), so opening a large poller.log stays fast. Deltas (`cursor` given) return
     `deltaCounts` for the new lines so the UI can keep its counts current without a recount.
+
+    Snapshots also return `before`: the file offset of the oldest line in their contiguous tail,
+    and `detached`: how many leading entries (kept warnings/errors) are older than that. Older
+    pages (`before` given) return the newest `limit` matching lines that start before that offset,
+    across sessions, plus the next `before` (0 once the start of the file is reached).
     """
     wanted = (level or "all").strip().lower()
     if wanted == "warn":
@@ -599,6 +638,24 @@ def query_log_entries(
     limit = max(1, min(int(limit or ADMIN_LOG_DEFAULT_LIMIT), ADMIN_LOG_MAX_LIMIT))
     since_mode = (since or "session").strip().lower()
 
+    # Raw lines are JSON-escaped, so a substring prefilter is only safe for queries without escapes.
+    level_prefilter = wanted if wanted != "all" else ""
+    query_prefilter = query if query and '"' not in query and "\\" not in query else ""
+
+    def parse_match(line: str, lvl: str) -> dict[str, Any] | None:
+        """json-parse a raw line only when its level and text can match the filters."""
+        if level_prefilter and ("warning" if lvl == "warn" else lvl) != level_prefilter:
+            return None
+        if query_prefilter and query_prefilter not in line.lower():
+            return None
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(row, dict) or not include(row):
+            return None
+        return row
+
     # Incremental read (only new complete lines).
     if cursor is not None:
         delta_text, file_cursor, more = read_log_file_since(path, cursor)
@@ -617,11 +674,42 @@ def query_log_entries(
             "since": since_mode,
         }
 
+    # Older page: walk back from `before` in chunks until `limit` lines match or the scan budget
+    # is spent. The returned `before` only moves past lines that were actually examined.
+    if before is not None:
+        next_before = max(0, int(before))
+        picked: list[dict[str, Any]] = []  # newest first
+        scanned = 0
+        while next_before > 0 and len(picked) < limit and scanned < max_bytes:
+            lines_before, chunk_start = read_log_lines_before(path, next_before, ADMIN_LOG_PAGE_CHUNK_BYTES)
+            scanned += max(1, next_before - chunk_start)
+            stop_at: int | None = None
+            for off, line in reversed(lines_before):
+                lvl = _raw_log_level(line)
+                if lvl is None:
+                    continue
+                row = parse_match(line, lvl)
+                if row is None:
+                    continue
+                picked.append(row)
+                if len(picked) >= limit:
+                    stop_at = off
+                    break
+            next_before = stop_at if stop_at is not None else chunk_start
+        return {
+            "format": "jsonl",
+            "counts": None,
+            "entries": picked[::-1],
+            "limit": limit,
+            "before": next_before,
+            "older": True,
+        }
+
     # Snapshot.
     if not path.exists():
-        raw, file_cursor = "", 0
+        raw, file_cursor, raw_start = "", 0, 0
     else:
-        raw, file_cursor = _read_log_tail(path, max_bytes)
+        raw, file_cursor, raw_start = _read_log_tail(path, max_bytes)
     if "{" not in raw:
         return {
             "format": "text",
@@ -632,16 +720,16 @@ def query_log_entries(
         }
 
     if since_mode == "session":
-        raw = raw[_session_start_offset(raw) :]
+        skip = _session_start_offset(raw)
+        raw_start += len(raw[:skip].encode("utf-8"))
+        raw = raw[skip:]
 
     counts = _count_log_levels(raw) if include_counts else None
-    lines = raw.splitlines()
+    # Split on "\n" only (not splitlines) so line positions map back to file offsets.
+    lines = raw.split("\n")
 
     # Walk back from the newest line: keep every matching warning/error plus the newest matching
     # routine lines, and json-parse only lines that can end up in the result.
-    level_prefilter = wanted if wanted != "all" else ""
-    # Raw lines are JSON-escaped, so a substring prefilter is only safe for queries without escapes.
-    query_prefilter = query if query and '"' not in query and "\\" not in query else ""
     important: list[tuple[int, dict[str, Any]]] = []
     routine: list[tuple[int, dict[str, Any]]] = []
     for pos in range(len(lines) - 1, -1, -1):
@@ -652,24 +740,29 @@ def query_log_entries(
         is_important = lvl in _IMPORTANT_LOG_LEVELS
         if not is_important and len(routine) >= limit:
             continue
-        if level_prefilter and ("warning" if lvl == "warn" else lvl) != level_prefilter:
-            continue
-        if query_prefilter and query_prefilter not in line.lower():
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(row, dict) or not include(row):
+        row = parse_match(line, lvl)
+        if row is None:
             continue
         (important if is_important else routine).append((pos, row))
 
     # Trim routine lines so warnings/errors survive; if warnings alone fill the limit, fall back
     # to simply the newest lines so the console always shows what just happened.
     max_routine = limit - len(important)
+    routine_cut = len(routine) >= limit or (max_routine > 0 and len(routine) > max_routine)
     if max_routine > 0:
         routine = routine[:max_routine]
     merged = sorted(important + routine, key=lambda pr: pr[0])[-limit:]
+
+    # Paging back continues from the oldest line of the contiguous tail. Warnings/errors kept from
+    # before it are "detached": the UI drops them once it loads that stretch in order.
+    if max_routine > 0 and routine_cut and routine:
+        tail_pos = routine[-1][0]
+    elif max_routine <= 0 and merged:
+        tail_pos = merged[0][0]
+    else:
+        tail_pos = 0
+    detached = sum(1 for pos, _ in merged if pos < tail_pos)
+    tail_offset = raw_start + (len("\n".join(lines[:tail_pos]).encode("utf-8")) + 1 if tail_pos else 0)
 
     return {
         "format": "jsonl",
@@ -679,6 +772,8 @@ def query_log_entries(
         "cursor": file_cursor,
         "delta": False,
         "since": since_mode,
+        "before": tail_offset,
+        "detached": detached,
     }
 
 

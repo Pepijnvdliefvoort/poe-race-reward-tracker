@@ -1114,6 +1114,7 @@ input[type="checkbox"] {
 .log-line--warn { color: #ffb84d; }
 .log-line--error { color: #ff6961; }
 .log-line--muted { color: #6e6e73; font-style: italic; }
+.log-top-marker { cursor: pointer; }
 
 .mac-log-jump {
   position: absolute;
