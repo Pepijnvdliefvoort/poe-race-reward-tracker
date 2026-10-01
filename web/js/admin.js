@@ -389,9 +389,13 @@ function setupPanes() {
 
 // ---- logs ------------------------------------------------------------------------------------
 
-// Lines kept per console. Each refresh only appends the new lines to the DOM and drops the oldest
-// past this cap, so a long session stays cheap (the old viewer rebuilt up to 20k lines every 2.5s).
+// Lines per console snapshot. Each refresh only appends the new lines to the DOM; once a following
+// console grows well past this it reloads a fresh snapshot, so a long session stays cheap.
 const LOG_MAX_LINES = 3000;
+// Scrolling to the top loads older lines (past cycles and sessions) a page at a time, up to a cap.
+const LOG_PAGE_LINES = 1500;
+const LOG_HISTORY_MAX_LINES = 40000;
+const LOG_LOAD_OLDER_PX = 300;
 const LOG_POLL_MS = 1500;
 const LOG_VIEW_STORAGE_KEY = "admin.logs.view.v2";
 const LOG_FOLLOW_STORAGE_KEY = "admin.logs.follow.v2";
@@ -428,6 +432,11 @@ class LogViewer {
     this.lineCount = 0;
     this.placeholder = false;
     this.follow = true;
+    this.before = null; // file offset to page back from (0 = start of the log reached)
+    this.detached = 0; // leading warnings/errors from before the snapshot's contiguous tail
+    this.loadingOlder = false;
+    this.generation = 0; // bumped on each snapshot so stale older pages are dropped
+    this.onNeedOlder = null;
     this.pills = {};
     this._setupToolbar();
     this._setupJump();
@@ -539,9 +548,14 @@ class LogViewer {
       "scroll",
       () => {
         if (this.isNearBottom()) this.jumpBtn.hidden = true;
+        if (this.canLoadOlder() && this.preEl.scrollTop < LOG_LOAD_OLDER_PX) this.onNeedOlder?.(this);
       },
       { passive: true },
     );
+    // A short console cannot scroll, so the top marker also loads older lines on click.
+    this.preEl.addEventListener("click", (e) => {
+      if (e.target.closest?.(".log-top-marker") && this.canLoadOlder()) this.onNeedOlder?.(this);
+    });
   }
 
   _syncPressed() {
@@ -574,7 +588,34 @@ class LogViewer {
     this.cursor = null;
     this._filterKey = "";
     this.lineCount = 0;
+    this.before = null;
+    this.detached = 0;
+    this.generation += 1;
     if (this.preEl) this.preEl.textContent = "";
+  }
+
+  canLoadOlder() {
+    return !this.loadingOlder && this.before > 0 && this.lineCount < LOG_HISTORY_MAX_LINES;
+  }
+
+  _mutedLine(text, cls = "") {
+    const span = document.createElement("span");
+    span.className = `log-line--muted ${cls}`.trim();
+    span.textContent = `${text}\n`;
+    return span;
+  }
+
+  // Marks the top of the console: where older lines load, or the start of the log file.
+  _syncTopMarker() {
+    if (!this.preEl) return;
+    this.preEl.querySelector(":scope > .log-top-marker")?.remove();
+    if (this.before == null) return;
+    let text = "";
+    if (this.before === 0) text = `— start of ${this.name}.log —`;
+    else if (this.lineCount >= LOG_HISTORY_MAX_LINES) text = "— history limit reached; use the filter to narrow it down —";
+    else if (this.loadingOlder) text = this.query.trim() ? "Searching earlier lines…" : "Loading earlier lines…";
+    else text = "↑ Scroll up (or click here) for earlier lines";
+    this.preEl.insertBefore(this._mutedLine(text, "log-top-marker"), this.preEl.firstChild);
   }
 
   _fragment(entries) {
@@ -605,21 +646,56 @@ class LogViewer {
     return frag;
   }
 
-  setEntries(entries) {
+  setEntries(entries, { before = null, detached = 0 } = {}) {
     if (!this.preEl) return;
     const list = Array.isArray(entries) ? entries.slice(-LOG_MAX_LINES) : [];
+    this.generation += 1;
+    this.loadingOlder = false;
+    this.before = Number.isFinite(before) ? before : null;
+    this.detached = Number.isFinite(detached) ? Math.max(0, Math.min(detached, list.length)) : 0;
     this.preEl.textContent = "";
     this.lineCount = list.length;
     this.placeholder = list.length === 0;
     if (this.placeholder) {
-      const span = document.createElement("span");
-      span.className = "log-line--muted";
-      span.textContent = "(no matching lines)\n";
-      this.preEl.appendChild(span);
+      this.preEl.appendChild(this._mutedLine("(no matching lines)"));
     } else {
       this.preEl.appendChild(this._fragment(list));
+      if (this.detached) {
+        // Warnings/errors kept from earlier in the session; they reload in order with older lines.
+        const gap = this._mutedLine("··· earlier lines hidden, scroll up to load them ···", "log-gap");
+        this.preEl.insertBefore(gap, this.preEl.children[this.detached] || null);
+      }
     }
+    this._syncTopMarker();
     if (this.follow) this.scrollToBottom();
+  }
+
+  // Inserts an older page above the current lines without moving what is on screen.
+  prependEntries(entries, before) {
+    if (!this.preEl) return;
+    const el = this.preEl;
+    const prevHeight = el.scrollHeight;
+    const prevTop = el.scrollTop;
+    el.querySelector(":scope > .log-top-marker")?.remove();
+    if (this.detached) {
+      // The older page covers the detached lines too, so drop them (and the gap marker).
+      for (let i = 0; i < this.detached && el.firstChild; i += 1) el.removeChild(el.firstChild);
+      el.querySelector(":scope > .log-gap")?.remove();
+      this.lineCount -= this.detached;
+      this.detached = 0;
+    }
+    if (Array.isArray(entries) && entries.length) {
+      if (this.placeholder) {
+        el.textContent = "";
+        this.lineCount = 0;
+        this.placeholder = false;
+      }
+      el.insertBefore(this._fragment(entries), el.firstChild);
+      this.lineCount += entries.length;
+    }
+    this.before = Number.isFinite(before) ? before : 0;
+    this._syncTopMarker();
+    el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
   }
 
   appendEntries(entries) {
@@ -632,9 +708,10 @@ class LogViewer {
     }
     this.preEl.appendChild(this._fragment(entries));
     this.lineCount += entries.length;
-    while (this.lineCount > LOG_MAX_LINES && this.preEl.firstChild) {
-      this.preEl.removeChild(this.preEl.firstChild);
-      this.lineCount -= 1;
+    // Trimming the top would break paging back, so a console following the bottom swaps in a
+    // fresh snapshot instead; one scrolled up into history keeps its lines while it is read.
+    if ((stick && this.lineCount > LOG_MAX_LINES * 1.5) || this.lineCount > LOG_HISTORY_MAX_LINES + LOG_MAX_LINES) {
+      this.needsSnapshot = true;
     }
     if (stick) this.scrollToBottom();
     else if (this.jumpBtn) this.jumpBtn.hidden = false;
@@ -710,8 +787,45 @@ async function refreshLogStream(viewer) {
     if (payload.sessionRestarted) viewer.needsSnapshot = true; // new session: counts/lines start over
     if (payload.sessionRestarted || payload.more) logRefreshQueued = true;
   } else {
-    viewer.setEntries(payload.entries);
+    viewer.setEntries(payload.entries, { before: payload.before, detached: payload.detached });
     if (payload.counts) viewer.setCounts(payload.counts);
+    // A filter with few matches in this session leaves nothing to scroll, so keep searching
+    // earlier lines until the console fills up or the start of the log is reached.
+    const el = viewer.preEl;
+    if (el && el.scrollHeight - el.clientHeight < LOG_LOAD_OLDER_PX) void loadOlderLogs(viewer);
+  }
+}
+
+async function loadOlderLogs(viewer) {
+  if (!viewer.canLoadOlder()) return;
+  const generation = viewer.generation;
+  const filterKey = viewer.filterKey;
+  viewer.loadingOlder = true;
+  viewer._syncTopMarker();
+  try {
+    const params = new URLSearchParams({
+      stream: viewer.name,
+      format: "json",
+      level: viewer.level,
+      q: viewer.query,
+      limit: String(LOG_PAGE_LINES),
+      before: String(viewer.before),
+    });
+    const payload = await fetchJson(`/api/admin/logs?${params.toString()}`);
+    if (viewer.generation !== generation || viewer.filterKey !== filterKey || payload?.format !== "jsonl") return;
+    viewer.loadingOlder = false;
+    viewer.prependEntries(payload.entries, payload.before);
+  } catch (e) {
+    if (viewer.generation === generation) toast(adminEndpointErrorMessage(e, "Logs"), { kind: "error" });
+  } finally {
+    if (viewer.generation === generation) {
+      viewer.loadingOlder = false;
+      viewer._syncTopMarker();
+      // Still at the top (e.g. a page with few filter matches): keep going.
+      if (viewer.canLoadOlder() && viewer.preEl.scrollTop < LOG_LOAD_OLDER_PX) {
+        requestAnimationFrame(() => void loadOlderLogs(viewer));
+      }
+    }
   }
 }
 
@@ -767,6 +881,8 @@ function setupLogsWindow() {
     paneEl: document.getElementById("pollerConsolePane"),
     onFilterChange: requestLogRefresh,
   });
+  serverLogViewer.onNeedOlder = loadOlderLogs;
+  pollerLogViewer.onNeedOlder = loadOlderLogs;
 
   const viewButtons = Array.from(document.querySelectorAll("[data-log-view]"));
   const setView = (view) => {

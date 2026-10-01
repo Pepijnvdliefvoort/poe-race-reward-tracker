@@ -918,6 +918,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             cursor = int(cursor_raw)
                         except ValueError:
                             cursor = None
+                    before = None
+                    before_raw = params.get("before", [None])[0]
+                    if before_raw is not None:
+                        try:
+                            before = max(0, int(before_raw))
+                        except ValueError:
+                            before = None
                     include_counts = str(counts_raw).strip() not in {"0", "false", "no"}
                     payload = query_log_entries(
                         log_path,
@@ -927,6 +934,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         cursor=cursor,
                         include_counts=include_counts,
                         since=since,
+                        before=before,
                     )
                     body = json.dumps(payload, allow_nan=False).encode("utf-8")
                     self._send_json_body(200, body)
