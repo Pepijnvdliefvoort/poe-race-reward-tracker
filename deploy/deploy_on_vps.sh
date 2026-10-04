@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Deploy script run on the VPS (see .github/workflows/deploy-vps.yml).
+# The poller restart is deferred to the end of its current cycle unless FORCE_POLLER_RESTART=1.
 # Expects repo at APP_DIR with:
 #   - Dashboard: python -m server.server (WorkingDirectory=APP_DIR; static files from web/)
 #   - Poller:    python -m poller (package under poller/)
@@ -17,7 +18,9 @@ fi
 cd "$APP_DIR"
 
 echo "[1/7] Pull latest code"
+PREV_HEAD="$(git rev-parse HEAD)"
 git pull --ff-only
+NEW_HEAD="$(git rev-parse --short HEAD)"
 
 echo "[2/7] Install/update Python dependencies"
 .venv/bin/pip install -r requirements.txt
@@ -71,12 +74,36 @@ cp deploy/systemd/poe-market-poller.service /etc/systemd/system/
 systemctl daemon-reload
 grep '^ExecStart=' /etc/systemd/system/poe-market-server.service | head -n1 || true
 
-echo "[5/7] Restart app services (stop, brief wait, start — avoids stuck workers)"
+echo "[5/7] Restart dashboard (stop, brief wait, start — avoids stuck workers)"
 systemctl stop poe-market-server || true
-systemctl stop poe-market-poller || true
 sleep 2
 systemctl start poe-market-server
-systemctl start poe-market-poller
+
+# The poller restarts itself after its current cycle when it finds this flag (poller/deploy_restart.py).
+# Restart it now instead when forced, when it isn't running, or when storage/ changed (the dashboard
+# just ran any new migrations, so the old poller code shouldn't keep writing to the DB).
+POLLER_RESTART_FLAG="/var/lib/poe-market-flips/poller-restart-requested"
+mkdir -p "$(dirname "$POLLER_RESTART_FLAG")"
+POLLER_RESTART_REASON=""
+if [ "${FORCE_POLLER_RESTART:-}" = "1" ] || [ "${FORCE_POLLER_RESTART:-}" = "true" ]; then
+  POLLER_RESTART_REASON="forced"
+elif ! systemctl is-active --quiet poe-market-poller; then
+  POLLER_RESTART_REASON="not running"
+elif ! git cat-file -e "$PREV_HEAD:poller/deploy_restart.py" 2>/dev/null; then
+  POLLER_RESTART_REASON="running poller predates deferred restarts"
+elif ! git diff --quiet "$PREV_HEAD" HEAD -- storage/schema.py storage/db.py; then
+  POLLER_RESTART_REASON="storage schema/migrations changed"
+fi
+if [ -n "$POLLER_RESTART_REASON" ]; then
+  echo "Restarting poller now ($POLLER_RESTART_REASON)"
+  rm -f "$POLLER_RESTART_FLAG"
+  systemctl stop poe-market-poller || true
+  sleep 2
+  systemctl start poe-market-poller
+else
+  printf '%s\n' "$NEW_HEAD" > "$POLLER_RESTART_FLAG"
+  echo "Poller restart deferred until its current cycle finishes ($POLLER_RESTART_FLAG)"
+fi
 
 echo "[6/7] Install ops health probe cron"
 mkdir -p /var/lib/poe-market-flips
