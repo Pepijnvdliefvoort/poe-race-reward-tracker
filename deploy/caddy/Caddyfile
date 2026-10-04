@@ -1,5 +1,5 @@
-# Replace with your own hostname (recommended) or PUBLIC_IP.sslip.io.
-178.104.113.149.sslip.io {
+# Canonical site. Caddy issues the Let's Encrypt certificate automatically once DNS points here.
+poeracerewards.com {
     encode zstd gzip
     header {
         X-Content-Type-Options "nosniff"
@@ -36,4 +36,9 @@
 
     # Everything else (HTML + API) goes to the app.
     reverse_proxy 127.0.0.1:8080
+}
+
+# www and the old sslip.io hostname permanently redirect to the canonical domain.
+www.poeracerewards.com, 178.104.113.149.sslip.io {
+    redir https://poeracerewards.com{uri} permanent
 }
