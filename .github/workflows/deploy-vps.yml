@@ -34,8 +34,10 @@ jobs:
       DISCORD_WEBHOOK_URL_DAILY_SUMMARY: ${{ secrets.DISCORD_WEBHOOK_URL_DAILY_SUMMARY }}
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
       # Poller normally restarts after its current cycle; force it via the dispatch input or
-      # "[restart-poller]" in any pushed commit message.
-      FORCE_POLLER_RESTART: ${{ (inputs.restart_poller_now || contains(join(github.event.commits.*.message, ' '), '[restart-poller]')) && '1' || '0' }}
+      # "[restart-poller]" in the pushed head commit's message (for a PR merge, put it in the PR title).
+      # Only the head commit: a release push carries every develop commit, and their bodies may
+      # mention the marker without meaning it.
+      FORCE_POLLER_RESTART: ${{ (inputs.restart_poller_now || contains(github.event.head_commit.message, '[restart-poller]')) && '1' || '0' }}
     steps:
       - name: Run deploy script over SSH
         uses: appleboy/ssh-action@v1.2.0
