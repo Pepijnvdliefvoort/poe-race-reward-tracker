@@ -639,6 +639,33 @@ a.mac-nav-item[aria-current="page"] {
   font-size: 12px;
 }
 
+/* Inline status next to a row label, e.g. a poller restart waiting on a deploy. */
+.mac-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+  font-size: 11.5px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.mac-status-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.mac-status-badge[hidden] {
+  display: none;
+}
+
 .mac-row-value,
 .mac-kv .admin-appconfig-v {
   margin: 0;
