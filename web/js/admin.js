@@ -339,6 +339,7 @@ function onPaneShown(name) {
     [serverLogViewer, pollerLogViewer].forEach((v) => v?.follow && v.scrollToBottom());
   } else if (name === "overview") {
     void refreshStats();
+    void refreshPollerStatus();
   } else if (name === "visitors") {
     void refreshVisitors();
     // Leaflet measures its container; it was hidden until now.
@@ -2380,6 +2381,7 @@ function setupRestartPoller() {
       setHint(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
       toast(pid ? `Poller restarted (pid ${pid}).` : "Poller restart triggered.");
       pollerLogViewer?.reset();
+      window.setTimeout(() => void refreshPollerStatus(), 5000); // the new poller clears a pending deploy flag
     } catch (e) {
       setHint(adminEndpointErrorMessage(e, "Restart poller"), true);
       toast(adminEndpointErrorMessage(e, "Restart poller"), { kind: "error" });
@@ -2387,6 +2389,24 @@ function setupRestartPoller() {
       btn.disabled = false;
     }
   });
+}
+
+// Deploys defer the poller restart to the end of its current cycle; show when one is waiting.
+async function refreshPollerStatus() {
+  const badge = document.getElementById("pollerRestartBadge");
+  if (!badge) return;
+  try {
+    const payload = await fetchJson("/api/admin/poller-status");
+    const pending = Boolean(payload?.restart_pending);
+    badge.hidden = !pending;
+    if (!pending) return;
+    const commit = payload.deployed_commit ? String(payload.deployed_commit) : "";
+    badge.textContent = commit ? `Restart pending · ${commit}` : "Restart pending";
+    const when = formatWhen(payload.requested_at_utc);
+    badge.title = `Deploy${commit ? ` ${commit}` : ""} requested ${when.text}. The poller restarts after its current cycle.`;
+  } catch {
+    // Keep the last known state; the stats hint already reports admin endpoint errors.
+  }
 }
 
 function setupStopPoller() {
@@ -2464,6 +2484,7 @@ function main() {
   setupPanes();
   window.setInterval(refreshLogs, LOG_POLL_MS);
   window.setInterval(() => isPaneLive("overview") && void refreshStats(), 10000);
+  window.setInterval(() => isPaneLive("overview") && void refreshPollerStatus(), 15000);
   window.setInterval(() => isPaneLive("visitors") && void refreshVisitors(), 60000);
 }
 
