@@ -204,7 +204,7 @@ Paste the contents of `vps_deploy_key` (private key) into `VPS_SSH_KEY` in GitHu
 - On every push to `main` or `master`, GitHub Actions connects to your VPS over SSH.
 	- It runs `deploy/deploy_on_vps.sh`, which pulls latest code, installs dependencies, writes `/etc/poe-market-flips/secrets.env` from `DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL_SALES` / `DISCORD_WEBHOOK_URL_REPRICES` / `DISCORD_WEBHOOK_URL_NEW_ITEMS` / `DISCORD_WEBHOOK_URL_BANS` / `DISCORD_WEBHOOK_URL_DB_EXPORT` / `DISCORD_WEBHOOK_URL_OPS` / `DISCORD_WEBHOOK_URL_DAILY_SUMMARY` (if provided), restarts the dashboard, and reloads Caddy.
 	- The poller is not restarted mid-poll. The deploy writes `/var/lib/poe-market-flips/poller-restart-requested`; when the poller's current cycle finishes it removes that file, posts a short note to the ops webhook, and exits so systemd starts it on the new code.
-	- It restarts immediately instead when the poller isn't running, when `storage/schema.py` or `storage/db.py` changed (new migrations), when any pushed commit message contains `[restart-poller]`, or when you run the workflow manually with **restart_poller_now** checked.
+	- It restarts immediately instead when the poller isn't running, when `storage/schema.py` or `storage/db.py` changed (new migrations), when the pushed head commit's message contains `[restart-poller]` (for a PR merge, put it in the PR title), or when you run the workflow manually with **restart_poller_now** checked.
 
 `config.json` is intentionally untracked. Keep a server-local copy at `/opt/poe-market-flips/config.json` (for example by copying `config.example.json` once and editing values).
 
