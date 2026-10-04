@@ -59,6 +59,7 @@ from storage.service import StorageService
 from .stats_service import system_stats_payload
 from server.storage_service import ServerStorage
 from poller.db_export import DbExportConfig, export_db_to_discord_now
+from poller.deploy_restart import peek_restart_request
 
 _ADMIN_UNAUTHORIZED_HTML = WEB_DIR / "admin-unauthorized.html"
 _ERROR_HTML = WEB_DIR / "error.html"
@@ -850,6 +851,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 except Exception:
                     pass
                 payload = {"ok": True, "key": str(row["key"]), "value_json": raw, "updated_at_utc": str(row["updated_at_utc"] or "")}
+                body = json.dumps(payload, allow_nan=False).encode("utf-8")
+                self._send_json_body(200, body)
+                return
+
+            if req_path == "/api/admin/poller-status":
+                # A deploy flag means the poller restarts once its current cycle finishes.
+                pending = peek_restart_request()
+                payload = {
+                    "ok": True,
+                    "restart_pending": pending is not None,
+                    "deployed_commit": (pending or {}).get("commit") or None,
+                    "requested_at_utc": (pending or {}).get("requested_at_utc"),
+                }
                 body = json.dumps(payload, allow_nan=False).encode("utf-8")
                 self._send_json_body(200, body)
                 return

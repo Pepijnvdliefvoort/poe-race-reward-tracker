@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from poller import deploy_restart
-from poller.deploy_restart import consume_restart_request, restart_flag_path
+from poller.deploy_restart import consume_restart_request, peek_restart_request, restart_flag_path
 
 
 class ConsumeRestartRequestTests(unittest.TestCase):
@@ -41,6 +41,23 @@ class ConsumeRestartRequestTests(unittest.TestCase):
             self.assertEqual(restart_flag_path(), Path("/tmp/x-flag"))
         with mock.patch.dict(os.environ, {deploy_restart.RESTART_FLAG_ENV: ""}):
             self.assertEqual(restart_flag_path(), Path(deploy_restart.DEFAULT_RESTART_FLAG_PATH))
+
+
+class PeekRestartRequestTests(unittest.TestCase):
+    def test_missing_flag_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(peek_restart_request(Path(tmp) / "flag"))
+
+    def test_peek_reports_commit_and_keeps_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            flag = Path(tmp) / "flag"
+            flag.write_text("abc1234\n", encoding="utf-8")
+            info = peek_restart_request(flag)
+            self.assertIsNotNone(info)
+            assert info is not None
+            self.assertEqual(info["commit"], "abc1234")
+            self.assertTrue(info["requested_at_utc"].endswith("Z"))
+            self.assertTrue(flag.exists())
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@
       } catch (e) {}
     </script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
-    <link rel="stylesheet" href="/css/admin-mac.css?v=20261001-1" />
+    <link rel="stylesheet" href="/css/admin-mac.css?v=20261004-1" />
     <link rel="apple-touch-icon" href="/assets/icons/FairgravesTricorneAlt.png" />
     <link rel="icon" type="image/png" href="/assets/icons/FairgravesTricorneAlt.png" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -121,7 +121,7 @@
           <div class="mac-group">
             <div class="mac-row">
               <div>
-                <p class="mac-row-label">Poller process</p>
+                <p class="mac-row-label">Poller process <span id="pollerRestartBadge" class="mac-status-badge" hidden>Restart pending</span></p>
                 <p id="adminPollerHint" class="admin-muted mac-row-sub" aria-live="polite">Stop pauses polling until it is restarted.</p>
               </div>
               <div class="mac-row-actions">

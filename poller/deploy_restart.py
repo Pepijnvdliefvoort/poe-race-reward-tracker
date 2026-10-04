@@ -7,6 +7,7 @@ consumes it between cycles and exits cleanly; systemd (Restart=always) starts it
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_RESTART_FLAG_PATH = "/var/lib/poe-market-flips/poller-restart-requested"
@@ -35,3 +36,15 @@ def consume_restart_request(path: Path | None = None) -> str | None:
         # Can't clear it: don't report a request, or the poller would exit after every cycle.
         return None
     return content
+
+
+def peek_restart_request(path: Path | None = None) -> dict[str, str] | None:
+    """Describe a pending restart without consuming it (for the admin panel); None if absent."""
+    flag = path or restart_flag_path()
+    try:
+        stat = flag.stat()
+        content = flag.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    requested_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    return {"commit": content, "requested_at_utc": requested_at}
