@@ -44,6 +44,7 @@ from storage.service import StorageService, VariantSpec
 from .weekly_summary import WeeklySummaryConfig, maybe_send_weekly_summary_to_discord
 from .db_export import DbExportConfig, maybe_export_db_to_discord
 from .ml_retrain import MlRetrainConfig, maybe_run_weekly_ml_retrain
+from .deploy_restart import consume_restart_request, restart_flag_path
 
 BASE_URL = "https://www.pathofexile.com/api/trade"
 DEFAULT_LEAGUE = "Standard"
@@ -567,6 +568,7 @@ def send_ops_alert(
     title: str,
     details: str,
     severity: str,
+    mention: bool = True,
 ) -> None:
     if not webhook_url:
         return
@@ -581,11 +583,12 @@ def send_ops_alert(
         "description": details,
         "color": color,
     }
-    payload = {
-        "content": f"<@&{OPS_DISCORD_ROLE_ID}>",
-        "allowed_mentions": {"parse": [], "roles": [OPS_DISCORD_ROLE_ID]},
+    payload: dict[str, Any] = {
+        "allowed_mentions": {"parse": [], "roles": [OPS_DISCORD_ROLE_ID] if mention else []},
         "embeds": [embed],
     }
+    if mention:
+        payload["content"] = f"<@&{OPS_DISCORD_ROLE_ID}>"
     response = session.post(webhook_url, json=payload, timeout=10.0)
     response.raise_for_status()
 
@@ -3546,6 +3549,9 @@ def main() -> None:
         log_line("cycle", f"Polling every {cfg.poll_interval} seconds (sleep-after-cycle). Press Ctrl+C to stop.")
     else:
         log_line("cycle", "Polling back-to-back with no delay. Press Ctrl+C to stop.")
+    # A fresh process already runs the latest code, so a leftover deploy flag is stale.
+    if consume_restart_request() is not None:
+        log_line("cycle", f"Cleared stale deploy restart flag ({restart_flag_path()}); already on latest code.")
     # Persist cycle numbers across restarts so DB time series accumulates points.
     cycle = storage.latest_cycle_number(league=DEFAULT_LEAGUE)
     cycles_done = 0
@@ -3837,6 +3843,30 @@ def main() -> None:
 
         if cfg.max_cycles is not None and cycles_done >= cfg.max_cycles:
             log_line("cycle", f"Reached max-cycles ({cfg.max_cycles}). Stopping.")
+            break
+
+        # Deploys defer the poller restart to here (see deploy/deploy_on_vps.sh): exit cleanly
+        # and let systemd (Restart=always) start the new code.
+        deployed_commit = consume_restart_request()
+        if deployed_commit is not None:
+            duration_text = format_duration_hhmm(time.monotonic() - cycle_started_monotonic)
+            commit_text = deployed_commit or "unknown commit"
+            log_line(
+                "cycle",
+                f"Cycle {cycle} complete in {duration_text}. Deploy pending ({commit_text}); exiting for restart.",
+            )
+            if ops_health_cfg.enabled and ops_health_cfg.webhook_url:
+                try:
+                    send_ops_alert(
+                        session,
+                        ops_health_cfg.webhook_url,
+                        title="Poller restarting for deploy",
+                        details=f"Cycle {cycle} finished; restarting on {commit_text}.",
+                        severity="info",
+                        mention=False,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log_line("warn", f"Failed ops Discord webhook (deploy restart): {exc}")
             break
 
         duration_text = format_duration_hhmm(time.monotonic() - cycle_started_monotonic)

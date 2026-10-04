@@ -6,6 +6,11 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      restart_poller_now:
+        description: "Restart the poller immediately instead of after its current poll cycle"
+        type: boolean
+        default: false
 
 concurrency:
   group: vps-deploy
@@ -28,6 +33,9 @@ jobs:
       DISCORD_WEBHOOK_URL_BANS: ${{ secrets.DISCORD_WEBHOOK_URL_BANS }}
       DISCORD_WEBHOOK_URL_DAILY_SUMMARY: ${{ secrets.DISCORD_WEBHOOK_URL_DAILY_SUMMARY }}
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+      # Poller normally restarts after its current cycle; force it via the dispatch input or
+      # "[restart-poller]" in any pushed commit message.
+      FORCE_POLLER_RESTART: ${{ (inputs.restart_poller_now || contains(join(github.event.commits.*.message, ' '), '[restart-poller]')) && '1' || '0' }}
     steps:
       - name: Run deploy script over SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -36,7 +44,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          envs: DISCORD_WEBHOOK_URL,DISCORD_WEBHOOK_URL_SALES,DISCORD_WEBHOOK_URL_REPRICES,DISCORD_WEBHOOK_URL_NEW_ITEMS,DISCORD_WEBHOOK_URL_DB_EXPORT,DISCORD_WEBHOOK_URL_OPS,DISCORD_WEBHOOK_URL_BANS,DISCORD_WEBHOOK_URL_DAILY_SUMMARY,ADMIN_TOKEN
+          envs: DISCORD_WEBHOOK_URL,DISCORD_WEBHOOK_URL_SALES,DISCORD_WEBHOOK_URL_REPRICES,DISCORD_WEBHOOK_URL_NEW_ITEMS,DISCORD_WEBHOOK_URL_DB_EXPORT,DISCORD_WEBHOOK_URL_OPS,DISCORD_WEBHOOK_URL_BANS,DISCORD_WEBHOOK_URL_DAILY_SUMMARY,ADMIN_TOKEN,FORCE_POLLER_RESTART
           script_stop: true
           script: |
             set -euo pipefail
