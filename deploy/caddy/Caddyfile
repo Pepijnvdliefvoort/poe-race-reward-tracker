@@ -9,13 +9,23 @@ poeracerewards.com {
 
     # Serve static files directly (more reliable than proxying many small requests
     # through the Python server).
+    # Item icons. The server appends ?v=<file mtime> to icon URLs it hands out, so those
+    # can be cached long-term; unversioned requests revalidate (cheap 304 via ETag).
+    @iconsVersioned {
+        path /assets/icons/*
+        query v=*
+    }
+    handle @iconsVersioned {
+        root * /opt/poe-market-flips/web
+        file_server
+        header Cache-Control "public, max-age=31536000, immutable"
+    }
+
     @icons path /assets/icons/*
     handle @icons {
         root * /opt/poe-market-flips/web
         file_server
-        header Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
-        header Pragma "no-cache"
-        header Expires "0"
+        header Cache-Control "no-cache"
     }
 
     # JS/CSS URLs are unversioned (native ES modules import each other by plain path), so
@@ -27,7 +37,7 @@ poeracerewards.com {
         header Cache-Control "no-cache"
     }
 
-    @static path /assets/* /favicon* /robots.txt
+    @static path /assets/* /favicon* /robots.txt /sitemap.xml
     handle @static {
         root * /opt/poe-market-flips/web
         file_server
