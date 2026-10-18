@@ -1035,7 +1035,12 @@ function renderStatsCards(payload) {
       pct: swap.usedPercent,
     },
     { key: "uptime", k: "Uptime", v: formatUptimeFromBootMs(payload?.system?.bootTimeMs), sub: "Since the server booted" },
-    { key: "sinceDeploy", k: "Last deploy", v: formatSinceDeployFromDeployTimeMs(payload?.app?.deployTimeMs), sub: "Time since the app started" },
+    {
+      key: "sinceDeploy",
+      k: "Last deploy",
+      v: formatSinceDeployFromDeployTimeMs(payload?.app?.deployTimeMs),
+      sub: payload?.app?.version ? `v${payload.app.version} · time since the app started` : "Time since the app started",
+    },
     { key: "net", k: "Network", v: `${formatBytesMb(net.rxMb)} ↓`, sub: `${formatBytesMb(net.txMb)} ↑ sent` },
   ];
 

@@ -1,0 +1,83 @@
+name: Release
+
+# Every merge into main becomes a version: after the tests pass on main, this reads VERSION, tags the commit vX.Y.Z
+# and creates a GitHub Release with the PRs merged since the previous release. Pushing a v* tag by hand still works,
+# and "Run workflow" retries the release for the current main.
+# It doesn't touch the VPS: Deploy to VPS runs on its own, so a forgotten version bump never blocks a deploy.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/ci.yml
+
+  version:
+    name: Version and tag
+    needs: tests
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read the version and tag the commit
+        id: version
+        run: |
+          sha=$(git rev-parse HEAD)
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            # A tag pushed by hand: release exactly that.
+            tag="$GITHUB_REF_NAME"
+          elif [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases come from main; run this workflow on main (or push a v* tag)."
+            exit 1
+          else
+            version=$(tr -d '[:space:]' < VERSION)
+            if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error file=VERSION::VERSION needs X.Y.Z (found '$version')."
+              exit 1
+            fi
+            tag="v$version"
+            if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+              tagged=$(git rev-list -n 1 "$tag")
+              if [ "$tagged" != "$sha" ]; then
+                echo "::error file=VERSION::$tag already belongs to an earlier commit ($tagged). Bump VERSION in the next release PR. The VPS deploy is not affected."
+                exit 1
+              fi
+              echo "$tag already points at this commit; making sure the release exists."
+            else
+              # Tags pushed with GITHUB_TOKEN don't start other workflows, so this doesn't re-run Release.
+              git tag "$tag" "$sha"
+              git push origin "$tag"
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: GitHub Release
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists."
+            exit 0
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes

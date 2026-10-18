@@ -29,6 +29,9 @@ git diff --stat origin/<target>...origin/<source>
 
 - Use the local branch instead of `origin/<source>` if it isn't pushed yet (and tell the user to push).
 - For `develop → main`, list the merged PR numbers from the merge commits (`Merge pull request #N`).
+- For `develop → main`, check `VERSION` against the latest tag (`git tag --sort=-v:refname | head -1`): the merge
+  releases whatever VERSION says, and CI fails while that version is already tagged. Suggest the bump (patch for
+  fixes, minor for features) if it hasn't been made.
 - Read the diff of anything the commit messages don't explain. Describe what the code does, not
   what the commit messages claim.
 - Note anything in the target that isn't in the source. Merge commits only are harmless; say so.
@@ -39,7 +42,7 @@ Output the title and the description each in its own fenced block so they copy c
 
 **Title**
 - Conventional prefix matching the repo's commits: `feat(scope):`, `fix(scope):`, `style(web):`, …
-- For `develop → main`, start with `Release:` and name the two or three biggest changes.
+- For `develop → main`, start with `Release vX.Y.Z:` (the VERSION being released) and name the two or three biggest changes.
 - One line, no trailing period.
 
 **Description**, in this order and leaving out empty sections:
