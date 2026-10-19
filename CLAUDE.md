@@ -71,6 +71,7 @@ When editing server/admin_service.py, server/http_handler.py, or auth-sensitive 
 ## Git Workflow
 - Branch from develop as feat/... or fix/...; PRs go into develop, then develop into main.
 - Merging to main deploys to the VPS automatically (.github/workflows/deploy-vps.yml). CI runs on PRs and pushes to develop.
+- Every merge to main is a release: bump VERSION in the develop → main PR (CI's "Version is new" check enforces it); .github/workflows/release.yml then tags vX.Y.Z and creates the GitHub Release. Merge release PRs with a merge commit.
 - Commit only when asked; push the feature branch and give the user a PR title and description (see the pr-description skill).
 - Never add Claude attribution (Co-Authored-By trailers, "Generated with Claude Code") to commits or PRs.
 - After merges the user usually wants branches cleaned up (keep only main and develop, locally and on GitHub).
