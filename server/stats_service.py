@@ -6,12 +6,27 @@ import socket
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover
     psutil = None
+
+
+_VERSION_PATH = Path(__file__).resolve().parent.parent / "VERSION"
+
+
+def _read_app_version() -> str | None:
+    try:
+        return _VERSION_PATH.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+# Read once: the server restarts on every deploy, so this is the version it is running.
+APP_VERSION = _read_app_version()
 
 
 def _epoch_ms() -> int:
@@ -161,6 +176,7 @@ def system_stats_payload() -> dict[str, Any]:
         "app": {
             # "Deploy" is treated as "this server process started".
             "deployTimeMs": int(proc_create_time_s * 1000) if proc_create_time_s is not None else None,
+            "version": APP_VERSION,
         },
         "host": {
             "hostname": socket.gethostname(),

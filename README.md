@@ -138,7 +138,7 @@ python scripts/retrain_ml_pipeline.py                 # backtest + retrain the r
 ```
 
 - CI runs the syntax check and tests on Python 3.10 and 3.12 for every PR and every push to
-  `develop`; pushes to `main` are tested by the deploy workflow before deploying.
+  `develop`; pushes to `main` are tested by the deploy and release workflows before they run.
 - `data/market.db` is the source of truth; treat it as production data.
 - See [`CLAUDE.md`](CLAUDE.md) for repository rules (schema migrations, inference and auth safety).
 
@@ -151,6 +151,21 @@ started manually on any branch.
 
 First-time server setup (systemd units, Caddy, HTTPS) is described in
 [`VPS_DEPLOYMENT.md`](VPS_DEPLOYMENT.md).
+
+### Releases
+
+Work goes `feature/…` or `fix/…` → `develop` → `main`, and every merge into `main` is a release.
+The version lives in [`VERSION`](VERSION):
+
+1. In the release PR from `develop` into `main`, bump `VERSION` (for example `1.0.0` to `1.1.0`). CI's
+   **Version is new** check fails while that version already has a tag.
+2. Merge it with a merge commit. After the tests pass on `main`, the [Release](.github/workflows/release.yml)
+   workflow tags the commit `v1.1.0` and creates a GitHub Release with the PRs merged since the last one.
+   The deploy runs independently, so a forgotten bump fails the release, never the deploy.
+
+The admin panel shows the running version on the **Last deploy** card. A tag pushed by hand
+(`git tag v1.1.0 && git push origin v1.1.0`) is released as well, and **Actions → Release → Run workflow**
+on `main` retries a failed release.
 
 <details>
 <summary>HTTP API</summary>

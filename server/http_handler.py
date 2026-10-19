@@ -1227,6 +1227,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 authorized = admin_authorized(auth_header, token_param, cookie_header)
                 if authorized:
                     self._note_admin_auth_success()
+                else:
+                    # Count wrong credentials here too, or this endpoint is an unlimited token-guessing oracle.
+                    self._note_failed_admin_auth_if_applicable(auth_header, token_param, cookie_header)
                 payload = {
                     "ok": True,
                     "authenticated": bool(authorized),
