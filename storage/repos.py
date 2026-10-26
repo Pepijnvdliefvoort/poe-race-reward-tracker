@@ -1093,20 +1093,24 @@ class PriceAlertCooldownRepo:
     def __init__(self, con: sqlite3.Connection) -> None:
         self._con = con
 
-    def load_all(self) -> list[tuple[int, int, float]]:
+    def load_all(self) -> list[tuple[int, int, float, str, str, float]]:
         rows = self._con.execute(
             """
-            SELECT item_variant_id, last_alert_cycle, last_alert_low_mirror
+            SELECT item_variant_id, last_alert_cycle, last_alert_low_mirror,
+                   last_alert_seller, last_alert_currency, last_alert_amount
             FROM price_alert_cooldown
             """
         ).fetchall()
-        out: list[tuple[int, int, float]] = []
+        out: list[tuple[int, int, float, str, str, float]] = []
         for r in rows:
             out.append(
                 (
                     int(r["item_variant_id"]),
                     int(r["last_alert_cycle"]),
                     float(r["last_alert_low_mirror"]),
+                    str(r["last_alert_seller"] or ""),
+                    str(r["last_alert_currency"] or ""),
+                    float(r["last_alert_amount"] or 0.0),
                 )
             )
         return out
@@ -1117,17 +1121,32 @@ class PriceAlertCooldownRepo:
         item_variant_id: int,
         last_alert_cycle: int,
         last_alert_low_mirror: float,
+        last_alert_seller: str,
+        last_alert_currency: str,
+        last_alert_amount: float,
         updated_at_utc: str,
     ) -> None:
         self._con.execute(
             """
             INSERT INTO price_alert_cooldown(
-                item_variant_id, last_alert_cycle, last_alert_low_mirror, updated_at_utc
-            ) VALUES (?, ?, ?, ?)
+                item_variant_id, last_alert_cycle, last_alert_low_mirror,
+                last_alert_seller, last_alert_currency, last_alert_amount, updated_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(item_variant_id) DO UPDATE SET
                 last_alert_cycle = excluded.last_alert_cycle,
                 last_alert_low_mirror = excluded.last_alert_low_mirror,
+                last_alert_seller = excluded.last_alert_seller,
+                last_alert_currency = excluded.last_alert_currency,
+                last_alert_amount = excluded.last_alert_amount,
                 updated_at_utc = excluded.updated_at_utc
             """,
-            (int(item_variant_id), int(last_alert_cycle), float(last_alert_low_mirror), str(updated_at_utc)),
+            (
+                int(item_variant_id),
+                int(last_alert_cycle),
+                float(last_alert_low_mirror),
+                str(last_alert_seller),
+                str(last_alert_currency),
+                float(last_alert_amount),
+                str(updated_at_utc),
+            ),
         )

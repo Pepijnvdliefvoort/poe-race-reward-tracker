@@ -300,9 +300,10 @@ class StorageService:
         finally:
             con.close()
 
-    def load_price_alert_cooldown_rows(self) -> list[tuple[int, int, float]]:
+    def load_price_alert_cooldown_rows(self) -> list[tuple[int, int, float, str, str, float]]:
         """
-        Rows (item_variant_id, last_alert_cycle, last_alert_low_mirror) for price-drop Discord cooldown.
+        Rows (item_variant_id, last_alert_cycle, last_alert_low_mirror, last_alert_seller,
+        last_alert_currency, last_alert_amount) for price-drop Discord alert dedupe.
         """
         self.ensure_initialized()
         con = self._db.connect()
@@ -317,6 +318,9 @@ class StorageService:
         variant_id: int,
         last_cycle: int,
         last_low_mirror: float,
+        seller: str = "",
+        currency: str = "",
+        amount: float = 0.0,
     ) -> None:
         self.ensure_initialized()
         con = self._db.connect()
@@ -325,6 +329,9 @@ class StorageService:
                 item_variant_id=int(variant_id),
                 last_alert_cycle=int(last_cycle),
                 last_alert_low_mirror=float(last_low_mirror),
+                last_alert_seller=str(seller or ""),
+                last_alert_currency=str(currency or ""),
+                last_alert_amount=float(amount or 0.0),
                 updated_at_utc=_utc_now_iso(),
             )
             con.commit()

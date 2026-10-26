@@ -1169,19 +1169,88 @@ def seed_price_history_from_db(storage: StorageService, history_cycles: int) -> 
 
 def seed_price_alert_cooldown_from_db(
     storage: StorageService, variant_ids_by_key: dict[str, int]
-) -> dict[str, tuple[int, float, str, float]]:
-    """Restore price-drop alert cooldown from SQLite (same keys/cycles as ``run_cycle``)."""
-    by_variant: dict[int, tuple[int, float]] = {}
-    for vid, last_cycle, last_low in storage.load_price_alert_cooldown_rows():
-        by_variant[int(vid)] = (int(last_cycle), float(last_low))
-    state: dict[str, tuple[int, float, str, float]] = {}
+) -> dict[str, tuple[int, float, str, float, str]]:
+    """
+    Restore the last price-drop alert per variant from SQLite (same keys/cycles as ``run_cycle``).
+
+    Values are (cycle, low_mirror, raw_currency, raw_amount, seller). Rows written before the
+    listing identity was stored have empty currency/seller; those fall back to a mirror-equivalent
+    price comparison and are treated as the same listing while the price holds.
+    """
+    by_variant: dict[int, tuple[int, float, str, str, float]] = {}
+    for vid, last_cycle, last_low, seller, currency, amount in storage.load_price_alert_cooldown_rows():
+        by_variant[int(vid)] = (int(last_cycle), float(last_low), str(seller), str(currency), float(amount))
+    state: dict[str, tuple[int, float, str, float, str]] = {}
     for key, vid in variant_ids_by_key.items():
         row = by_variant.get(int(vid))
         if row is not None:
-            # Raw currency/amount unknown from DB; use empty sentinel so comparison falls back
-            # to mirror-equivalent on the first poll after a restart.
-            state[key] = (row[0], row[1], "", 0.0)
+            last_cycle, last_low, seller, currency, amount = row
+            state[key] = (last_cycle, last_low, currency, amount, seller)
     return state
+
+
+def sellers_listed_at_price(listings: list[dict[str, Any]], currency: str, amount: float) -> set[str]:
+    """Seller names whose listing is priced at exactly ``amount`` ``currency`` (native, unconverted)."""
+    sellers: set[str] = set()
+    if not currency or amount <= 0:
+        return sellers
+    for entry in listings:
+        listing = entry.get("listing") if isinstance(entry, dict) else None
+        price = listing.get("price") if isinstance(listing, dict) else None
+        if not isinstance(price, dict):
+            continue
+        normalized = normalize_price_currency(price)
+        if normalized is None:
+            continue
+        cur, amt = normalized
+        if cur == currency and abs(float(amt) - float(amount)) <= 1e-9:
+            seller = extract_listing_seller_name(entry)
+            if seller and seller != "unknown seller":
+                sellers.add(seller)
+    return sellers
+
+
+def is_repeat_price_alert(
+    last_alert: tuple[int, float, str, float, str] | None,
+    *,
+    cycle: int,
+    low_mirror: float,
+    cheapest_raw: tuple[str, float, float] | None,
+    sellers_at_cheapest: set[str],
+    cooldown_cycles: int,
+) -> bool:
+    """
+    True when a price-drop alert would repeat the previous alert for this variant.
+
+    A listing (seller + native price) is alerted once and stays quiet for as long as it keeps
+    that price, however many cycles pass; a price change alerts again. A different seller
+    showing up at the same price is only held back for ``cooldown_cycles``.
+    """
+    if last_alert is None:
+        return False
+    last_cycle, last_price, last_raw_cur, last_raw_amt, last_seller = last_alert
+    # Use raw native-currency amount when both the previous and current cheapest listing are
+    # in the same non-mirror currency (e.g. divines). This prevents a change in the
+    # divine-to-mirror ratio from being mistaken for an actual price change.
+    curr_raw_cur = cheapest_raw[0] if cheapest_raw else ""
+    curr_raw_amt = cheapest_raw[1] if cheapest_raw else 0.0
+    if (
+        last_raw_cur
+        and curr_raw_cur
+        and last_raw_cur == curr_raw_cur
+        and last_raw_cur != "mirror"
+        and last_raw_amt > 0
+        and curr_raw_amt > 0
+    ):
+        same_price = abs(last_raw_amt - curr_raw_amt) <= max(0.5, last_raw_amt * 0.01)
+    else:
+        same_price = abs(last_price - low_mirror) <= max(0.01, last_price * 0.01)
+    if not same_price:
+        return False
+    # Unknown seller (row from before the seller was stored) counts as the same listing.
+    if not last_seller or last_seller in sellers_at_cheapest:
+        return True
+    return cooldown_cycles > 0 and (cycle - last_cycle) < cooldown_cycles
 
 
 def send_discord_alert(
@@ -2837,7 +2906,7 @@ def run_cycle(
     run_started_at_utc: str,
     divines_per_mirror: float = DIVINES_PER_MIRROR,
     price_history: dict[str, list[float]] | None = None,
-    alert_state: dict[str, tuple[int, float, str, float]] | None = None,
+    alert_state: dict[str, tuple[int, float, str, float, str]] | None = None,
     alert_config: AlertConfig | None = None,
     inference_fetch_cap: int = DEFAULT_INFERENCE_LISTINGS_FETCH_CAP,
     sales_webhook_url: str = "",
@@ -3343,32 +3412,19 @@ def run_cycle(
                         and meets_floor_depth
                         and (not alert_config.require_flip_signal or resale_opportunity is not None)
                     ):
-                        last_alert = alert_state.get(item_key)
-                        suppress_for_cooldown = False
-                        if last_alert is not None and alert_config.cooldown_cycles > 0:
-                            last_cycle, last_price, last_raw_cur, last_raw_amt = last_alert
-                            # Use raw native-currency amount when both the previous and current
-                            # cheapest listing are in the same non-mirror currency (e.g. divines).
-                            # This prevents a change in the divine-to-mirror ratio from being
-                            # mistaken for an actual price change and bypassing the cooldown.
-                            curr_raw_cur = cheapest_raw[0] if cheapest_raw else ""
-                            curr_raw_amt = cheapest_raw[1] if cheapest_raw else 0.0
-                            if (
-                                last_raw_cur
-                                and curr_raw_cur
-                                and last_raw_cur == curr_raw_cur
-                                and last_raw_cur != "mirror"
-                                and last_raw_amt > 0
-                                and curr_raw_amt > 0
-                            ):
-                                # Compare by native price (e.g. divine amount) to ignore ratio drift.
-                                same_price = abs(last_raw_amt - curr_raw_amt) <= max(0.5, last_raw_amt * 0.01)
-                            else:
-                                same_price = abs(last_price - low_mirror) <= max(0.01, last_price * 0.01)
-                            if same_price and (cycle - last_cycle) < alert_config.cooldown_cycles:
-                                suppress_for_cooldown = True
-
-                        if suppress_for_cooldown:
+                        sellers_at_cheapest = (
+                            sellers_listed_at_price(pricing_listings, cheapest_raw[0], cheapest_raw[1])
+                            if cheapest_raw
+                            else set()
+                        )
+                        if is_repeat_price_alert(
+                            alert_state.get(item_key),
+                            cycle=cycle,
+                            low_mirror=low_mirror,
+                            cheapest_raw=cheapest_raw,
+                            sellers_at_cheapest=sellers_at_cheapest,
+                            cooldown_cycles=alert_config.cooldown_cycles,
+                        ):
                             pass
                         else:
                             send_discord_alert(
@@ -3385,12 +3441,22 @@ def run_cycle(
                             )
                             curr_raw_cur_store = cheapest_raw[0] if cheapest_raw else ""
                             curr_raw_amt_store = cheapest_raw[1] if cheapest_raw else 0.0
-                            alert_state[item_key] = (cycle, low_mirror, curr_raw_cur_store, curr_raw_amt_store)
+                            seller_store = min(sellers_at_cheapest) if sellers_at_cheapest else ""
+                            alert_state[item_key] = (
+                                cycle,
+                                low_mirror,
+                                curr_raw_cur_store,
+                                curr_raw_amt_store,
+                                seller_store,
+                            )
                             if variant_id:
                                 storage.upsert_price_alert_cooldown(
                                     variant_id=variant_id,
                                     last_cycle=cycle,
                                     last_low_mirror=float(low_mirror),
+                                    seller=seller_store,
+                                    currency=curr_raw_cur_store,
+                                    amount=float(curr_raw_amt_store),
                                 )
 
             # Append median (not lowest) to history — more stable baseline.

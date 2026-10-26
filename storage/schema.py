@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 def migration_001_initial() -> str:
@@ -363,3 +363,8 @@ CREATE TABLE IF NOT EXISTS companion_picks (
 
 CREATE INDEX IF NOT EXISTS idx_companion_picks_created ON companion_picks(created_at_utc);
 """
+
+
+def migration_019_price_alert_listing_identity() -> str:
+    """Applied via a Python idempotent migration in `storage/db.py`."""
+    return ""
