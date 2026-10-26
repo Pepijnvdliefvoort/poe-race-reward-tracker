@@ -27,6 +27,7 @@ from .schema import (
     migration_016_inference_signal_count,
     migration_017_backfill_online_pending_counted_immediate,
     migration_018_companion_picks,
+    migration_019_price_alert_listing_identity,
 )
 
 
@@ -135,6 +136,7 @@ class Database:
             (16, migration_016_inference_signal_count()),
             (17, migration_017_backfill_online_pending_counted_immediate()),
             (18, migration_018_companion_picks()),
+            (19, migration_019_price_alert_listing_identity()),
         ]
 
         for version, sql in migrations:
@@ -160,6 +162,8 @@ class Database:
                 self._migration_016_inference_signal_count(con)
             elif version == 17:
                 self._migration_017_backfill_online_pending_counted_immediate(con)
+            elif version == 19:
+                self._migration_019_price_alert_listing_identity(con)
             elif sql.strip():
                 con.executescript(sql)
             con.execute(
@@ -430,6 +434,22 @@ class Database:
              WHERE signal_count IS NULL OR signal_count < 1
             """
         )
+
+    def _migration_019_price_alert_listing_identity(self, con: sqlite3.Connection) -> None:
+        """
+        Remember which listing (seller + native price) the last price-drop alert was for, so the
+        same listing sitting at the same price is alerted once instead of every cooldown window.
+        """
+        cols = {
+            str((r["name"] if isinstance(r, sqlite3.Row) else r[1]))
+            for r in con.execute("PRAGMA table_info(price_alert_cooldown)").fetchall()
+        }
+        if "last_alert_seller" not in cols:
+            con.execute("ALTER TABLE price_alert_cooldown ADD COLUMN last_alert_seller TEXT NOT NULL DEFAULT ''")
+        if "last_alert_currency" not in cols:
+            con.execute("ALTER TABLE price_alert_cooldown ADD COLUMN last_alert_currency TEXT NOT NULL DEFAULT ''")
+        if "last_alert_amount" not in cols:
+            con.execute("ALTER TABLE price_alert_cooldown ADD COLUMN last_alert_amount REAL NOT NULL DEFAULT 0")
 
     def _migration_017_backfill_online_pending_counted_immediate(self, con: sqlite3.Connection) -> None:
         """
