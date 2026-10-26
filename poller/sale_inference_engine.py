@@ -921,6 +921,10 @@ def _apply_seller_swaps(ctx: _TransitionContext) -> None:
             continue
         from_meta = _meta_for(ctx.prev_signals, fp, a) or {}
         to_meta = _meta_for(ctx.curr_signals, fp, b) or {}
+        # Same truncation guard as plain vanishes: when A's row sat near the cutoff it may only have
+        # been bumped out of the fetched window while B's tied copy got bumped in (not a transfer).
+        if not ctx.safe_to_infer_vanish(from_meta.get("mirrorEquiv")):
+            continue
         ctx.result.confirmed_transfer += 1
         ctx.events.append(
             {

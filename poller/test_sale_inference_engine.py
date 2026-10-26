@@ -358,6 +358,34 @@ class SaleInferenceEngineSellerSwapTests(unittest.TestCase):
         )
         self.assertEqual(result.confirmed_transfer, 0)
 
+    def test_no_transfer_when_swap_happens_at_truncation_cutoff(self) -> None:
+        # Identical copies tied at the cutoff rotate in and out of the fetched window.
+        result, pending_instant, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 11.0)],
+            curr_signals=[_sig("fp1", "B", 11.0)],
+            pending_instant=[],
+            snapshot_truncated=True,
+            truncation_cutoff_mirror=11.0,
+        )
+        self.assertEqual(result.confirmed_transfer, 0)
+        self.assertEqual(result.likely_instant_sale, 0)
+        self.assertEqual(pending_instant, [])
+        self.assertNotIn("confirmed_transfer", _rules(result))
+
+    def test_transfer_below_truncation_cutoff_still_counts(self) -> None:
+        result, _, _, _ = evaluate_listing_transition(
+            item_key="Item",
+            cycle=2,
+            prev_signals=[_sig("fp1", "A", 5.0), _sig("fp2", "C", 20.0)],
+            curr_signals=[_sig("fp1", "B", 5.0), _sig("fp2", "C", 20.0)],
+            pending_instant=[],
+            snapshot_truncated=True,
+            truncation_cutoff_mirror=20.0,
+        )
+        self.assertEqual(result.confirmed_transfer, 1)
+
 
 class SaleInferenceEngineTruncatedSnapshotTests(unittest.TestCase):
     """Rules 2a/2b and the truncation cutoff guard."""
