@@ -256,3 +256,33 @@ cd /opt/poe-market-flips
 git pull
 sudo systemctl restart poe-market-server
 ```
+
+## 12. Home Server (Cloudflare Tunnel, Pull-Based Updates)
+
+The app can also run on a home server that isn't reachable from the internet. Differences from
+the VPS setup above:
+
+- **Public access**: a Cloudflare Tunnel (`cloudflared`) forwards `poeracerewards.com` and `www` to
+  `http://127.0.0.1:8081`. Caddy uses [`deploy/caddy/Caddyfile.home`](deploy/caddy/Caddyfile.home):
+  loopback only, plain HTTP, no certificates (Cloudflare handles HTTPS), same static-file rules.
+- **Deploys**: GitHub can't SSH in, so `poe-market-update.timer` runs
+  [`deploy/home_update.sh`](deploy/home_update.sh) every 15 minutes. When `origin/main` has moved, it
+  runs `deploy_on_vps.sh` with `POE_CADDYFILE=deploy/caddy/Caddyfile.home`. `[restart-poller]` in
+  the head commit still forces an immediate poller restart. Disable the Deploy to VPS workflow.
+- **Trade API reserve**: if you trade manually from the same IP, keep the default 20% reserve with a
+  drop-in that deploys don't overwrite:
+
+```bash
+sudo mkdir -p /etc/systemd/system/poe-market-poller.service.d
+printf '[Service]\nEnvironment=POE_RATE_LIMIT_RESERVE_RATIO=0.20\n' | sudo tee /etc/systemd/system/poe-market-poller.service.d/home.conf
+```
+
+First start and the update timer:
+
+```bash
+cd /opt/poe-market-flips
+sudo POE_CADDYFILE=deploy/caddy/Caddyfile.home bash deploy/deploy_on_vps.sh
+sudo cp deploy/systemd/poe-market-update.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now poe-market-update.timer
+```

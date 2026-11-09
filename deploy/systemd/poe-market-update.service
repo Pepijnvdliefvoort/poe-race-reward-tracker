@@ -1,0 +1,11 @@
+[Unit]
+Description=PoE Market pull-based deploy (home server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/poe-market-flips
+ExecStart=/bin/bash /opt/poe-market-flips/deploy/home_update.sh
+TimeoutStartSec=15min
