@@ -1,0 +1,60 @@
+# Home server (polm-server). A Cloudflare Tunnel (cloudflared) terminates HTTPS and forwards
+# poeracerewards.com and www to this listener, so Caddy only listens on loopback over plain HTTP.
+# Install with: POE_CADDYFILE=deploy/caddy/Caddyfile.home bash deploy/deploy_on_vps.sh
+{
+    auto_https off
+    servers {
+        # cloudflared connects from loopback; trust its X-Forwarded-For/-Proto so visitor IPs
+        # and the admin cookie's Secure flag keep working.
+        trusted_proxies static 127.0.0.1/32 ::1/128
+    }
+}
+
+:8081 {
+    bind 127.0.0.1
+    encode zstd gzip
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # www permanently redirects to the canonical domain.
+    @www host www.poeracerewards.com
+    redir @www https://poeracerewards.com{uri} permanent
+
+    # Static files: same rules as deploy/caddy/Caddyfile.
+    @iconsVersioned {
+        path /assets/icons/*
+        query v=*
+    }
+    handle @iconsVersioned {
+        root * /opt/poe-market-flips/web
+        file_server
+        header Cache-Control "public, max-age=31536000, immutable"
+    }
+
+    @icons path /assets/icons/*
+    handle @icons {
+        root * /opt/poe-market-flips/web
+        file_server
+        header Cache-Control "no-cache"
+    }
+
+    @code path /css/* /js/*
+    handle @code {
+        root * /opt/poe-market-flips/web
+        file_server
+        header Cache-Control "no-cache"
+    }
+
+    @static path /assets/* /favicon* /robots.txt /sitemap.xml
+    handle @static {
+        root * /opt/poe-market-flips/web
+        file_server
+        header Cache-Control "public, max-age=604800, immutable"
+    }
+
+    # Everything else (HTML + API) goes to the app.
+    reverse_proxy 127.0.0.1:8080
+}
